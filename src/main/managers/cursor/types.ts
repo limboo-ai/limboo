@@ -13,6 +13,7 @@
  * fields may be added in a backward-compatible way.
  */
 import type { SessionPermissionMode } from '@shared/types';
+import type { EffectiveSandbox } from '../sandbox/policy';
 
 /** Everything a single Cursor print-mode run needs, resolved up front. */
 export interface CursorRunSpec {
@@ -29,8 +30,11 @@ export interface CursorRunSpec {
   model: string;
   /** Prior chat id for `--resume` (multi-turn conversations). */
   resumeChatId?: string;
-  /** `--sandbox` value; undefined = omit the flag (CLI default / 'auto'). */
-  sandbox?: 'enabled' | 'disabled';
+  /**
+   * The resolved provider-neutral OS-level sandbox policy for this run. Drives
+   * both the `--sandbox` argv flag and the generated `.cursor/sandbox.json`.
+   */
+  sandbox: EffectiveSandbox;
   /** True adds `--approve-mcps` (only set after the flag probed as supported). */
   approveMcps?: boolean;
   /**

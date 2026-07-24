@@ -5,6 +5,7 @@
  * that shape how the agent is driven: model, thinking, permissions, web search,
  * turn budget, and the connection-monitoring / reliability controls.
  */
+import { useEffect, useState } from 'react';
 import { AGENT_CONNECTION_LIMITS, AGENT_LIMITS } from '@shared/constants';
 import { cn } from '@/renderer/lib/cn';
 import { ProviderIcon } from '@/renderer/components/brand/ProviderIcon';
@@ -12,7 +13,7 @@ import { useSettingsStore } from '@/renderer/stores/useSettingsStore';
 import { useAgentStore } from '@/renderer/stores/useAgentStore';
 import { lifecycleMeta } from '@/renderer/features/agent/status';
 import { useAgentModels } from '@/renderer/features/agent/models';
-import { Field, Section, Select, SegmentedControl, StackedField, Toggle } from '../controls';
+import { Field, Section, Select, SegmentedControl, StackedField, TextInput, Toggle } from '../controls';
 import { ProviderStatusRow } from './ProviderCard';
 import { CursorProviderCard } from './CursorProviderCard';
 import { AgentTroubleshooting } from './AgentTroubleshooting';
@@ -31,6 +32,10 @@ export function AgentPanel() {
     key: K,
     value: (typeof agent.connection)[K],
   ) => void update({ agent: { connection: { [key]: value } } });
+  const setSandbox = <K extends keyof typeof agent.sandbox>(
+    key: K,
+    value: (typeof agent.sandbox)[K],
+  ) => void update({ agent: { sandbox: { [key]: value } } });
 
   return (
     <div className="flex flex-col gap-5">
@@ -133,6 +138,112 @@ export function AgentPanel() {
             className="w-full accent-accent"
           />
         </StackedField>
+      </Section>
+
+      <Section
+        title="Sandbox"
+        hint="OS-level containment applied to whichever agent runs (Claude via the Agent SDK, Cursor via its CLI). The filesystem is always jailed to the session worktree and Limboo's own data is always denied — these knobs only widen writes or tighten the network. Containment sits beneath the approval policy above; it never replaces it."
+      >
+        <Field
+          id="sandboxMode"
+          label="Sandbox"
+          hint="Auto enables the OS jail when the platform supports it (bubblewrap on Linux/WSL2, Seatbelt on macOS); Disabled turns it off. Unavailable platforms degrade gracefully unless Strict is on."
+        >
+          <SegmentedControl
+            value={agent.sandbox.mode}
+            options={[
+              { value: 'auto', label: 'Auto' },
+              { value: 'enabled', label: 'Enabled' },
+              { value: 'disabled', label: 'Disabled' },
+            ]}
+            onChange={(value) => setSandbox('mode', value)}
+          />
+        </Field>
+        <Field
+          id="sandboxNetwork"
+          label="Network"
+          hint="Allowlist permits only the domains you list; Off blocks all network. All keeps the network open — Cursor still isolates the filesystem, but Claude's OS jail can't keep the network open (it jails network + filesystem together), so under All, Claude stays on its standard permission guards. Pick Allowlist or Off to engage Claude's full OS jail."
+        >
+          <SegmentedControl
+            value={agent.sandbox.network}
+            options={[
+              { value: 'all', label: 'All' },
+              { value: 'allowlist', label: 'Allowlist' },
+              { value: 'off', label: 'Off' },
+            ]}
+            onChange={(value) => setSandbox('network', value)}
+          />
+        </Field>
+        {agent.sandbox.network === 'allowlist' && (
+          <StackedField
+            id="sandboxAllowedDomains"
+            label="Allowed domains"
+            hint="Comma- or newline-separated. Wildcards like *.github.com are allowed. Only these hosts are reachable from sandboxed commands."
+          >
+            <ListInput
+              value={agent.sandbox.allowedDomains}
+              placeholder="github.com, *.npmjs.org"
+              onCommit={(v) => setSandbox('allowedDomains', v)}
+            />
+          </StackedField>
+        )}
+        <StackedField
+          id="sandboxWritePaths"
+          label="Extra writable paths"
+          hint="Absolute directories the agent may write outside the worktree (comma- or newline-separated). The worktree is always writable; secrets, the database, and config files are never writable (paths pointing at them are dropped)."
+        >
+          <ListInput
+            value={agent.sandbox.allowWritePaths}
+            placeholder="/tmp/build"
+            onCommit={(v) => setSandbox('allowWritePaths', v)}
+          />
+        </StackedField>
+        <StackedField
+          id="sandboxExcludedCommands"
+          label="Excluded commands"
+          hint="Commands that run outside the sandbox (comma- or newline-separated) — for tools incompatible with it, e.g. docker. They still pass through the approval policy. Claude only; Cursor has no per-command exclusion."
+        >
+          <ListInput
+            value={agent.sandbox.excludedCommands}
+            placeholder="docker *, terraform"
+            onCommit={(v) => setSandbox('excludedCommands', v)}
+          />
+        </StackedField>
+        <Field
+          id="sandboxReadOnlyAttachments"
+          label="Read-only attachments"
+          hint="Mount the session's attachment staging directory read-only inside the jail. Default on."
+        >
+          <Toggle
+            checked={agent.sandbox.readOnlyAttachments}
+            onChange={(v) => setSandbox('readOnlyAttachments', v)}
+          />
+        </Field>
+        <Field
+          id="sandboxFailIfUnavailable"
+          label="Strict — block if unavailable"
+          hint="Block a run when the sandbox can't start (missing bubblewrap or an unsupported OS) instead of degrading to an unsandboxed run. Also closes the escape hatch — a command can never pop out to run unsandboxed (it must be sandboxed or listed in Excluded commands). Default off."
+        >
+          <Toggle
+            checked={agent.sandbox.failIfUnavailable}
+            onChange={(v) => setSandbox('failIfUnavailable', v)}
+          />
+        </Field>
+        <Field
+          id="sandboxProviderOverride"
+          label="Provider sandbox"
+          hint="Auto uses the native sandbox of whichever agent runs. Pin to only sandbox Claude runs or only Cursor runs."
+        >
+          <SegmentedControl
+            value={agent.sandbox.providerOverride}
+            options={[
+              { value: 'auto', label: 'Auto' },
+              { value: 'claude-native', label: 'Claude' },
+              { value: 'cursor-native', label: 'Cursor' },
+            ]}
+            onChange={(value) => setSandbox('providerOverride', value)}
+          />
+        </Field>
       </Section>
 
       <Section
@@ -255,6 +366,38 @@ export function AgentPanel() {
         </Field>
       </Section>
 
+      <Section
+        title="Hook Engine"
+        hint="The provider-neutral governance layer. Every governed action (session, prompt, tool gate, file edit, shell, checkpoint) is recorded to the Hooks audit tab — identically whether Claude or Cursor is running. This only affects the audit trail; it never weakens enforcement (the permission gate always runs)."
+      >
+        <Field
+          id="hookEngineEnabled"
+          label="Governance audit"
+          hint="Emit normalized lifecycle events to the Hooks tab. Turning this off hides the audit trail but does not change what the agent is or isn't allowed to do."
+        >
+          <Toggle
+            checked={agent.hookEngine.enabled}
+            onChange={(v) => set('hookEngine', { ...agent.hookEngine, enabled: v })}
+            aria-label="Enable the Hook Engine governance audit"
+          />
+        </Field>
+        <Field
+          id="hookEngineAudit"
+          label="Audit detail"
+          hint="Lifecycle keeps session, prompt, tool-gate, checkpoint, and subagent events. Verbose adds every per-tool observe event (post-tool, shell, file edit). Off records nothing."
+        >
+          <SegmentedControl
+            value={agent.hookEngine.audit}
+            options={[
+              { value: 'off', label: 'Off' },
+              { value: 'lifecycle', label: 'Lifecycle' },
+              { value: 'verbose', label: 'Verbose' },
+            ]}
+            onChange={(value) => set('hookEngine', { ...agent.hookEngine, audit: value })}
+          />
+        </Field>
+      </Section>
+
       <Section title="Diagnostics" hint="How much detail the Agent Console and main log capture.">
         <Field
           id="logVerbosity"
@@ -275,5 +418,31 @@ export function AgentPanel() {
 
       <AgentTroubleshooting />
     </div>
+  );
+}
+
+/**
+ * Comma/newline-separated list editor backed by a `string[]` setting. Holds a
+ * transient text buffer while typing and commits the parsed, de-duped list on
+ * blur (the main process re-validates/caps every entry, so this is display-only
+ * convenience). Reseeds when the persisted value changes (e.g. Reset).
+ */
+function ListInput({
+  value,
+  placeholder,
+  onCommit,
+}: {
+  value: string[];
+  placeholder?: string;
+  onCommit: (value: string[]) => void;
+}) {
+  const [text, setText] = useState(value.join(', '));
+  useEffect(() => setText(value.join(', ')), [value]);
+  const commit = () => {
+    const parsed = [...new Set(text.split(/[\n,]+/).map((s) => s.trim()).filter(Boolean))];
+    onCommit(parsed);
+  };
+  return (
+    <TextInput value={text} placeholder={placeholder} onChange={setText} onBlur={commit} />
   );
 }

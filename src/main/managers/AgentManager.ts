@@ -55,6 +55,7 @@ import type {
   PlanStatus,
   RateLimitInfo,
   RequestOutcome,
+  HookEvent,
   RequestState,
   SessionPermissionMode,
   SessionPlan,
@@ -90,7 +91,14 @@ import { createSessionDir } from './cursor/sessionFile';
 import { executionPostureNote, withSessionContextRule } from './cursor/rules';
 import { supportsApproveMcps } from './cursor/exec';
 import { mapHookEvent } from './cursor/translate';
+import { withSessionSandboxJson } from './cursor/sandbox';
+import {
+  mapClaudeSandbox,
+  resolveSandboxConfig,
+  type EffectiveSandbox,
+} from './sandbox/policy';
 import { isReadOnlyShellCommand } from './agent/readOnlyCommands';
+import { HookEngine, type HookEmit } from './hooks/HookEngine';
 import type { CursorRunOutcome, ProviderRunBridge } from './cursor/types';
 import { IpcEvents } from '@shared/ipc-channels';
 import { getDb } from '../db/database';
@@ -230,7 +238,13 @@ function classifyTool(name: string): ToolRisk {
   if (WRITE_TOOLS.has(name)) return 'write';
   if (COMMAND_TOOLS.has(name)) return 'command';
   if (READ_TOOLS.has(name)) return 'read';
-  // Unknown / MCP tools are gated as commands (the conservative default).
+  // Unknown / MCP tools are gated as commands (the conservative default). This
+  // also covers the SDK's Task subagent tool: it is gated as a command through
+  // decideToolUseCore, and every tool the subagent then runs re-enters the SAME
+  // canUseTool with the SAME cwd — and the parent run's `Options.sandbox` is
+  // process-wide — so a subagent inherits the exact worktree boundary, network
+  // policy, and OS jail of its parent. No path here ever widens a subagent's
+  // access (per the SDK docs: subagents use the parent's sandbox configuration).
   return 'command';
 }
 
@@ -391,6 +405,8 @@ interface ActiveRun {
    * retries recompose the context — the retry must re-inject the SAME block.
    */
   resumeContext?: string;
+  /** Set once the SessionStart context-injection summary has been audited (per run). */
+  contextInjected?: boolean;
 }
 
 export class AgentManager {
@@ -571,6 +587,28 @@ export class AgentManager {
    */
   setResumeManager(resume: ResumeManager): void {
     this.resume = resume;
+  }
+
+  /** Provider-Neutral Hook Engine, wired after construction (governance/audit). */
+  private hooks: HookEngine | null = null;
+
+  /**
+   * Inject the Hook Engine. The agent EMITS normalized lifecycle events onto it
+   * (session/prompt/tool/checkpoint/subagent) so both providers produce one
+   * identical audit trail. The engine holds no policy — enforcement stays in
+   * {@link decideToolUse}; the engine only records the outcome.
+   */
+  setHookEngine(hooks: HookEngine): void {
+    this.hooks = hooks;
+  }
+
+  /**
+   * Emit one normalized {@link HookEvent} onto the Hook Engine. The engine
+   * stamps the provider + id + timestamp and redacts every string, so this is a
+   * thin, never-throwing delegate. A no-op when the engine is unwired.
+   */
+  private emitHook(sessionId: string, phase: HookEvent['phase'], opts: HookEmit = {}): void {
+    this.hooks?.emit(sessionId, phase, opts);
   }
 
   /** Attachment Manager, wired after construction (session-owned staged files). */
@@ -1105,6 +1143,9 @@ export class AgentManager {
   /** Forget a session entirely (transcript, activity, runtime state). */
   clearSession(sessionId: string): void {
     this.stop(sessionId);
+    // Governance bus: the session's execution context is ending. Emit before the
+    // rows are deleted (the audit trail for this session is cleared with them).
+    this.emitHook(sessionId, 'session-end', { summary: 'Session cleared' });
     this.runtimes.delete(sessionId);
     const db = getDb();
     db.prepare('DELETE FROM agent_messages WHERE session_id = ?').run(sessionId);
@@ -1113,6 +1154,7 @@ export class AgentManager {
     db.prepare('DELETE FROM agent_provider_sessions WHERE session_id = ?').run(sessionId);
     db.prepare('DELETE FROM agent_diagnostics WHERE session_id = ?').run(sessionId);
     db.prepare('DELETE FROM agent_plans WHERE session_id = ?').run(sessionId);
+    db.prepare('DELETE FROM hook_audit WHERE session_id = ?').run(sessionId);
   }
 
   /** Abort every active run + stop all supervision timers. Called on quit. */
@@ -1162,6 +1204,15 @@ export class AgentManager {
       query: null,
     };
     this.commitGenRuns.set(workspaceId, run);
+
+    // Governance bus: the commit-message generator is an isolated, tool-less
+    // sub-agent. Scope its lifecycle to the active session (best-effort) so it
+    // branches into that session's audit trail (Claude-only — Cursor CLI print
+    // mode has no subagents).
+    const subagentSession = this.state.activeSessionId;
+    if (subagentSession) {
+      this.emitHook(subagentSession, 'subagent-start', { summary: 'Commit-message sub-agent' });
+    }
 
     const emit = (ev: Omit<GitCommitMessageStreamEvent, 'workspaceId' | 'requestId'>): void => {
       const payload: GitCommitMessageStreamEvent = { workspaceId, requestId, ...ev };
@@ -1268,6 +1319,9 @@ export class AgentManager {
     } finally {
       if (flushTimer) clearTimeout(flushTimer);
       this.commitGenRuns.delete(workspaceId);
+      if (subagentSession) {
+        this.emitHook(subagentSession, 'subagent-stop', { summary: 'Commit-message sub-agent' });
+      }
     }
   }
 
@@ -1398,12 +1452,19 @@ export class AgentManager {
     });
     this.setLifecycle('busy', { activeSessionId: sessionId, error: undefined });
     this.diag('request', 'info', `Prompt submitted (${permMode})`, prompt.slice(0, ACTIVITY_LIMITS.detailMax), sessionId);
+    // Governance bus: a run is beginning. `session-start` + `prompt-submit` are
+    // provider-neutral choke points — one emission each covers Claude + Cursor.
+    this.emitHook(sessionId, 'session-start', { summary: `Run started (${permMode})` });
+    this.emitHook(sessionId, 'prompt-submit', {
+      summary: prompt.slice(0, ACTIVITY_LIMITS.labelMax),
+    });
 
     try {
       await this.runWithRecovery(sessionId, prompt, abort, cfg, permMode);
     } finally {
       const captured = this.runs.get(sessionId)?.planCaptured;
       this.runs.delete(sessionId);
+      this.emitHook(sessionId, 'run-finished', { summary: 'Run finished' });
       // Re-anchor the session's repository snapshot — the agent may have
       // changed the repo. Fire-and-forget; never delays run teardown.
       this.resume?.onRunFinished(sessionId);
@@ -1651,6 +1712,17 @@ export class AgentManager {
       const resumeContext = this.resumeContextFor(sessionId);
       const injectedContext =
         [memoryContext, searchContext, resumeContext].filter(Boolean).join('\n\n') || undefined;
+      // Governance bus: SessionStart is the context-injection checkpoint. Audit
+      // WHICH blocks were injected — presence booleans ONLY, never the injected
+      // text (it carries memory/file content). Guarded once per run so recovery
+      // retries (which recompose the same context) don't duplicate the line.
+      const run = this.runs.get(sessionId);
+      if (run && !run.contextInjected) {
+        run.contextInjected = true;
+        this.emitHook(sessionId, 'session-start', {
+          summary: `Context injected: memory ${memoryContext ? '✓' : '✗'} · search ${searchContext ? '✓' : '✗'} · repo-delta ${resumeContext ? '✓' : '✗'}`,
+        });
+      }
       const options = this.buildOptions(sessionId, cwd, abort, agent, permMode, injectedContext);
       // Expose a live, read-only view of the Local Memory System so the agent can
       // actually list/search the developer's memories on demand (the injected
@@ -1983,10 +2055,13 @@ export class AgentManager {
       }
     }
 
-    // `--sandbox` is a literal whitelist; 'auto' omits the flag (CLI default).
-    const sandboxPref = agent.cursor?.sandbox;
-    const sandbox =
-      sandboxPref === 'enabled' || sandboxPref === 'disabled' ? sandboxPref : undefined;
+    // OS-level Sandbox (Layer 3) — the SAME provider-neutral policy Claude gets,
+    // resolved once here and translated for Cursor into a session
+    // `.cursor/sandbox.json` (writable root + denied userData + network policy)
+    // plus the `--sandbox` flag. 'auto' omits the flag (CLI default) but still
+    // writes the declarative sandbox.json.
+    const sandbox = this.resolveSandboxFor(sessionId, cwd, 'cursor', agent);
+    if (sandbox.enabled) this.recordSandboxStatus(sessionId, sandbox);
 
     // Did this run exercise any write/command tool? Feeds the hook-capability
     // check in the finally: a FORCED run that used gated tools while the hooks
@@ -2194,7 +2269,11 @@ export class AgentManager {
       const inner = injectViaRules
         ? (): Promise<CursorRunOutcome> => withSessionContextRule(cwd, ruleBlock, withHooks)
         : withHooks;
-      return withSessionCliJson(cwd, { deny: denyRules, allow: allowRules, ask: askRules }, inner);
+      const withCli = (): Promise<CursorRunOutcome> =>
+        withSessionCliJson(cwd, { deny: denyRules, allow: allowRules, ask: askRules }, inner);
+      // Outermost: the declarative `.cursor/sandbox.json` (snapshot+restored like
+      // every other generated session file, so `git status` stays clean).
+      return withSessionSandboxJson(cwd, sandbox, withCli);
     };
 
     let outcome: CursorRunOutcome;
@@ -2360,6 +2439,18 @@ export class AgentManager {
     this.pushActivity(sessionId, 'tool', call.summary, call.target, 'info');
     this.diag('tool', 'info', call.summary, call.target ?? call.detail, sessionId);
 
+    // Governance bus: an MCP tool call is executing (both providers route MCP
+    // through an `mcp__<server>__<tool>` name). Distinct from the pre-tool-use
+    // gate — this is the execution notification the manifesto's `beforeMCPExecution`
+    // maps to. The internal limboo_* read tools are excluded (retrieval noise).
+    if (
+      name.startsWith('mcp__') &&
+      !name.startsWith('mcp__limboo_memory__') &&
+      !name.startsWith('mcp__limboo_search__')
+    ) {
+      this.emitHook(sessionId, 'mcp-exec', { tool: name, summary: call.summary });
+    }
+
     // Mirror agent-run shell commands into the integrated terminal so the user
     // sees exactly what the agent executes. The Agent SDK does not stream tool
     // stdout, so this is a record (command now, output on result) — not a live PTY.
@@ -2386,6 +2477,10 @@ export class AgentManager {
       rt.changes.set(change.path, change);
       this.pushEvent({ kind: 'file-change', sessionId, change });
       this.pushActivity(sessionId, 'file-change', `${change.status} ${shortPath(change.path)}`, undefined, 'info');
+      this.emitHook(sessionId, 'file-edit', {
+        tool: name,
+        summary: `${change.status} ${shortPath(change.path)}`,
+      });
     }
   }
 
@@ -2405,6 +2500,11 @@ export class AgentManager {
     call.status = status;
     call.endedAt = Date.now();
     this.pushEvent({ kind: 'tool-end', sessionId, callId: toolUseId, status });
+    this.emitHook(sessionId, 'post-tool-use', {
+      tool: call.name,
+      summary: call.summary,
+      severity: status === 'error' ? 'error' : 'info',
+    });
   }
 
   /* ---------------------------------------------------------------- */
@@ -2426,6 +2526,8 @@ export class AgentManager {
 
     const terminalId = this.terminal.ensureAgentTerminal(workspaceId, sessionId);
     if (!terminalId) return;
+
+    this.emitHook(sessionId, 'shell-exec', { tool: 'Bash', summary: command });
 
     const startedAt = Date.now();
     this.mirroredCommands.set(callId, { terminalId, command, startedAt });
@@ -2871,6 +2973,20 @@ export class AgentManager {
     const attachmentsDir = this.attachmentsDirFor(sessionId);
     if (attachmentsDir) options.additionalDirectories = [attachmentsDir];
 
+    // OS-level Sandbox (defense-in-depth Layer 3). Limboo's one sandbox policy
+    // becomes the SDK's `Options.sandbox` — a Seatbelt/bubblewrap jail fencing
+    // Bash + its children to the worktree and the configured network, beneath
+    // (never replacing) the canUseTool permission gate. Graceful by default:
+    // `failIfUnavailable=false` degrades to an unsandboxed run if bubblewrap is
+    // missing. `autoAllowBashIfSandboxed` is pinned off so decideToolUse stays
+    // the authority. The metadata is recorded onto the run for the timeline.
+    const eff = this.resolveSandboxFor(sessionId, cwd, 'anthropic', agent);
+    const claudeSandbox = mapClaudeSandbox(eff);
+    if (claudeSandbox) {
+      options.sandbox = claudeSandbox;
+      this.recordSandboxStatus(sessionId, eff);
+    }
+
     // Resume the Claude Code session so multi-turn conversations keep context.
     const sdkSessionId = this.loadProviderSession(sessionId, 'anthropic');
     if (sdkSessionId) options.resume = sdkSessionId;
@@ -2932,6 +3048,60 @@ export class AgentManager {
     input: Record<string, unknown>,
     signal: AbortSignal,
   ): Promise<PermissionResult> {
+    // Both providers (Claude's canUseTool and the Cursor hook bridge) call this
+    // wrapper, so a single emission records the pre-tool-use gate outcome onto
+    // the governance bus for both. The wrapper NEVER changes the decision — it
+    // only observes {@link decideToolUseCore}'s result. `prompted` distinguishes
+    // an auto/remembered resolution from one the user had to answer; a per-call
+    // ctx object keeps it race-free under concurrent gate calls.
+    const gate = { prompted: false };
+    const result = await this.decideToolUseCore(
+      sessionId,
+      cwd,
+      permMode,
+      toolName,
+      input,
+      signal,
+      gate,
+    );
+    const decision = result.behavior === 'allow' ? 'allow' : 'deny';
+    this.emitHook(sessionId, 'pre-tool-use', {
+      tool: toolName,
+      summary: summarizeTool(toolName, input, classifyTool(toolName)),
+      severity: decision === 'deny' ? 'warning' : 'info',
+      decision,
+      auto: !gate.prompted,
+    });
+    return result;
+  }
+
+  private async decideToolUseCore(
+    sessionId: string,
+    cwd: string,
+    permMode: SessionPermissionMode,
+    toolName: string,
+    input: Record<string, unknown>,
+    signal: AbortSignal,
+    gate?: { prompted: boolean },
+  ): Promise<PermissionResult> {
+      // Sandbox-escape audit (G4): when a Bash command sets the SDK's
+      // `dangerouslyDisableSandbox` flag, it is being retried OUTSIDE the OS jail
+      // and falls back to this normal permission flow. Record it in the timeline
+      // so the audit trail shows whether a command stayed contained or escaped —
+      // enforcement is unchanged (the command still passes every guard below).
+      if (
+        toolName === 'Bash' &&
+        (input as { dangerouslyDisableSandbox?: unknown }).dangerouslyDisableSandbox === true
+      ) {
+        this.pushActivity(
+          sessionId,
+          'status',
+          'Command ran outside the sandbox — normal permission flow',
+          undefined,
+          'warning',
+        );
+      }
+
       // Attachment carve-out (before the app-data guard, which would otherwise
       // block the staging dir inside userData): READ tools may open files inside
       // THIS session's own attachments dir — the userData staging dir (Claude)
@@ -2985,6 +3155,7 @@ export class AgentManager {
           detail: permissionDetail(toolName, input),
           createdAt: Date.now(),
         };
+        if (gate) gate.prompted = true;
         return this.promptForApproval(sessionId, input, request, signal);
       }
 
@@ -3075,6 +3246,7 @@ export class AgentManager {
         detail: permissionDetail(toolName, input),
         createdAt: Date.now(),
       };
+      if (gate) gate.prompted = true;
       return this.promptForApproval(sessionId, input, request, signal);
   }
 
@@ -3094,6 +3266,12 @@ export class AgentManager {
   ): Promise<PermissionResult> {
     this.pushActivity(sessionId, 'permission', `Asked to ${request.summary}`, undefined, 'warning');
     this.diag('tool', 'warning', `Approval requested: ${request.summary}`, request.detail, sessionId);
+    this.emitHook(sessionId, 'permission-request', {
+      tool: request.tool,
+      summary: request.summary,
+      detail: request.detail,
+      severity: 'warning',
+    });
     this.setLifecycle('awaiting-permission');
     this.setRequest(sessionId, { phase: 'awaiting-permission' });
     this.broadcastChannel(IpcEvents.agentPermissionRequest, request);
@@ -3222,6 +3400,58 @@ export class AgentManager {
       detail?.slice(0, ACTIVITY_LIMITS.detailMax),
       'info',
     );
+  }
+
+  /**
+   * Resolve the effective OS-level sandbox policy for a run. Shared by both
+   * providers (Claude via {@link mapClaudeSandbox}, Cursor via
+   * {@link withSessionSandboxJson}) so the two containment layers never drift —
+   * the writable root, userData/secrets denials, and network policy are decided
+   * exactly once, here.
+   */
+  private resolveSandboxFor(
+    sessionId: string,
+    cwd: string,
+    provider: AgentProvider,
+    agent: ReturnType<SettingsManager['getAll']>['agent'],
+  ): EffectiveSandbox {
+    return resolveSandboxConfig(agent.sandbox, {
+      cwd,
+      provider,
+      attachmentsDir: this.attachmentsDirFor(sessionId) ?? undefined,
+    });
+  }
+
+  /**
+   * Stream the sandbox lifecycle into the session timeline as ordinary status
+   * markers (same typography/animation as every other streamed status event —
+   * never a modal). Also records the sandbox metadata as an audit row so the
+   * timeline carries mode / writable root / network policy for the run.
+   */
+  private recordSandboxStatus(sessionId: string, eff: EffectiveSandbox): void {
+    if (!eff.enabled) return;
+    const netLabel =
+      eff.network.policy === 'all'
+        ? 'network open'
+        : eff.network.policy === 'off'
+          ? 'network blocked'
+          : `network allowlist (${eff.network.allowedDomains.length})`;
+    // The full sandbox-init sequence, streamed as ordinary status markers (same
+    // typography/animation as any other status event — never a modal). The
+    // first line's detail doubles as the per-run sandbox audit summary (mode,
+    // writable root, network policy, strict); run exit/duration land via the
+    // existing run-finished activity row.
+    this.recordStatus(
+      sessionId,
+      'Preparing isolated execution environment…',
+      `mode=${eff.mode} · writable=${eff.writeRoots[0]} · ${netLabel}` +
+        (eff.excludedCommands.length ? ` · ${eff.excludedCommands.length} excluded` : '') +
+        (eff.failIfUnavailable ? ' · strict' : ''),
+    );
+    this.recordStatus(sessionId, 'Workspace boundary established.');
+    this.recordStatus(sessionId, 'Filesystem restrictions applied.');
+    this.recordStatus(sessionId, 'Network policy loaded.', netLabel);
+    this.recordStatus(sessionId, 'Running command inside sandbox.');
   }
 
   private rememberProviderSession(

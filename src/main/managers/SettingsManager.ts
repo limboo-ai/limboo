@@ -20,6 +20,8 @@ import {
   LAYOUT_LIMITS,
   MEMORY_LIMITS,
   RESUME_LIMITS,
+  SANDBOX_DOMAIN_RE,
+  SANDBOX_LIMITS,
   SEARCH_LIMITS,
   SETTINGS_VERSION,
   VOICE_LIMITS,
@@ -27,6 +29,7 @@ import {
   clamp,
 } from '@shared/constants';
 import { IpcEvents } from '@shared/ipc-channels';
+import { screenExtraWritePath } from './sandbox/policy';
 import { readJson, writeJson } from '../storage';
 import { logger } from '../logger';
 
@@ -140,9 +143,6 @@ export class SettingsManager {
       cursor.preferredAuth = 'auto';
     }
     cursor.manualBrowserLogin = !!cursor.manualBrowserLogin;
-    if (!['auto', 'enabled', 'disabled'].includes(cursor.sandbox)) {
-      cursor.sandbox = 'auto';
-    }
     if (!['auto', 'off'].includes(cursor.hooks)) {
       cursor.hooks = 'auto';
     }
@@ -152,6 +152,73 @@ export class SettingsManager {
     cursor.discoveredModels = (Array.isArray(cursor.discoveredModels) ? cursor.discoveredModels : [])
       .filter((id): id is string => typeof id === 'string' && CURSOR_MODEL_ID_RE.test(id))
       .slice(0, CURSOR_LIMITS.modelsMax);
+
+    // Provider-neutral Sandbox (Layer 3) — whitelist the enums, coerce toggles,
+    // and sanitize the two user-widenable arrays (network allowlist + extra
+    // writable paths) since both flow into a real OS jail / argv. The writable
+    // root and userData/secrets denials are NOT configurable here — they are
+    // applied unconditionally in AgentManager.resolveSandboxConfig.
+    // Migration (SETTINGS_VERSION 16 → 17): the old per-provider
+    // `agent.cursor.sandbox` seeds the new shared `agent.sandbox.mode`.
+    const sandbox = merged.agent.sandbox;
+    const legacyCursorSandbox = (merged.agent.cursor as { sandbox?: unknown }).sandbox;
+    if (
+      typeof legacyCursorSandbox === 'string' &&
+      ['auto', 'enabled', 'disabled'].includes(legacyCursorSandbox) &&
+      (input?.agent as { sandbox?: unknown } | undefined)?.sandbox === undefined
+    ) {
+      sandbox.mode = legacyCursorSandbox as typeof sandbox.mode;
+    }
+    delete (merged.agent.cursor as { sandbox?: unknown }).sandbox;
+    if (!['auto', 'enabled', 'disabled'].includes(sandbox.mode)) sandbox.mode = 'auto';
+    if (!['all', 'allowlist', 'off'].includes(sandbox.network)) sandbox.network = 'all';
+    if (!['auto', 'claude-native', 'cursor-native'].includes(sandbox.providerOverride)) {
+      sandbox.providerOverride = 'auto';
+    }
+    sandbox.readOnlyAttachments = !!sandbox.readOnlyAttachments;
+    sandbox.failIfUnavailable = !!sandbox.failIfUnavailable;
+    sandbox.allowedDomains = (Array.isArray(sandbox.allowedDomains) ? sandbox.allowedDomains : [])
+      .filter(
+        (d): d is string =>
+          typeof d === 'string' &&
+          d.length <= SANDBOX_LIMITS.domainMax &&
+          SANDBOX_DOMAIN_RE.test(d),
+      )
+      .slice(0, SANDBOX_LIMITS.maxAllowedDomains);
+    sandbox.allowWritePaths = (
+      Array.isArray(sandbox.allowWritePaths) ? sandbox.allowWritePaths : []
+    )
+      .filter(
+        (p): p is string =>
+          typeof p === 'string' && p.trim().length > 0 && p.length <= SANDBOX_LIMITS.writePathMax,
+      )
+      .map((p) => p.trim())
+      // Reject any extra writable path that resolves into the crown-jewel floor
+      // (secrets/db/config) or is `/` / the home dir — a hand-edited settings.json
+      // must never re-widen writes into protected areas (same rule the runtime
+      // re-applies in resolveSandboxConfig, defense in depth).
+      .filter((p) => screenExtraWritePath(p))
+      .slice(0, SANDBOX_LIMITS.maxAllowWritePaths);
+    sandbox.excludedCommands = (
+      Array.isArray(sandbox.excludedCommands) ? sandbox.excludedCommands : []
+    )
+      .filter(
+        (c): c is string =>
+          typeof c === 'string' &&
+          c.trim().length > 0 &&
+          c.length <= SANDBOX_LIMITS.excludedCommandMax,
+      )
+      .map((c) => c.trim())
+      .slice(0, SANDBOX_LIMITS.maxExcludedCommands);
+
+    // Hook Engine — coerce the toggle and whitelist the audit-verbosity enum.
+    // `enabled` only gates emission of observability; it can never weaken the
+    // permission gate (enforcement always runs in the main process).
+    const hookEngine = merged.agent.hookEngine;
+    hookEngine.enabled = !!hookEngine.enabled;
+    if (!['off', 'lifecycle', 'verbose'].includes(hookEngine.audit)) {
+      hookEngine.audit = 'lifecycle';
+    }
 
     merged.git.maxCheckpoints = Math.round(
       clamp(merged.git.maxCheckpoints, GIT_LIMITS.maxCheckpoints.min, GIT_LIMITS.maxCheckpoints.max),

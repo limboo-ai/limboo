@@ -8,6 +8,7 @@ import { Search, Settings } from 'lucide-react';
 import { Wordmark } from '@/renderer/components/brand/Logo';
 import { Badge, IconButton, Kbd } from '@/renderer/components/ui';
 import { WindowControls } from './WindowControls';
+import { ActivityTabIcons } from '@/renderer/features/activity/ActivityTabIcons';
 import { WorkspaceSwitcher } from '@/renderer/features/workspace/WorkspaceSwitcher';
 import { useUIStore } from '@/renderer/stores/useUIStore';
 import { useUpdateStore } from '@/renderer/stores/useUpdateStore';
@@ -58,6 +59,8 @@ export function TitleBar() {
 
       <div className="flex items-center">
         <div className="no-drag flex items-center gap-1 pr-2">
+          <ActivityTabIcons />
+          <span className="mx-0.5 h-4 w-px shrink-0 bg-line" />
           <span className="relative">
             <IconButton
               label={hasUpdate ? 'Settings — update available' : 'Settings'}

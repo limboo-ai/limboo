@@ -1,7 +1,7 @@
 import type { AppSettings, WorkspaceConfig } from './types';
 
 /** Bumped whenever the {@link AppSettings} shape changes incompatibly. */
-export const SETTINGS_VERSION = 15;
+export const SETTINGS_VERSION = 17;
 
 /**
  * The agent providers Limboo can run (Claude Code = Anthropic via the Agent
@@ -80,6 +80,18 @@ export const ACTIVITY_LIMITS = {
   labelMax: 120,
 } as const;
 
+/** Bounds for the Provider-Neutral Hook Engine audit log + gate dispatch. */
+export const HOOK_LIMITS = {
+  /** Max audit rows retained per session (ring-capped; oldest pruned). */
+  auditRingPerSession: 500,
+  /** Deadline for a blocking gate dispatch before it fails closed (deny). */
+  gateTimeoutMs: 30_000,
+  /** Max chars kept for a hook event's summary line. */
+  summaryMax: 120,
+  /** Max chars kept for a hook event's detail line. */
+  detailMax: 160,
+} as const;
+
 /** Bounds the main process clamps agent connection-monitoring settings against. */
 export const AGENT_CONNECTION_LIMITS = {
   heartbeatInterval: { min: 0, max: 600_000, default: 30_000 },
@@ -88,6 +100,31 @@ export const AGENT_CONNECTION_LIMITS = {
   heartbeatFailureThreshold: { min: 1, max: 10, default: 2 },
   idleTimeout: { min: 0, max: 1_800_000, default: 300_000 },
 } as const;
+
+/**
+ * Bounds + caps for the provider-neutral OS-level Sandbox (Layer 3). The
+ * writable root is always the session worktree and userData/secrets are always
+ * denied — these caps only bound the user-configurable *widenings* (extra
+ * write paths / network allowlist), which are persisted user data and must be
+ * sanitized before they reach a sandbox config or argv (CLAUDE.md §6).
+ */
+export const SANDBOX_LIMITS = {
+  /** Max network-allowlist domains kept (older/extra entries dropped). */
+  maxAllowedDomains: 64,
+  /** Max chars for a single allowlist domain before it is rejected. */
+  domainMax: 253,
+  /** Max extra writable paths a user may grant beyond the worktree. */
+  maxAllowWritePaths: 32,
+  /** Max chars for a single extra writable path before it is rejected. */
+  writePathMax: 1_024,
+  /** Max Claude `excludedCommands` entries (commands run outside the jail). */
+  maxExcludedCommands: 64,
+  /** Max chars for a single excluded-command pattern before it is rejected. */
+  excludedCommandMax: 256,
+} as const;
+
+/** A network-allowlist domain must match this before it reaches any sandbox. */
+export const SANDBOX_DOMAIN_RE = /^[A-Za-z0-9*]([A-Za-z0-9.*-]{0,251}[A-Za-z0-9])?$/;
 
 /**
  * Bounds + caps for the Cursor provider (authentication only). All
@@ -518,9 +555,22 @@ export const DEFAULT_SETTINGS: AppSettings = {
       preferredAuth: 'auto',
       manualBrowserLogin: false,
       executablePath: '',
-      sandbox: 'auto',
       hooks: 'auto',
       discoveredModels: [],
+    },
+    sandbox: {
+      mode: 'auto',
+      network: 'all',
+      allowedDomains: [],
+      allowWritePaths: [],
+      excludedCommands: [],
+      readOnlyAttachments: true,
+      failIfUnavailable: false,
+      providerOverride: 'auto',
+    },
+    hookEngine: {
+      enabled: true,
+      audit: 'lifecycle',
     },
   },
   git: {
@@ -663,7 +713,7 @@ export function clamp(value: number, min: number, max: number): number {
 /* ------------------------------------------------------------------ */
 
 /** Bumped whenever the workspace DB schema changes incompatibly. */
-export const WORKSPACE_SCHEMA_VERSION = 12;
+export const WORKSPACE_SCHEMA_VERSION = 13;
 
 /** Input caps the main process enforces on renderer-supplied session values. */
 export const SESSION_LIMITS = {

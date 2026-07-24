@@ -51,6 +51,8 @@ import type {
   MemoryHit,
   MemoryListFilter,
   MemoryTier,
+  HookAuditPush,
+  HookEvent,
   MemoryUpdateInput,
   RepoConfigState,
   RepoDelta,
@@ -612,6 +614,18 @@ const resumeApi = {
     subscribe<ResumeState>(IpcEvents.resumeStateChanged, cb),
 };
 
+const hooksApi = {
+  /** The session's redacted governance audit trail (for hydration on mount). */
+  getAudit: (sessionId: string): Promise<HookEvent[]> =>
+    ipcRenderer.invoke(IpcChannels.hooksGetAudit, sessionId),
+  /** Clear a session's trail, or all sessions when the id is omitted. */
+  clearAudit: (sessionId?: string): Promise<void> =>
+    ipcRenderer.invoke(IpcChannels.hooksClearAudit, sessionId),
+  /** A normalized lifecycle event was appended (or a trail was cleared). */
+  onAudit: (cb: (push: HookAuditPush) => void): (() => void) =>
+    subscribe<HookAuditPush>(IpcEvents.hooksAudit, cb),
+};
+
 const updatesApi = {
   /** The current updater status (for hydration on mount). */
   getState: (): Promise<UpdateStatus> => ipcRenderer.invoke(IpcChannels.updateGetState),
@@ -689,6 +703,7 @@ const limbooApi = {
   memory: memoryApi,
   search: searchApi,
   resume: resumeApi,
+  hooks: hooksApi,
   updates: updatesApi,
   voice: voiceApi,
   attachment: attachmentApi,

@@ -164,6 +164,20 @@ function migrate(database: Database.Database): void {
     CREATE INDEX IF NOT EXISTS idx_agent_diagnostics_created
       ON agent_diagnostics (created_at);
 
+    -- Provider-Neutral Hook Engine audit log (schema v13) — one immutable,
+    -- redacted row per normalized lifecycle event (gate + observe) across every
+    -- provider, so the Hooks panel shows an identical governance trail whether
+    -- Claude or Cursor produced the run. payload is the JSON-serialized HookEvent.
+    CREATE TABLE IF NOT EXISTS hook_audit (
+      id          TEXT PRIMARY KEY,
+      session_id  TEXT NOT NULL,
+      phase       TEXT NOT NULL,
+      payload     TEXT NOT NULL,
+      created_at  INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_hook_audit_session
+      ON hook_audit (session_id, created_at);
+
     -- Plan Mode artifacts — one proposed implementation strategy per session,
     -- persisted so an unfinished/awaiting-approval plan survives an app restart.
     -- meta is JSON-serialized PlanMeta; markdown is the raw plan from ExitPlanMode.

@@ -41,6 +41,7 @@ export type ActivityTab =
   | 'tasks'
   | 'activity'
   | 'console'
+  | 'hooks'
   | 'terminal';
 
 /**
@@ -213,8 +214,6 @@ export interface AppSettings {
        * exists, is a file).
        */
       executablePath: string;
-      /** `--sandbox` flag for runs: auto = omit (CLI default). */
-      sandbox: 'auto' | 'enabled' | 'disabled';
       /**
        * Session hooks bridge (interactive per-tool prompts). `auto` writes a
        * session-scoped hooks.json per run (capability-gated — only ever
@@ -229,6 +228,60 @@ export interface AppSettings {
        * routing/picker display.
        */
       discoveredModels: string[];
+    };
+    /**
+     * Provider-Neutral Hook Engine — the governance/audit layer between every
+     * coding provider and every subsystem. `enabled` gates only the emission of
+     * observability events; it NEVER gates enforcement (the permission gate
+     * always runs). `audit` shapes how much reaches the Hooks panel.
+     */
+    hookEngine: {
+      /** Emit normalized lifecycle events onto the governance bus + audit log. */
+      enabled: boolean;
+      /** Audit verbosity: nothing, lifecycle+gate only, or every observe phase. */
+      audit: 'off' | 'lifecycle' | 'verbose';
+    };
+    /**
+     * Provider-neutral OS-level Sandbox (defense-in-depth Layer 3). Limboo owns
+     * one sandbox policy and translates it into whichever agent runs: Claude's
+     * Agent-SDK `Options.sandbox` (bubblewrap/Seatbelt) and Cursor's
+     * `.cursor/sandbox.json` + `--sandbox` flag. The sandbox is *containment*,
+     * never *authorization* — the permission gate (`decideToolUse`) is always
+     * the authority and runs on top. The writable root is always the session
+     * worktree and userData/secrets are always denied regardless of these knobs.
+     */
+    sandbox: {
+      /** `auto` = sandbox when the OS supports it; `disabled` = no OS jail. */
+      mode: 'auto' | 'enabled' | 'disabled';
+      /**
+       * Network egress policy for sandboxed commands. `all` keeps the network
+       * open (filesystem is still jailed); `allowlist` permits only
+       * {@link allowedDomains}; `off` blocks all network.
+       */
+      network: 'all' | 'allowlist' | 'off';
+      /** Domains reachable when `network === 'allowlist'` (wildcards allowed). */
+      allowedDomains: string[];
+      /** Extra writable directories granted beyond the session worktree. */
+      allowWritePaths: string[];
+      /**
+       * Commands that run OUTSIDE the jail (e.g. `docker *`, tools incompatible
+       * with bubblewrap), still gated by the permission engine. Claude-only —
+       * maps to the SDK's `sandbox.excludedCommands`; Cursor has no equivalent.
+       */
+      excludedCommands: string[];
+      /** Mount the session's attachment staging dir read-only inside the jail. */
+      readOnlyAttachments: boolean;
+      /**
+       * Strict mode. When true a run is blocked if the sandbox cannot start
+       * (missing bubblewrap, unsupported platform); when false it degrades to
+       * an unsandboxed run with a surfaced timeline note.
+       */
+      failIfUnavailable: boolean;
+      /**
+       * Force a specific provider's native sandbox instead of the one that
+       * matches the running agent. `auto` = follow the active provider.
+       */
+      providerOverride: 'auto' | 'claude-native' | 'cursor-native';
     };
   };
   /**
@@ -2145,6 +2198,90 @@ export type AgentEvent =
   | { kind: 'error'; sessionId: string; message: string; outcome: RequestOutcome }
   | { kind: 'request-state'; sessionId: string; request: RequestState }
   | { kind: 'diagnostic'; diagnostic: AgentDiagnostic };
+
+/* ------------------------------------------------------------------ */
+/* Provider-Neutral Hook Engine                                        */
+/*                                                                     */
+/* A normalized lifecycle taxonomy that both provider adapters (Claude */
+/* SDK, Cursor CLI) emit into one governance bus. This is an ORTHOGONAL */
+/* peer to {@link AgentEvent} — AgentEvent drives the renderer render   */
+/* stream; HookEvent drives the audit/governance stream. The engine    */
+/* holds no policy: gate decisions delegate to AgentManager's           */
+/* provider-neutral permission core. See docs / CLAUDE.md §8.           */
+/* ------------------------------------------------------------------ */
+
+/**
+ * A normalized agent-lifecycle phase — a superset of Claude Code's ~31 hook
+ * events and Cursor's 6, mapped to one vocabulary so both providers produce an
+ * identical audit trail. Gate phases carry a decision; observe phases fan-out
+ * only.
+ */
+export type HookPhase =
+  // Blocking gate phases (a dispatch returns a decision):
+  | 'pre-tool-use' // Claude PreToolUse / Cursor preToolUse+beforeShell+beforeRead+beforeMCP
+  | 'permission-request' // an interactive human approval is about to be requested
+  // Observe / notify phases (fan-out only, no decision):
+  | 'session-start'
+  | 'session-end'
+  | 'prompt-submit'
+  | 'post-tool-use'
+  | 'file-edit' // Cursor afterFileEdit / a workspace FS mutation
+  | 'shell-exec' // a command mirrored to the integrated terminal
+  | 'mcp-exec'
+  | 'checkpoint'
+  | 'run-finished' // Claude Stop / Cursor stop
+  | 'subagent-start' // Claude-only (Cursor CLI print mode has no subagents)
+  | 'subagent-stop';
+
+/** The subset of {@link HookPhase} that block and resolve to a decision. */
+export type HookGatePhase = Extract<HookPhase, 'pre-tool-use' | 'permission-request'>;
+
+/**
+ * One normalized lifecycle event on the governance bus. Every string field is
+ * REDACTED and length-bounded in the main process before it is persisted to the
+ * `hook_audit` table or broadcast to the renderer — raw tool input (which may
+ * carry secrets or `.env` contents) never reaches this shape unsanitized.
+ */
+export interface HookEvent {
+  id: string;
+  phase: HookPhase;
+  sessionId: string;
+  /** Which provider produced the run this event belongs to. */
+  provider: 'anthropic' | 'cursor';
+  /** Epoch ms. */
+  at: number;
+  /** Neutral tool identity for tool phases (Claude-shaped, e.g. `Bash`). */
+  tool?: string;
+  /** Redacted, bounded one-line summary (clamped to ACTIVITY_LIMITS.labelMax). */
+  summary?: string;
+  /** Redacted, bounded detail (clamped to ACTIVITY_LIMITS.detailMax). */
+  detail?: string;
+  severity?: DiagnosticSeverity;
+  /** Set for gate phases — the decision the policy core returned. */
+  decision?: 'allow' | 'deny' | 'ask';
+  /** True when a gate resolved without prompting a human (auto/remembered). */
+  auto?: boolean;
+}
+
+/**
+ * The normalized result a blocking {@link HookGatePhase} dispatch returns. The
+ * engine adapts the SDK's `PermissionResult` to/from this shape at the boundary;
+ * the Cursor-wire `HookDecision` (bridge/pipeServer) stays separate.
+ */
+export interface HookDecisionResult {
+  decision: 'allow' | 'deny' | 'ask';
+  reason?: string;
+  updatedInput?: Record<string, unknown>;
+}
+
+/**
+ * The renderer-facing payload pushed on the `hooks:audit` channel: either a new
+ * appended event, or a signal that a session's (or all sessions') trail was
+ * cleared so the panel refetches.
+ */
+export type HookAuditPush =
+  | { kind: 'event'; event: HookEvent }
+  | { kind: 'cleared'; sessionId: string | null };
 
 /* ------------------------------------------------------------------ */
 /* Voice subsystem — local STT/TTS as a modality of the agent session  */

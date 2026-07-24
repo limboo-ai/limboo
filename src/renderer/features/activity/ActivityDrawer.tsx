@@ -17,6 +17,7 @@ import { runCommand } from '@/renderer/lib/commands';
 import { ACTIVITY_TABS } from './tabs';
 import { ActivityFeedPanel, ChangesPanel, FilesPanel, TasksPanel } from './panels';
 import { AgentConsolePanel } from './AgentConsolePanel';
+import { HookAuditPanel } from './HookAuditPanel';
 import { TerminalPanel } from '@/renderer/features/terminal/TerminalPanel';
 import { GitPanel } from '@/renderer/features/git/GitPanel';
 import { MemoryPanel } from '@/renderer/features/memory/MemoryPanel';
@@ -43,6 +44,7 @@ export function ActivityDrawer({ tab }: { tab: ActivityTab }) {
         {tab === 'tasks' && <TasksPanel />}
         {tab === 'activity' && <ActivityFeedPanel />}
         {tab === 'console' && <AgentConsolePanel />}
+        {tab === 'hooks' && <HookAuditPanel />}
       </div>
     </section>
   );

@@ -18,6 +18,7 @@ import type { CursorAuthManager } from './CursorAuthManager';
 import { redactCursor, runCursorAgent, spawnCursorRun } from './exec';
 import { NO_RESULT_MARKER } from './errors';
 import { readNdjson } from './stream';
+import { sandboxArgv } from './sandbox';
 import {
   assistantText,
   classifyAssistantChunk,
@@ -233,9 +234,9 @@ function buildArgv(spec: CursorRunSpec): string[] {
   if (spec.trusted) argv.push('--trust');
   // Only ever set after supportsApproveMcps() probed the flag on this CLI.
   if (spec.approveMcps) argv.push('--approve-mcps');
-  // Literal whitelist only — never interpolate the settings string itself.
-  if (spec.sandbox === 'enabled') argv.push('--sandbox', 'enabled');
-  else if (spec.sandbox === 'disabled') argv.push('--sandbox', 'disabled');
+  // OS-level sandbox flag (literal whitelist inside sandboxArgv; the declarative
+  // `.cursor/sandbox.json` is written separately by withSessionSandboxJson).
+  argv.push(...sandboxArgv(spec.sandbox));
   return argv;
 }
 
@@ -247,7 +248,9 @@ function argvLabel(spec: CursorRunSpec): string {
     spec.trusted ? 'trusted' : 'untrusted',
     spec.resumeChatId ? 'resume' : 'fresh',
   ];
-  if (spec.sandbox) flags.push(`sandbox=${spec.sandbox}`);
+  if (spec.sandbox.enabled) {
+    flags.push(`sandbox=${spec.sandbox.mode},net=${spec.sandbox.network.policy}`);
+  }
   if (spec.approveMcps) flags.push('approve-mcps');
   if (spec.extraEnv?.LIMBOO_BRIDGE_PIPE) flags.push('bridge');
   return `model=${spec.model} (${flags.join(', ')})`;
