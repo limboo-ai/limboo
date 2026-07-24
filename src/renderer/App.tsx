@@ -31,6 +31,7 @@ import { useUpdateStore } from '@/renderer/stores/useUpdateStore';
 import { useVoiceStore } from '@/renderer/stores/useVoiceStore';
 import { useAttachmentStore } from '@/renderer/stores/useAttachmentStore';
 import { useResumeStore } from '@/renderer/stores/useResumeStore';
+import { useHookStore } from '@/renderer/stores/useHookStore';
 
 export function App() {
   useKeyboardShortcuts();
@@ -77,6 +78,8 @@ export function App() {
     useAttachmentStore.getState().hydrate();
     // Subscribe to resume revalidation pushes (banner + header chip + dialog).
     useResumeStore.getState().hydrate();
+    // Subscribe to Hook Engine governance-audit pushes (drives the Hooks tab).
+    useHookStore.getState().hydrate();
   }, []);
 
   return (

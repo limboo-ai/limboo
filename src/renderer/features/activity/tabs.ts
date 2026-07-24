@@ -7,6 +7,7 @@ import {
   ListTodo,
   SquareTerminal,
   TerminalSquare,
+  Webhook,
 } from 'lucide-react';
 import type { ComponentType } from 'react';
 import type { ActivityTab } from '@shared/types';
@@ -26,5 +27,6 @@ export const ACTIVITY_TABS: TabMeta[] = [
   { id: 'tasks', label: 'Tasks', icon: ListTodo },
   { id: 'activity', label: 'Activity', icon: Activity },
   { id: 'console', label: 'Console', icon: TerminalSquare },
+  { id: 'hooks', label: 'Hooks', icon: Webhook },
   { id: 'terminal', label: 'Terminal', icon: SquareTerminal },
 ];

@@ -189,6 +189,10 @@ export const IpcChannels = {
   searchSavedCreate: 'search:savedCreate',
   searchSavedDelete: 'search:savedDelete',
 
+  // Provider-Neutral Hook Engine — governance/audit trail across providers.
+  hooksGetAudit: 'hooks:getAudit',
+  hooksClearAudit: 'hooks:clearAudit',
+
   // Resume Pipeline — repository revalidation + delta on session activation.
   resumeGetState: 'resume:getState',
   resumeGetDelta: 'resume:getDelta',
@@ -288,6 +292,8 @@ export const IpcEvents = {
   memoryChanged: 'memory:changed',
   /** The search index / history / saved searches changed (reindex, save, clear). */
   searchChanged: 'search:changed',
+  /** A normalized Hook Engine lifecycle event was appended to the audit trail. */
+  hooksAudit: 'hooks:audit',
   /** Progress of an in-flight search index pass. */
   searchIndexProgress: 'search:index-progress',
   /** A session's revalidation state advanced (checking / clean / delta). */

@@ -153,6 +153,15 @@ export class SettingsManager {
       .filter((id): id is string => typeof id === 'string' && CURSOR_MODEL_ID_RE.test(id))
       .slice(0, CURSOR_LIMITS.modelsMax);
 
+    // Hook Engine — coerce the toggle and whitelist the audit-verbosity enum.
+    // `enabled` only gates emission of observability; it can never weaken the
+    // permission gate (enforcement always runs in the main process).
+    const hookEngine = merged.agent.hookEngine;
+    hookEngine.enabled = !!hookEngine.enabled;
+    if (!['off', 'lifecycle', 'verbose'].includes(hookEngine.audit)) {
+      hookEngine.audit = 'lifecycle';
+    }
+
     merged.git.maxCheckpoints = Math.round(
       clamp(merged.git.maxCheckpoints, GIT_LIMITS.maxCheckpoints.min, GIT_LIMITS.maxCheckpoints.max),
     );

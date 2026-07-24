@@ -8,6 +8,8 @@ import { ACTIVITY_TABS } from './tabs';
 import { useLayoutStore } from '@/renderer/stores/useLayoutStore';
 import { useGitStore } from '@/renderer/stores/useGitStore';
 import { useMemoryStore } from '@/renderer/stores/useMemoryStore';
+import { useSessionStore } from '@/renderer/stores/useSessionStore';
+import { useHookStore, EMPTY_HOOKS } from '@/renderer/stores/useHookStore';
 import { cn } from '@/renderer/lib/cn';
 
 export function ActivityRail() {
@@ -17,10 +19,18 @@ export function ActivityRail() {
   // the same on the Memory tab. Both are subtle accent dots with an optional count.
   const ahead = useGitStore((s) => s.status?.ahead ?? 0);
   const proposals = useMemoryStore((s) => s.proposals.length);
+  // Denied tool gates on the active session flag the Hooks tab — a governance
+  // signal worth surfacing without opening the drawer.
+  const selectedId = useSessionStore((s) => s.selectedId);
+  const denied = useHookStore((s) => {
+    const events = (selectedId ? s.bySession[selectedId] : undefined) ?? EMPTY_HOOKS;
+    return events.reduce((n, e) => (e.decision === 'deny' ? n + 1 : n), 0);
+  });
 
   const badgeFor = (id: ActivityTab): number => {
     if (id === 'git') return ahead;
     if (id === 'memory') return proposals;
+    if (id === 'hooks') return denied;
     return 0;
   };
 

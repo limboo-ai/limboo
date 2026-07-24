@@ -255,6 +255,38 @@ export function AgentPanel() {
         </Field>
       </Section>
 
+      <Section
+        title="Hook Engine"
+        hint="The provider-neutral governance layer. Every governed action (session, prompt, tool gate, file edit, shell, checkpoint) is recorded to the Hooks audit tab — identically whether Claude or Cursor is running. This only affects the audit trail; it never weakens enforcement (the permission gate always runs)."
+      >
+        <Field
+          id="hookEngineEnabled"
+          label="Governance audit"
+          hint="Emit normalized lifecycle events to the Hooks tab. Turning this off hides the audit trail but does not change what the agent is or isn't allowed to do."
+        >
+          <Toggle
+            checked={agent.hookEngine.enabled}
+            onChange={(v) => set('hookEngine', { ...agent.hookEngine, enabled: v })}
+            aria-label="Enable the Hook Engine governance audit"
+          />
+        </Field>
+        <Field
+          id="hookEngineAudit"
+          label="Audit detail"
+          hint="Lifecycle keeps session, prompt, tool-gate, checkpoint, and subagent events. Verbose adds every per-tool observe event (post-tool, shell, file edit). Off records nothing."
+        >
+          <SegmentedControl
+            value={agent.hookEngine.audit}
+            options={[
+              { value: 'off', label: 'Off' },
+              { value: 'lifecycle', label: 'Lifecycle' },
+              { value: 'verbose', label: 'Verbose' },
+            ]}
+            onChange={(value) => set('hookEngine', { ...agent.hookEngine, audit: value })}
+          />
+        </Field>
+      </Section>
+
       <Section title="Diagnostics" hint="How much detail the Agent Console and main log capture.">
         <Field
           id="logVerbosity"

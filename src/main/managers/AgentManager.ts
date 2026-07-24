@@ -55,6 +55,7 @@ import type {
   PlanStatus,
   RateLimitInfo,
   RequestOutcome,
+  HookEvent,
   RequestState,
   SessionPermissionMode,
   SessionPlan,
@@ -91,6 +92,7 @@ import { executionPostureNote, withSessionContextRule } from './cursor/rules';
 import { supportsApproveMcps } from './cursor/exec';
 import { mapHookEvent } from './cursor/translate';
 import { isReadOnlyShellCommand } from './agent/readOnlyCommands';
+import { HookEngine, type HookEmit } from './hooks/HookEngine';
 import type { CursorRunOutcome, ProviderRunBridge } from './cursor/types';
 import { IpcEvents } from '@shared/ipc-channels';
 import { getDb } from '../db/database';
@@ -391,6 +393,8 @@ interface ActiveRun {
    * retries recompose the context — the retry must re-inject the SAME block.
    */
   resumeContext?: string;
+  /** Set once the SessionStart context-injection summary has been audited (per run). */
+  contextInjected?: boolean;
 }
 
 export class AgentManager {
@@ -571,6 +575,28 @@ export class AgentManager {
    */
   setResumeManager(resume: ResumeManager): void {
     this.resume = resume;
+  }
+
+  /** Provider-Neutral Hook Engine, wired after construction (governance/audit). */
+  private hooks: HookEngine | null = null;
+
+  /**
+   * Inject the Hook Engine. The agent EMITS normalized lifecycle events onto it
+   * (session/prompt/tool/checkpoint/subagent) so both providers produce one
+   * identical audit trail. The engine holds no policy — enforcement stays in
+   * {@link decideToolUse}; the engine only records the outcome.
+   */
+  setHookEngine(hooks: HookEngine): void {
+    this.hooks = hooks;
+  }
+
+  /**
+   * Emit one normalized {@link HookEvent} onto the Hook Engine. The engine
+   * stamps the provider + id + timestamp and redacts every string, so this is a
+   * thin, never-throwing delegate. A no-op when the engine is unwired.
+   */
+  private emitHook(sessionId: string, phase: HookEvent['phase'], opts: HookEmit = {}): void {
+    this.hooks?.emit(sessionId, phase, opts);
   }
 
   /** Attachment Manager, wired after construction (session-owned staged files). */
@@ -1105,6 +1131,9 @@ export class AgentManager {
   /** Forget a session entirely (transcript, activity, runtime state). */
   clearSession(sessionId: string): void {
     this.stop(sessionId);
+    // Governance bus: the session's execution context is ending. Emit before the
+    // rows are deleted (the audit trail for this session is cleared with them).
+    this.emitHook(sessionId, 'session-end', { summary: 'Session cleared' });
     this.runtimes.delete(sessionId);
     const db = getDb();
     db.prepare('DELETE FROM agent_messages WHERE session_id = ?').run(sessionId);
@@ -1113,6 +1142,7 @@ export class AgentManager {
     db.prepare('DELETE FROM agent_provider_sessions WHERE session_id = ?').run(sessionId);
     db.prepare('DELETE FROM agent_diagnostics WHERE session_id = ?').run(sessionId);
     db.prepare('DELETE FROM agent_plans WHERE session_id = ?').run(sessionId);
+    db.prepare('DELETE FROM hook_audit WHERE session_id = ?').run(sessionId);
   }
 
   /** Abort every active run + stop all supervision timers. Called on quit. */
@@ -1162,6 +1192,15 @@ export class AgentManager {
       query: null,
     };
     this.commitGenRuns.set(workspaceId, run);
+
+    // Governance bus: the commit-message generator is an isolated, tool-less
+    // sub-agent. Scope its lifecycle to the active session (best-effort) so it
+    // branches into that session's audit trail (Claude-only — Cursor CLI print
+    // mode has no subagents).
+    const subagentSession = this.state.activeSessionId;
+    if (subagentSession) {
+      this.emitHook(subagentSession, 'subagent-start', { summary: 'Commit-message sub-agent' });
+    }
 
     const emit = (ev: Omit<GitCommitMessageStreamEvent, 'workspaceId' | 'requestId'>): void => {
       const payload: GitCommitMessageStreamEvent = { workspaceId, requestId, ...ev };
@@ -1268,6 +1307,9 @@ export class AgentManager {
     } finally {
       if (flushTimer) clearTimeout(flushTimer);
       this.commitGenRuns.delete(workspaceId);
+      if (subagentSession) {
+        this.emitHook(subagentSession, 'subagent-stop', { summary: 'Commit-message sub-agent' });
+      }
     }
   }
 
@@ -1398,12 +1440,19 @@ export class AgentManager {
     });
     this.setLifecycle('busy', { activeSessionId: sessionId, error: undefined });
     this.diag('request', 'info', `Prompt submitted (${permMode})`, prompt.slice(0, ACTIVITY_LIMITS.detailMax), sessionId);
+    // Governance bus: a run is beginning. `session-start` + `prompt-submit` are
+    // provider-neutral choke points — one emission each covers Claude + Cursor.
+    this.emitHook(sessionId, 'session-start', { summary: `Run started (${permMode})` });
+    this.emitHook(sessionId, 'prompt-submit', {
+      summary: prompt.slice(0, ACTIVITY_LIMITS.labelMax),
+    });
 
     try {
       await this.runWithRecovery(sessionId, prompt, abort, cfg, permMode);
     } finally {
       const captured = this.runs.get(sessionId)?.planCaptured;
       this.runs.delete(sessionId);
+      this.emitHook(sessionId, 'run-finished', { summary: 'Run finished' });
       // Re-anchor the session's repository snapshot — the agent may have
       // changed the repo. Fire-and-forget; never delays run teardown.
       this.resume?.onRunFinished(sessionId);
@@ -1651,6 +1700,17 @@ export class AgentManager {
       const resumeContext = this.resumeContextFor(sessionId);
       const injectedContext =
         [memoryContext, searchContext, resumeContext].filter(Boolean).join('\n\n') || undefined;
+      // Governance bus: SessionStart is the context-injection checkpoint. Audit
+      // WHICH blocks were injected — presence booleans ONLY, never the injected
+      // text (it carries memory/file content). Guarded once per run so recovery
+      // retries (which recompose the same context) don't duplicate the line.
+      const run = this.runs.get(sessionId);
+      if (run && !run.contextInjected) {
+        run.contextInjected = true;
+        this.emitHook(sessionId, 'session-start', {
+          summary: `Context injected: memory ${memoryContext ? '✓' : '✗'} · search ${searchContext ? '✓' : '✗'} · repo-delta ${resumeContext ? '✓' : '✗'}`,
+        });
+      }
       const options = this.buildOptions(sessionId, cwd, abort, agent, permMode, injectedContext);
       // Expose a live, read-only view of the Local Memory System so the agent can
       // actually list/search the developer's memories on demand (the injected
@@ -2360,6 +2420,18 @@ export class AgentManager {
     this.pushActivity(sessionId, 'tool', call.summary, call.target, 'info');
     this.diag('tool', 'info', call.summary, call.target ?? call.detail, sessionId);
 
+    // Governance bus: an MCP tool call is executing (both providers route MCP
+    // through an `mcp__<server>__<tool>` name). Distinct from the pre-tool-use
+    // gate — this is the execution notification the manifesto's `beforeMCPExecution`
+    // maps to. The internal limboo_* read tools are excluded (retrieval noise).
+    if (
+      name.startsWith('mcp__') &&
+      !name.startsWith('mcp__limboo_memory__') &&
+      !name.startsWith('mcp__limboo_search__')
+    ) {
+      this.emitHook(sessionId, 'mcp-exec', { tool: name, summary: call.summary });
+    }
+
     // Mirror agent-run shell commands into the integrated terminal so the user
     // sees exactly what the agent executes. The Agent SDK does not stream tool
     // stdout, so this is a record (command now, output on result) — not a live PTY.
@@ -2386,6 +2458,10 @@ export class AgentManager {
       rt.changes.set(change.path, change);
       this.pushEvent({ kind: 'file-change', sessionId, change });
       this.pushActivity(sessionId, 'file-change', `${change.status} ${shortPath(change.path)}`, undefined, 'info');
+      this.emitHook(sessionId, 'file-edit', {
+        tool: name,
+        summary: `${change.status} ${shortPath(change.path)}`,
+      });
     }
   }
 
@@ -2405,6 +2481,11 @@ export class AgentManager {
     call.status = status;
     call.endedAt = Date.now();
     this.pushEvent({ kind: 'tool-end', sessionId, callId: toolUseId, status });
+    this.emitHook(sessionId, 'post-tool-use', {
+      tool: call.name,
+      summary: call.summary,
+      severity: status === 'error' ? 'error' : 'info',
+    });
   }
 
   /* ---------------------------------------------------------------- */
@@ -2426,6 +2507,8 @@ export class AgentManager {
 
     const terminalId = this.terminal.ensureAgentTerminal(workspaceId, sessionId);
     if (!terminalId) return;
+
+    this.emitHook(sessionId, 'shell-exec', { tool: 'Bash', summary: command });
 
     const startedAt = Date.now();
     this.mirroredCommands.set(callId, { terminalId, command, startedAt });
@@ -2932,6 +3015,42 @@ export class AgentManager {
     input: Record<string, unknown>,
     signal: AbortSignal,
   ): Promise<PermissionResult> {
+    // Both providers (Claude's canUseTool and the Cursor hook bridge) call this
+    // wrapper, so a single emission records the pre-tool-use gate outcome onto
+    // the governance bus for both. The wrapper NEVER changes the decision — it
+    // only observes {@link decideToolUseCore}'s result. `prompted` distinguishes
+    // an auto/remembered resolution from one the user had to answer; a per-call
+    // ctx object keeps it race-free under concurrent gate calls.
+    const gate = { prompted: false };
+    const result = await this.decideToolUseCore(
+      sessionId,
+      cwd,
+      permMode,
+      toolName,
+      input,
+      signal,
+      gate,
+    );
+    const decision = result.behavior === 'allow' ? 'allow' : 'deny';
+    this.emitHook(sessionId, 'pre-tool-use', {
+      tool: toolName,
+      summary: summarizeTool(toolName, input, classifyTool(toolName)),
+      severity: decision === 'deny' ? 'warning' : 'info',
+      decision,
+      auto: !gate.prompted,
+    });
+    return result;
+  }
+
+  private async decideToolUseCore(
+    sessionId: string,
+    cwd: string,
+    permMode: SessionPermissionMode,
+    toolName: string,
+    input: Record<string, unknown>,
+    signal: AbortSignal,
+    gate?: { prompted: boolean },
+  ): Promise<PermissionResult> {
       // Attachment carve-out (before the app-data guard, which would otherwise
       // block the staging dir inside userData): READ tools may open files inside
       // THIS session's own attachments dir — the userData staging dir (Claude)
@@ -2985,6 +3104,7 @@ export class AgentManager {
           detail: permissionDetail(toolName, input),
           createdAt: Date.now(),
         };
+        if (gate) gate.prompted = true;
         return this.promptForApproval(sessionId, input, request, signal);
       }
 
@@ -3075,6 +3195,7 @@ export class AgentManager {
         detail: permissionDetail(toolName, input),
         createdAt: Date.now(),
       };
+      if (gate) gate.prompted = true;
       return this.promptForApproval(sessionId, input, request, signal);
   }
 
@@ -3094,6 +3215,12 @@ export class AgentManager {
   ): Promise<PermissionResult> {
     this.pushActivity(sessionId, 'permission', `Asked to ${request.summary}`, undefined, 'warning');
     this.diag('tool', 'warning', `Approval requested: ${request.summary}`, request.detail, sessionId);
+    this.emitHook(sessionId, 'permission-request', {
+      tool: request.tool,
+      summary: request.summary,
+      detail: request.detail,
+      severity: 'warning',
+    });
     this.setLifecycle('awaiting-permission');
     this.setRequest(sessionId, { phase: 'awaiting-permission' });
     this.broadcastChannel(IpcEvents.agentPermissionRequest, request);

@@ -128,6 +128,8 @@ export const SETTINGS_CATALOG: SettingsCategory[] = [
       { id: 'sessionPersistence', label: 'Persist sessions & diagnostics', keywords: ['persist', 'history', 'database'] },
       { id: 'connectivityNotifications', label: 'Connectivity notifications', keywords: ['notify', 'reconnect', 'rate limit'] },
       { id: 'logVerbosity', label: 'Log verbosity', keywords: ['diagnostics', 'console', 'debug', 'log'] },
+      { id: 'hookEngineEnabled', label: 'Governance audit', keywords: ['hooks', 'hook engine', 'audit', 'governance', 'lifecycle', 'events', 'security'] },
+      { id: 'hookEngineAudit', label: 'Audit detail', keywords: ['hooks', 'hook engine', 'audit', 'verbose', 'lifecycle', 'governance'] },
       { id: 'troubleshootCursor', label: 'Cursor CLI detection', keywords: ['troubleshoot', 'cursor', 'not installed', 'detect', 'probe', 'refresh', 'path', 'localappdata', 'diagnostics'] },
       { id: 'troubleshootBridge', label: 'Cursor run bridge', keywords: ['troubleshoot', 'cursor', 'hooks', 'mcp', 'bridge', 'pipe', 'memory', 'search', 'diagnostics'] },
       { id: 'troubleshootClaude', label: 'Claude Code status', keywords: ['troubleshoot', 'claude', 'not connected', 'detect', 'diagnostics'] },

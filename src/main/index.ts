@@ -28,6 +28,7 @@ import { ProxyServer } from './managers/services/ProxyServer';
 import { MemoryManager } from './managers/memory/MemoryManager';
 import { SearchManager } from './managers/search/SearchManager';
 import { ResumeManager } from './managers/resume/ResumeManager';
+import { HookEngine } from './managers/hooks/HookEngine';
 import { AutoUpdateManager } from './managers/AutoUpdateManager';
 import { VoiceManager } from './managers/voice/VoiceManager';
 import { VoiceModelManager } from './managers/voice/VoiceModelManager';
@@ -94,6 +95,7 @@ function bootstrap(): void {
   let attachments: AttachmentManager;
   let search: SearchManager;
   let resume: ResumeManager;
+  let hooks: HookEngine;
   let updates: AutoUpdateManager;
   let voiceModels: VoiceModelManager;
   let voice: VoiceManager;
@@ -163,6 +165,11 @@ function bootstrap(): void {
     // activation, and hands the agent a one-shot repository delta. A platform
     // service like Memory/Search; never blocks session switching.
     resume = new ResumeManager(workspace, sessions, settings);
+    // The Provider-Neutral Hook Engine — the governance/audit layer between every
+    // provider and every subsystem. Providers emit normalized lifecycle events
+    // onto it; it persists a redacted audit trail and broadcasts to the Hooks
+    // panel. It holds no policy (enforcement stays in AgentManager's gate).
+    hooks = new HookEngine(settings);
     // In-app updater (electron-updater + GitHub releases). No-op in dev / non-AppImage.
     updates = new AutoUpdateManager(settings, notifications);
     // The agent mirrors its shell commands into the integrated terminal.
@@ -189,6 +196,24 @@ function bootstrap(): void {
     // too. Revalidation results land in the session timeline via recordStatus.
     agent.setResumeManager(resume);
     git.setResumeManager(resume);
+    // The agent + git engine emit normalized lifecycle/checkpoint events onto the
+    // Hook Engine so both providers produce one identical governance audit trail.
+    // Additive: existing hot-path wiring (auto-checkpoint, mirror, reindex) stays.
+    agent.setHookEngine(hooks);
+    git.setHookEngine(hooks);
+    // A real bus consumer: the Hook Engine dispatches to whichever service
+    // registers interest (not just the audit sink). Here, session-lifecycle
+    // bookends surface in the unified session timeline via recordStatus — the
+    // markers it otherwise lacks (the prompt/start is already recorded by send).
+    // recordStatus is redacted + ACTIVITY_LIMITS-bounded; a throwing subscriber
+    // is swallowed per-observer inside HookEngine.record.
+    hooks.subscribe((event) => {
+      if (event.phase === 'run-finished') {
+        agent.recordStatus(event.sessionId, 'Run finished');
+      } else if (event.phase === 'session-end') {
+        agent.recordStatus(event.sessionId, 'Session ended');
+      }
+    });
     resume.setSearchManager(search);
     resume.setMemoryManager(memory);
     resume.setStatusRecorder((sessionId, label, detail) =>
@@ -254,6 +279,7 @@ function bootstrap(): void {
       attachments,
       search,
       resume,
+      hooks,
       updates,
       voice,
       voiceModels,

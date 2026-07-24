@@ -1,7 +1,7 @@
 import type { AppSettings, WorkspaceConfig } from './types';
 
 /** Bumped whenever the {@link AppSettings} shape changes incompatibly. */
-export const SETTINGS_VERSION = 15;
+export const SETTINGS_VERSION = 16;
 
 /**
  * The agent providers Limboo can run (Claude Code = Anthropic via the Agent
@@ -78,6 +78,18 @@ export const ACTIVITY_LIMITS = {
   detailMax: 160,
   /** Max chars kept for an activity item's label / short prompt echo. */
   labelMax: 120,
+} as const;
+
+/** Bounds for the Provider-Neutral Hook Engine audit log + gate dispatch. */
+export const HOOK_LIMITS = {
+  /** Max audit rows retained per session (ring-capped; oldest pruned). */
+  auditRingPerSession: 500,
+  /** Deadline for a blocking gate dispatch before it fails closed (deny). */
+  gateTimeoutMs: 30_000,
+  /** Max chars kept for a hook event's summary line. */
+  summaryMax: 120,
+  /** Max chars kept for a hook event's detail line. */
+  detailMax: 160,
 } as const;
 
 /** Bounds the main process clamps agent connection-monitoring settings against. */
@@ -522,6 +534,10 @@ export const DEFAULT_SETTINGS: AppSettings = {
       hooks: 'auto',
       discoveredModels: [],
     },
+    hookEngine: {
+      enabled: true,
+      audit: 'lifecycle',
+    },
   },
   git: {
     userName: '',
@@ -663,7 +679,7 @@ export function clamp(value: number, min: number, max: number): number {
 /* ------------------------------------------------------------------ */
 
 /** Bumped whenever the workspace DB schema changes incompatibly. */
-export const WORKSPACE_SCHEMA_VERSION = 12;
+export const WORKSPACE_SCHEMA_VERSION = 13;
 
 /** Input caps the main process enforces on renderer-supplied session values. */
 export const SESSION_LIMITS = {

@@ -97,6 +97,19 @@ export class GitManager {
     this.resume = resume;
   }
 
+  /**
+   * Optional Hook Engine — a created checkpoint is a governance event. A minimal
+   * structural type keeps GitManager decoupled from the engine module.
+   */
+  private hooks?: { emit(sessionId: string, phase: 'checkpoint', opts?: { summary?: string }): void };
+
+  /** Wire the Hook Engine so checkpoints land in the provider-neutral audit trail. */
+  setHookEngine(hooks: {
+    emit(sessionId: string, phase: 'checkpoint', opts?: { summary?: string }): void;
+  }): void {
+    this.hooks = hooks;
+  }
+
   /** Inject the active-root resolver (worktree-backed sessions). */
   setActiveRootResolver(resolve: (workspaceId: string) => string | null): void {
     this.activeRootResolver = resolve;
@@ -667,6 +680,9 @@ export class GitManager {
       // The checkpointed tree is a state worth anchoring for resume
       // revalidation. Fire-and-forget; snapshots never create checkpoints.
       this.resume?.onCheckpointCreated(sessionId);
+      this.hooks?.emit(sessionId, 'checkpoint', {
+        summary: `${opts.auto ? 'Auto-checkpoint' : 'Checkpoint'}: ${label}`,
+      });
       return checkpoint;
     } catch (err) {
       logger.warn('createCheckpoint failed', err);
