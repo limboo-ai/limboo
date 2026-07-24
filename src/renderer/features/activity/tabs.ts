@@ -18,7 +18,7 @@ export interface TabMeta {
   icon: ComponentType<{ size?: number; className?: string }>;
 }
 
-/** The right-rail tabs, in display order. */
+/** The full set of activity tabs, in display order. */
 export const ACTIVITY_TABS: TabMeta[] = [
   { id: 'files', label: 'Files', icon: Folder },
   { id: 'changes', label: 'Changes', icon: FileDiff },
@@ -30,3 +30,16 @@ export const ACTIVITY_TABS: TabMeta[] = [
   { id: 'hooks', label: 'Hooks', icon: Webhook },
   { id: 'terminal', label: 'Terminal', icon: SquareTerminal },
 ];
+
+/**
+ * Activity, Console, and Hooks render as a horizontal strip in the top TitleBar
+ * (next to Settings) instead of the vertical rail — while still opening their
+ * drawer on the right. Everything else stays on the vertical `ActivityRail`.
+ */
+export const TOP_BAR_TABS: readonly ActivityTab[] = ['activity', 'console', 'hooks'];
+
+/** Tabs shown in the top bar, in display order. */
+export const TOP_TABS: TabMeta[] = ACTIVITY_TABS.filter((t) => TOP_BAR_TABS.includes(t.id));
+
+/** Tabs that remain on the vertical right rail, in display order. */
+export const RAIL_TABS: TabMeta[] = ACTIVITY_TABS.filter((t) => !TOP_BAR_TABS.includes(t.id));
