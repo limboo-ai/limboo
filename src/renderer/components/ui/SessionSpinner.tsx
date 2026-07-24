@@ -1,54 +1,23 @@
 /**
- * Five-bar radial spinner for session "agent run in flight" indicators. Uses
- * staggered `animate-spin` layers; honors reduced-motion via the global
- * stylesheet when `data-reduced-motion="true"` is set on <html>.
+ * Session "agent run in flight" indicator. Renders the shared {@link HelixLoader}
+ * (kept as a named wrapper so its call sites — session rows, the session header,
+ * worktree tabs — stay unchanged). `invert` renders the base (dark) colour for
+ * accent backgrounds; `disabled` hides it. Reduced-motion is honoured globally.
  */
-import type { ComponentProps } from 'react';
 import { cn } from '@/renderer/lib/cn';
-
-interface SessionSpinnerProps extends ComponentProps<'div'> {
-  size?: number;
-  invert?: boolean;
-  disabled?: boolean;
-}
+import { HelixLoader } from './HelixLoader';
 
 export function SessionSpinner({
   size = 16,
   invert,
   disabled,
   className,
-  ...props
-}: SessionSpinnerProps) {
+}: {
+  size?: number;
+  invert?: boolean;
+  disabled?: boolean;
+  className?: string;
+}) {
   if (disabled) return null;
-
-  const sizePx = `${size}px`;
-  const barWidth = `${(size * 0.2).toFixed(2)}px`;
-  const barHeight = `${(size * 0.075).toFixed(2)}px`;
-
-  return (
-    <div
-      role="status"
-      aria-label="Loading"
-      className={cn('relative inline-block', className)}
-      style={{ width: sizePx, height: sizePx }}
-      {...props}
-    >
-      {[...Array(5)].map((_, i) => (
-        <div
-          key={i}
-          className="absolute inset-0 flex animate-spin justify-center"
-          style={{ animationDelay: `${i * 100}ms` }}
-        >
-          <div
-            style={{
-              backgroundColor: invert ? 'var(--color-base)' : 'var(--color-accent)',
-              width: barWidth,
-              height: barHeight,
-              borderRadius: '9999px',
-            }}
-          />
-        </div>
-      ))}
-    </div>
-  );
+  return <HelixLoader size={size} invert={invert} className={cn(className)} label="Working" />;
 }

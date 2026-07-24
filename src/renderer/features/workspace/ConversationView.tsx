@@ -17,7 +17,7 @@ import { memo, useEffect, useMemo, useRef, useState, type ReactNode } from 'reac
 import { Check, ChevronRight, CircleAlert } from 'lucide-react';
 import type { AgentActivityItem, AgentToolCall, AttachmentMeta, ChatMessage, PermissionRequest } from '@shared/types';
 import { Logo } from '@/renderer/components/brand/Logo';
-import { Spinner } from '@/renderer/components/ui';
+import { HelixLoader, Spinner } from '@/renderer/components/ui';
 import { DiffStat } from '@/renderer/components/ui/DiffStat';
 import { cn } from '@/renderer/lib/cn';
 import { useAgentStore, EMPTY_SNAPSHOT } from '@/renderer/stores/useAgentStore';
@@ -363,7 +363,7 @@ function LiveStatusRow({ sessionId }: { sessionId: string }) {
   const elapsed = secs >= 60 ? `${Math.floor(secs / 60)}m ${secs % 60}s` : `${secs}s`;
   return (
     <div className="flex items-center gap-2 text-[12px] text-muted animate-fade-in" aria-live="polite">
-      <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-accent animate-pulse" />
+      <HelixLoader size={14} label={phaseLabel(phase, toolName)} />
       <span>{phaseLabel(phase, toolName)}</span>
       {secs >= 3 && <span className="tabular-nums text-faint">{elapsed}</span>}
     </div>

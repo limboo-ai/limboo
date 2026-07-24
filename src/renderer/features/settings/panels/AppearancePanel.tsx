@@ -2,7 +2,7 @@
 import type { UiDensity } from '@shared/types';
 import { CHAT_FONTS, FONT_SCALE_LIMITS } from '@shared/constants';
 import { useSettingsStore } from '@/renderer/stores/useSettingsStore';
-import { Section, Field, StackedField, Toggle, SegmentedControl, Select } from '../controls';
+import { Section, Field, StackedField, Slider, Toggle, SegmentedControl, Select } from '../controls';
 
 export function AppearancePanel() {
   const settings = useSettingsStore((s) => s.settings);
@@ -29,14 +29,14 @@ export function AppearancePanel() {
         label={`Font scale — ${Math.round(settings.appearance.fontScale * 100)}%`}
         hint="Scales all interface text."
       >
-        <input
-          type="range"
+        <Slider
           min={FONT_SCALE_LIMITS.min}
           max={FONT_SCALE_LIMITS.max}
           step={0.05}
           value={settings.appearance.fontScale}
-          onChange={(e) => void update({ appearance: { fontScale: Number(e.target.value) } })}
-          className="w-full max-w-xs accent-accent"
+          onChange={(fontScale) => void update({ appearance: { fontScale } })}
+          aria-label="Font scale"
+          className="max-w-xs"
         />
       </StackedField>
 

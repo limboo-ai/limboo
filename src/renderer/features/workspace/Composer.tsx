@@ -18,7 +18,7 @@ import { ArrowUp, CircleStop, Mic, Paperclip, Sparkles, Volume2 } from 'lucide-r
 import type { SessionPermissionMode } from '@shared/types';
 import { providerForModel } from '@shared/constants';
 import { cn } from '@/renderer/lib/cn';
-import { Spinner } from '@/renderer/components/ui';
+import { HelixLoader } from '@/renderer/components/ui';
 import { useSessionStore } from '@/renderer/stores/useSessionStore';
 import { useAgentStore } from '@/renderer/stores/useAgentStore';
 import { useSettingsStore } from '@/renderer/stores/useSettingsStore';
@@ -442,7 +442,7 @@ function StatusHint({
   if (busy) {
     return (
       <span className="flex min-w-0 items-center gap-1.5 text-muted">
-        <Spinner size={11} />
+        <HelixLoader size={12} label={phaseLabel(phase ?? 'streaming', toolName)} />
         {/* `busy` implies `phase` is set (see the busy derivation above). */}
         <span className="truncate">{phaseLabel(phase ?? 'streaming', toolName)}</span>
       </span>

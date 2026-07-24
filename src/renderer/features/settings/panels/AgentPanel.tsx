@@ -13,7 +13,7 @@ import { useSettingsStore } from '@/renderer/stores/useSettingsStore';
 import { useAgentStore } from '@/renderer/stores/useAgentStore';
 import { lifecycleMeta } from '@/renderer/features/agent/status';
 import { useAgentModels } from '@/renderer/features/agent/models';
-import { Field, Section, Select, SegmentedControl, StackedField, TextInput, Toggle } from '../controls';
+import { Field, Section, Select, SegmentedControl, Slider, StackedField, TextInput, Toggle } from '../controls';
 import { ProviderStatusRow } from './ProviderCard';
 import { CursorProviderCard } from './CursorProviderCard';
 import { AgentTroubleshooting } from './AgentTroubleshooting';
@@ -128,14 +128,14 @@ export function AgentPanel() {
           label={`Max turns per run · ${agent.maxTurns}`}
           hint="Upper bound on the agent's internal steps before it yields back to you. Default 24. Higher allows longer autonomous runs."
         >
-          <input
-            type="range"
+          <Slider
             min={AGENT_LIMITS.maxTurns.min}
             max={AGENT_LIMITS.maxTurns.max}
             step={1}
             value={agent.maxTurns}
-            onChange={(e) => set('maxTurns', Number(e.target.value))}
-            className="w-full accent-accent"
+            onChange={(v) => set('maxTurns', v)}
+            showTicks={false}
+            aria-label="Max turns per run"
           />
         </StackedField>
       </Section>
@@ -282,14 +282,13 @@ export function AgentPanel() {
           label={`Heartbeat failures before reconnecting · ${agent.connection.heartbeatFailureThreshold}`}
           hint="Consecutive failed heartbeats tolerated before showing Reconnecting. Default 2 — absorbs brief OS scheduling hiccups without alarming you."
         >
-          <input
-            type="range"
+          <Slider
             min={AGENT_CONNECTION_LIMITS.heartbeatFailureThreshold.min}
             max={AGENT_CONNECTION_LIMITS.heartbeatFailureThreshold.max}
             step={1}
             value={agent.connection.heartbeatFailureThreshold}
-            onChange={(e) => setConn('heartbeatFailureThreshold', Number(e.target.value))}
-            className="w-full accent-accent"
+            onChange={(v) => setConn('heartbeatFailureThreshold', v)}
+            aria-label="Heartbeat failures before reconnecting"
           />
         </StackedField>
         <StackedField
@@ -297,14 +296,13 @@ export function AgentPanel() {
           label={`Max recovery attempts · ${agent.connection.maxRecoveryAttempts}`}
           hint="How many times Limboo transparently retries a run after a transient failure before surfacing an error. Default 3. 0 disables auto-recovery."
         >
-          <input
-            type="range"
+          <Slider
             min={AGENT_CONNECTION_LIMITS.maxRecoveryAttempts.min}
             max={AGENT_CONNECTION_LIMITS.maxRecoveryAttempts.max}
             step={1}
             value={agent.connection.maxRecoveryAttempts}
-            onChange={(e) => setConn('maxRecoveryAttempts', Number(e.target.value))}
-            className="w-full accent-accent"
+            onChange={(v) => setConn('maxRecoveryAttempts', v)}
+            aria-label="Max recovery attempts"
           />
         </StackedField>
         <Field

@@ -38,23 +38,48 @@ export function closeDb(): void {
 
 // SQLite cannot bind DDL identifiers, so table/column/type are interpolated.
 // These are always compile-time literals below, but validate defensively so a
-// future caller can never turn this into an injection vector (CWE-89).
+// future caller can never turn this into an injection vector (CWE-89). The
+// column definition is composed from validated parts rather than pattern-matched
+// as a free-form SQL fragment — a charset allowlist has to guess at every legal
+// default ('[]', a quoted string containing an apostrophe, …) and fails closed
+// on the ones it missed.
 const SQL_IDENTIFIER_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
-const SQL_COLUMN_TYPE_RE = /^[A-Za-z0-9_ '()]+$/;
+const SQL_COLUMN_TYPES = ['TEXT', 'INTEGER', 'REAL', 'BLOB'] as const;
+
+type ColumnSpec = {
+  type: (typeof SQL_COLUMN_TYPES)[number];
+  notNull?: boolean;
+  /** Literal default. Strings are SQL-quoted; numbers must be finite. */
+  default?: string | number;
+};
+
+/** Render a scalar as a SQL literal (single quotes doubled, per SQLite). */
+function quoteSqlLiteral(value: string | number): string {
+  if (typeof value === 'number') {
+    if (!Number.isFinite(value)) throw new Error(`Unsafe numeric default: ${value}`);
+    return String(value);
+  }
+  if (typeof value !== 'string') throw new Error(`Unsafe default type: ${typeof value}`);
+  return `'${value.replace(/'/g, "''")}'`;
+}
 
 /** Add a column to a table if it isn't already present (idempotent migration). */
 function addColumnIfMissing(
   database: Database.Database,
   table: string,
   column: string,
-  type: string,
+  spec: ColumnSpec,
 ): void {
   if (!SQL_IDENTIFIER_RE.test(table)) throw new Error(`Unsafe table identifier: ${table}`);
   if (!SQL_IDENTIFIER_RE.test(column)) throw new Error(`Unsafe column identifier: ${column}`);
-  if (!SQL_COLUMN_TYPE_RE.test(type)) throw new Error(`Unsafe column type: ${type}`);
+  if (!SQL_COLUMN_TYPES.includes(spec.type)) throw new Error(`Unsafe column type: ${spec.type}`);
+  const definition =
+    spec.type +
+    (spec.notNull ? ' NOT NULL' : '') +
+    (spec.default !== undefined ? ` DEFAULT ${quoteSqlLiteral(spec.default)}` : '');
   const cols = database.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
   if (cols.some((c) => c.name === column)) return;
-  database.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${type}`);
+  database.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
   logger.info(`DB migration: added ${table}.${column}`);
 }
 
@@ -518,23 +543,35 @@ function migrate(database: Database.Database): void {
 
   // Idempotent column additions for databases created before a column existed.
   // (SQLite has no "ADD COLUMN IF NOT EXISTS"; guard against the existing set.)
-  addColumnIfMissing(database, 'sessions', 'mode', 'TEXT');
+  addColumnIfMissing(database, 'sessions', 'mode', { type: 'TEXT' });
   // Worktree-backed sessions (schema v8) — a session may own an isolated git
   // worktree (own directory + branch). worktree_status: 'none'|'creating'|
   // 'ready'|'missing'|'removing'. base_ref is the branch/commit the worktree
   // branch was created from (used for recreate/duplicate). folder + tags are
   // user organization (tags is a JSON string array, validated before write).
-  addColumnIfMissing(database, 'sessions', 'worktree_path', 'TEXT');
-  addColumnIfMissing(database, 'sessions', 'worktree_branch', 'TEXT');
-  addColumnIfMissing(database, 'sessions', 'worktree_status', "TEXT NOT NULL DEFAULT 'none'");
-  addColumnIfMissing(database, 'sessions', 'base_ref', 'TEXT');
-  addColumnIfMissing(database, 'sessions', 'folder', 'TEXT');
-  addColumnIfMissing(database, 'sessions', 'tags', "TEXT NOT NULL DEFAULT '[]'");
+  addColumnIfMissing(database, 'sessions', 'worktree_path', { type: 'TEXT' });
+  addColumnIfMissing(database, 'sessions', 'worktree_branch', { type: 'TEXT' });
+  addColumnIfMissing(database, 'sessions', 'worktree_status', {
+    type: 'TEXT',
+    notNull: true,
+    default: 'none',
+  });
+  addColumnIfMissing(database, 'sessions', 'base_ref', { type: 'TEXT' });
+  addColumnIfMissing(database, 'sessions', 'folder', { type: 'TEXT' });
+  addColumnIfMissing(database, 'sessions', 'tags', {
+    type: 'TEXT',
+    notNull: true,
+    default: '[]',
+  });
   // Code Intelligence (schema v11) — a content hash per indexed file so the
   // incremental pass can skip files whose bytes are unchanged (no FTS churn)
   // and the resume delta engine can detect real content change. Path-only rows
   // (binary/oversize) store a cheap "size:mtimeMs" surrogate instead.
-  addColumnIfMissing(database, 'search_files', 'content_hash', "TEXT NOT NULL DEFAULT ''");
+  addColumnIfMissing(database, 'search_files', 'content_hash', {
+    type: 'TEXT',
+    notNull: true,
+    default: '',
+  });
 
   const current = database
     .prepare('SELECT value FROM meta WHERE key = ?')

@@ -199,6 +199,73 @@ export function Toggle({
   );
 }
 
+/**
+ * Modern range slider. A token-styled track + accent fill + vertical-bar thumb
+ * (with an eased "spring" glide between snapped steps) is layered over a real,
+ * visually-hidden `<input type="range">`, so pointer drag, Arrow/Home/End keys,
+ * and screen-reader semantics come for free. The press-scale and focus ring are
+ * driven purely by CSS (`:has()` off the native input) — no JS state. All
+ * styling lives in `.limboo-slider*` in `styles/index.css`; the global
+ * reduced-motion switch neutralizes the transitions automatically.
+ */
+export function Slider({
+  value,
+  min,
+  max,
+  step,
+  onChange,
+  disabled,
+  showTicks = true,
+  className,
+  'aria-label': ariaLabel,
+}: {
+  value: number;
+  min: number;
+  max: number;
+  step: number;
+  onChange: (value: number) => void;
+  disabled?: boolean;
+  showTicks?: boolean;
+  className?: string;
+  'aria-label'?: string;
+}) {
+  const pct = max > min ? ((value - min) / (max - min)) * 100 : 0;
+  const steps = step > 0 ? Math.round((max - min) / step) : 0;
+  // Only draw ticks for a small, legible number of steps.
+  const tickCount = showTicks && steps > 1 && steps <= 40 ? steps : 0;
+
+  return (
+    <div className={cn('limboo-slider', disabled && 'opacity-50', className)}>
+      <div className="limboo-slider-track">
+        <div className="limboo-slider-fill" style={{ width: `${pct}%` }} />
+        {tickCount > 0 && (
+          <div className="limboo-slider-ticks">
+            {Array.from({ length: tickCount + 1 }, (_, i) => (
+              <span
+                key={i}
+                className="limboo-slider-tick"
+                style={{ left: `${(i / tickCount) * 100}%` }}
+              />
+            ))}
+          </div>
+        )}
+      </div>
+      <span className="limboo-slider-thumb" style={{ left: `${pct}%` }} aria-hidden />
+      <input
+        type="range"
+        className="limboo-slider-input"
+        min={min}
+        max={max}
+        step={step}
+        value={value}
+        disabled={disabled}
+        aria-label={ariaLabel}
+        onChange={(e) => onChange(Number(e.target.value))}
+      />
+    </div>
+  );
+}
+
 export function SegmentedControl<T extends string>({
   value,
   options,
