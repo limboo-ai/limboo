@@ -19,6 +19,7 @@ import { WorktreeTabs } from '@/renderer/features/sessions/WorktreeTabs';
 import { ServicesStrip } from '@/renderer/features/sessions/ServicesStrip';
 import { Logo } from '@/renderer/components/brand/Logo';
 import { Composer } from './Composer';
+import { McpStrip } from './McpStrip';
 import { ClarificationCard } from './ClarificationCard';
 import { ConversationView } from './ConversationView';
 import { useSessionStore } from '@/renderer/stores/useSessionStore';
@@ -121,6 +122,9 @@ export function CenterWorkspace() {
         <div className="pointer-events-none h-3 bg-gradient-to-t from-surface to-transparent" />
         {clarification && <ClarificationCard key={clarification.id} request={clarification} />}
         <Composer disabled={!session || !!clarification} />
+        {/* Active MCP servers — connect/disconnect + live status, just below the
+            composer (hidden when no servers are configured). */}
+        <McpStrip />
       </div>
     </main>
   );

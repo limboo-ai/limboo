@@ -15,8 +15,6 @@ import * as fs from 'node:fs';
 import * as fsp from 'node:fs/promises';
 import * as path from 'node:path';
 import * as https from 'node:https';
-import * as dns from 'node:dns';
-import * as net from 'node:net';
 import * as crypto from 'node:crypto';
 import { app, BrowserWindow, shell } from 'electron';
 import * as tar from 'tar-fs';
@@ -27,6 +25,7 @@ import { VOICE_LIMITS } from '@shared/constants';
 import { VOICE_MODELS, voiceModelSpec } from '@shared/voice-models';
 import type { VoiceModelSpec } from '@shared/voice-models';
 import { logger } from '../../logger';
+import { assertHttpsAllowlistedUrl, guardedLookup } from '../../net/ssrfGuard';
 
 /** Hosts a model download may touch (GitHub release assets + their CDN). */
 const ALLOWED_HOSTS = new Set([
@@ -56,77 +55,14 @@ interface InstallManifest {
   files: Record<string, { bytes: number; sha256: string }>;
 }
 
-function isPrivateIPv4(ip: string): boolean {
-  const parts = ip.split('.').map(Number);
-  if (parts.length !== 4 || parts.some((p) => Number.isNaN(p))) return true;
-  const [a, b] = parts;
-  return (
-    a === 0 || // 0.0.0.0/8
-    a === 10 || // 10/8
-    a === 127 || // loopback
-    (a === 169 && b === 254) || // link-local
-    (a === 172 && b >= 16 && b <= 31) || // 172.16/12
-    (a === 192 && b === 168) || // 192.168/16
-    (a === 100 && b >= 64 && b <= 127) || // CGNAT 100.64/10
-    a >= 224 // multicast / reserved
-  );
-}
-
-function isPrivateIp(ip: string): boolean {
-  const kind = net.isIP(ip);
-  if (kind === 4) return isPrivateIPv4(ip);
-  if (kind !== 6) return true;
-  const lower = ip.toLowerCase();
-  // IPv4-mapped (::ffff:a.b.c.d) — validate the embedded IPv4.
-  const mapped = lower.match(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/);
-  if (mapped) return isPrivateIPv4(mapped[1]);
-  return (
-    lower === '::1' ||
-    lower === '::' ||
-    lower.startsWith('fc') || // fc00::/7 unique-local
-    lower.startsWith('fd') ||
-    lower.startsWith('fe8') || // fe80::/10 link-local
-    lower.startsWith('fe9') ||
-    lower.startsWith('fea') ||
-    lower.startsWith('feb')
-  );
-}
-
-/** Reject a URL unless it is https on an allowlisted host. */
-function assertAllowedUrl(raw: string): URL {
-  const url = new URL(raw);
-  if (url.protocol !== 'https:') throw new Error(`Blocked non-HTTPS download URL: ${url.protocol}`);
-  if (url.username || url.password) throw new Error('Blocked download URL with credentials');
-  if (!ALLOWED_HOSTS.has(url.hostname)) {
-    throw new Error(`Blocked download host: ${url.hostname}`);
-  }
-  return url;
-}
-
 /**
- * `lookup` implementation passed to https.request so the address the socket
- * actually connects to is validated — not just a pre-check that could race.
+ * Reject a URL unless it is https on an allowlisted host. Thin wrapper over the
+ * shared {@link assertHttpsAllowlistedUrl} guard; the private-address check is
+ * enforced separately at connect time via the shared {@link guardedLookup}.
  */
-const guardedLookup: net.LookupFunction = (hostname, options, callback) => {
-  dns.lookup(hostname, { ...options, all: true }, (err, addresses) => {
-    if (err) return callback(err, [], 4);
-    const list = Array.isArray(addresses) ? addresses : [{ address: String(addresses), family: 4 }];
-    const bad = list.find((a) => isPrivateIp(a.address));
-    if (bad) {
-      return callback(
-        new Error(`Blocked download: ${hostname} resolves to a private address`),
-        [],
-        4,
-      );
-    }
-    // Match the caller's `all` expectation.
-    if ((options as dns.LookupOptions).all) {
-      (callback as unknown as (e: null, a: dns.LookupAddress[]) => void)(null, list);
-    } else {
-      callback(null, list[0].address, list[0].family);
-    }
-  });
-};
+function assertAllowedUrl(raw: string): URL {
+  return assertHttpsAllowlistedUrl(raw, ALLOWED_HOSTS);
+}
 
 interface DownloadProgress {
   receivedBytes: number;

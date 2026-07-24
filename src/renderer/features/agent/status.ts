@@ -9,9 +9,15 @@ import {
   Download,
   KeyRound,
   Loader2,
+  Plug,
   type LucideIcon,
 } from 'lucide-react';
-import type { AgentLifecycleStatus, CursorAuthStatus, RequestPhase } from '@shared/types';
+import type {
+  AgentLifecycleStatus,
+  CursorAuthStatus,
+  McpServerStatus,
+  RequestPhase,
+} from '@shared/types';
 import { providerForModel } from '@shared/constants';
 
 /** The human name of the provider serving a model id (composer copy, banners). */
@@ -83,6 +89,25 @@ export function cursorStatusMeta(status: CursorAuthStatus | 'unknown'): Lifecycl
       return { dot: 'bg-line-strong', text: 'text-faint', label: 'Install CLI', icon: Download };
     default:
       return { dot: 'bg-line-strong', text: 'text-faint', label: 'Checking…', icon: Loader2, spin: true };
+  }
+}
+
+/**
+ * MCP server connection status → the same meta shape, so the MCP workspace and
+ * the below-Composer strip render one shared status pill/dot.
+ */
+export function mcpStatusMeta(status: McpServerStatus): LifecycleMeta {
+  switch (status) {
+    case 'connected':
+      return { dot: 'bg-success', text: 'text-success', label: 'Connected', icon: CheckCircle2 };
+    case 'connecting':
+      return { dot: 'bg-accent', text: 'text-accent', label: 'Connecting…', icon: Loader2, spin: true };
+    case 'needs-auth':
+      return { dot: 'bg-warning', text: 'text-warning', label: 'Needs auth', icon: KeyRound };
+    case 'error':
+      return { dot: 'bg-danger', text: 'text-danger', label: 'Error', icon: CircleAlert };
+    default:
+      return { dot: 'bg-line-strong', text: 'text-faint', label: 'Disconnected', icon: Plug };
   }
 }
 

@@ -563,10 +563,222 @@ export interface AppSettings {
       offlineOnly: boolean;
     };
   };
+  /**
+   * MCP (Model Context Protocol) platform — Limboo owns a provider-independent
+   * MCP registry so Claude Code and Cursor consume the SAME servers, secrets,
+   * and permissions instead of each maintaining its own config. Individual
+   * server definitions live in the on-device database (not this file); these are
+   * the global platform preferences. No secrets here — server credentials are
+   * safeStorage-encrypted in the main-process secret store, never sent to the
+   * renderer and never written to a config file in plaintext.
+   */
+  mcp: {
+    /** Master switch for the MCP subsystem (registry + probes + injection + UI). */
+    enabled: boolean;
+    /** Health-probe / heartbeat cadence (ms) for enabled servers. 0 disables. */
+    heartbeatInterval: number;
+    /** Deadline for a single connect / tools-list probe (ms). */
+    probeTimeout: number;
+    /**
+     * Default trust for a newly added server:
+     * - `ask`:     every tool call prompts through the permission gate.
+     * - `trusted`: the server's tools are auto-approved (still path-guarded).
+     */
+    defaultTrust: 'ask' | 'trusted';
+    /**
+     * Allow probing/using remote MCP servers that resolve to private, loopback,
+     * or link-local addresses. Off by default (SSRF hardening); a per-server
+     * override covers legitimate local HTTP servers. The cloud-metadata IP
+     * (169.254.169.254) is always blocked regardless of this switch.
+     */
+    allowPrivateNetwork: boolean;
+    /** Discover + import existing provider mcp.json files into the registry (read-only). */
+    autoImport: {
+      cursor: boolean;
+      claude: boolean;
+    };
+    /** Inject enabled servers into Claude runs (options.mcpServers). */
+    injectIntoClaude: boolean;
+    /** Inject enabled servers into Cursor runs (generated .cursor/mcp.json). */
+    injectIntoCursor: boolean;
+    /** How chatty MCP diagnostics are (probe failures, spawn errors). */
+    logVerbosity: 'quiet' | 'normal' | 'verbose';
+  };
 }
 
 /** A dotted-path key into {@link AppSettings} (kept loose for ergonomics). */
 export type SettingsKey = string;
+
+/* ------------------------------------------------------------------ */
+/* MCP (Model Context Protocol) platform                               */
+/* ------------------------------------------------------------------ */
+
+/** Transport an MCP server speaks. `http` = Streamable HTTP (the spec name). */
+export type McpTransport = 'stdio' | 'http' | 'sse';
+
+/** How/whether a configured server is probed on activation. */
+export type McpStartup = 'eager' | 'on-demand';
+
+/** Whether the server's tools auto-approve or prompt through the permission gate. */
+export type McpTrust = 'ask' | 'trusted';
+
+/** Restart policy for a crashed stdio server. */
+export type McpRestartPolicy = 'never' | 'on-failure';
+
+/** Where a server definition originated (drives the source badge in the UI). */
+export type McpSource = 'user' | 'imported-cursor' | 'imported-claude' | 'marketplace';
+
+/** Auto-assigned logical grouping for the MCP workspace list. */
+export type McpCategory =
+  | 'version-control'
+  | 'search'
+  | 'memory'
+  | 'documentation'
+  | 'cloud'
+  | 'issue-tracker'
+  | 'database'
+  | 'browser'
+  | 'container'
+  | 'monitoring'
+  | 'ai'
+  | 'deployment'
+  | 'communication'
+  | 'filesystem'
+  | 'productivity'
+  | 'custom';
+
+/** Live connection status of a server (mirrors the SDK's mcp_servers status). */
+export type McpServerStatus =
+  | 'disconnected'
+  | 'connecting'
+  | 'connected'
+  | 'needs-auth'
+  | 'error';
+
+/** One discovered tool exposed by a server. */
+export interface McpToolInfo {
+  name: string;
+  description?: string;
+}
+
+/**
+ * A named env var / header value. `secret: true` means the real value lives in
+ * the main-process secret store (safeStorage) under `mcp-<serverId>-<key>` and
+ * only its presence crosses to the renderer — never the value itself.
+ */
+export interface McpFieldValue {
+  /** Plain (non-secret) value, or '' when this is a secret reference. */
+  value: string;
+  /** True when the value is held encrypted in the secret store. */
+  secret: boolean;
+}
+
+/**
+ * Provider-neutral MCP server definition (durable, no plaintext secrets).
+ * Persisted in the `mcp_servers` DB table; secret env/header values are held
+ * separately in the secret store and referenced here with `secret: true`.
+ */
+export interface McpServerConfig {
+  id: string;
+  /** null/undefined = global (all workspaces); else the owning workspace id. */
+  workspaceId?: string | null;
+  /** Stable machine name used in the mcp__<name>__<tool> namespace. */
+  name: string;
+  /** Human label shown in the UI. */
+  displayName: string;
+  transport: McpTransport;
+  /** stdio only — executable, args, env. */
+  command?: string;
+  args: string[];
+  env: Record<string, McpFieldValue>;
+  cwd?: string;
+  /** http/sse only — endpoint + headers. */
+  url?: string;
+  headers: Record<string, McpFieldValue>;
+  enabled: boolean;
+  startup: McpStartup;
+  trust: McpTrust;
+  /** Per-tool-call wall-clock cap (ms). */
+  timeoutMs: number;
+  restartPolicy: McpRestartPolicy;
+  /** Which providers see this server. */
+  providers: { claude: boolean; cursor: boolean };
+  /** Permit private/loopback/link-local hosts for this remote server (SSRF opt-in). */
+  allowPrivateNetwork: boolean;
+  category: McpCategory;
+  /** Lucide icon id or a marketplace icon key. */
+  icon: string;
+  source: McpSource;
+  createdAt: number;
+  updatedAt: number;
+}
+
+/** Live runtime state for a server (never persisted; broadcast to the renderer). */
+export interface McpServerRuntime {
+  status: McpServerStatus;
+  /** Discovered tools from the last successful probe. */
+  tools: McpToolInfo[];
+  /** Last probe round-trip (ms), when known. */
+  latencyMs?: number;
+  /** Last successful heartbeat / probe timestamp. */
+  lastProbeAt?: number;
+  /** Human-readable last error (secret-free). */
+  error?: string;
+}
+
+/** Config + live runtime — the shape the renderer consumes. */
+export interface McpServerInfo extends McpServerConfig {
+  runtime: McpServerRuntime;
+}
+
+/**
+ * A server spec supplied by the renderer to add/update. Secret env/header values
+ * arrive under `secretEnv`/`secretHeaders` (name -> plaintext) and are moved into
+ * the secret store by the main process — never persisted in the row, never echoed.
+ */
+export interface McpServerInput {
+  workspaceId?: string | null;
+  name: string;
+  displayName?: string;
+  transport: McpTransport;
+  command?: string;
+  args?: string[];
+  env?: Record<string, string>;
+  cwd?: string;
+  url?: string;
+  headers?: Record<string, string>;
+  enabled?: boolean;
+  startup?: McpStartup;
+  trust?: McpTrust;
+  timeoutMs?: number;
+  restartPolicy?: McpRestartPolicy;
+  providers?: { claude: boolean; cursor: boolean };
+  allowPrivateNetwork?: boolean;
+  category?: McpCategory;
+  icon?: string;
+  /** Secret env values (name -> plaintext) — stored encrypted, never returned. */
+  secretEnv?: Record<string, string>;
+  /** Secret header values (name -> plaintext) — stored encrypted, never returned. */
+  secretHeaders?: Record<string, string>;
+  /** Preserve existing secret keys not resent (edit flow). */
+  keepSecrets?: string[];
+}
+
+/** Result of a "test connection" probe surfaced to the UI. */
+export interface McpProbeResult {
+  ok: boolean;
+  status: McpServerStatus;
+  tools: McpToolInfo[];
+  latencyMs?: number;
+  error?: string;
+}
+
+/** One line from a server's diagnostic log ring (secret-free). */
+export interface McpLogLine {
+  at: number;
+  level: 'info' | 'warn' | 'error';
+  text: string;
+}
 
 /* ------------------------------------------------------------------ */
 /* Auto-update (electron-updater)                                      */

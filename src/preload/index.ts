@@ -89,6 +89,11 @@ import type {
   WorkspaceConfig,
   WorkspaceStats,
   WorktreeInfo,
+  McpServerInfo,
+  McpServerInput,
+  McpProbeResult,
+  McpLogLine,
+  McpServerRuntime,
 } from '@shared/types';
 
 /** Subscribe to a one-way main -> renderer event. Returns an unsubscribe fn. */
@@ -686,6 +691,31 @@ const voiceApi = {
     subscribe<VoiceModelState[]>(IpcEvents.voiceModelsChanged, cb),
 };
 
+const mcpApi = {
+  /** All MCP servers in scope (global + active workspace), with live runtime. */
+  list: (): Promise<McpServerInfo[]> => ipcRenderer.invoke(IpcChannels.mcpList),
+  get: (id: string): Promise<McpServerInfo | null> => ipcRenderer.invoke(IpcChannels.mcpGet, id),
+  add: (input: McpServerInput): Promise<McpServerInfo> => ipcRenderer.invoke(IpcChannels.mcpAdd, input),
+  update: (id: string, input: McpServerInput): Promise<McpServerInfo> =>
+    ipcRenderer.invoke(IpcChannels.mcpUpdate, id, input),
+  remove: (id: string): Promise<void> => ipcRenderer.invoke(IpcChannels.mcpRemove, id),
+  setEnabled: (id: string, on: boolean): Promise<void> =>
+    ipcRenderer.invoke(IpcChannels.mcpSetEnabled, id, on),
+  connect: (id: string): Promise<void> => ipcRenderer.invoke(IpcChannels.mcpConnect, id),
+  disconnect: (id: string): Promise<void> => ipcRenderer.invoke(IpcChannels.mcpDisconnect, id),
+  test: (id: string): Promise<McpProbeResult> => ipcRenderer.invoke(IpcChannels.mcpTest, id),
+  refreshTools: (id: string): Promise<McpServerInfo | null> =>
+    ipcRenderer.invoke(IpcChannels.mcpRefreshTools, id),
+  logs: (id: string): Promise<McpLogLine[]> => ipcRenderer.invoke(IpcChannels.mcpLogs, id),
+  importFromProviders: (): Promise<number> => ipcRenderer.invoke(IpcChannels.mcpImport),
+  exportToProject: (ids: string[]): Promise<{ cursor: boolean; claude: boolean }> =>
+    ipcRenderer.invoke(IpcChannels.mcpExportToProject, ids),
+  onServersChanged: (cb: (payload: { servers: McpServerInfo[] }) => void): (() => void) =>
+    subscribe<{ servers: McpServerInfo[] }>(IpcEvents.mcpServersChanged, cb),
+  onServerStatus: (cb: (payload: { id: string; runtime: McpServerRuntime }) => void): (() => void) =>
+    subscribe<{ id: string; runtime: McpServerRuntime }>(IpcEvents.mcpServerStatus, cb),
+};
+
 const limbooApi = {
   window: windowApi,
   settings: settingsApi,
@@ -707,6 +737,7 @@ const limbooApi = {
   updates: updatesApi,
   voice: voiceApi,
   attachment: attachmentApi,
+  mcp: mcpApi,
 };
 
 contextBridge.exposeInMainWorld('limboo', limbooApi);

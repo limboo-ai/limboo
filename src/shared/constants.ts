@@ -1,7 +1,7 @@
 import type { AppSettings, WorkspaceConfig } from './types';
 
 /** Bumped whenever the {@link AppSettings} shape changes incompatibly. */
-export const SETTINGS_VERSION = 17;
+export const SETTINGS_VERSION = 18;
 
 /**
  * The agent providers Limboo can run (Claude Code = Anthropic via the Agent
@@ -195,6 +195,70 @@ export const CURSOR_URLS = {
   dashboard: 'https://cursor.com/dashboard',
   apiKeys: 'https://cursor.com/dashboard/api',
 } as const;
+
+/**
+ * Bounds + caps for the provider-independent MCP platform. Server definitions
+ * are persisted user data (DB) that ride into a child-process spawn or a
+ * generated provider config file — every renderer-supplied field is clamped /
+ * charset-validated against these caps before use (CLAUDE.md §6). Secrets live
+ * in the safeStorage secret store, never in the row and never on argv.
+ */
+export const MCP_LIMITS = {
+  /** Max configured servers total (defense against runaway import). */
+  maxServers: 100,
+  /** Max chars for a server machine name (used in the mcp__<name>__ namespace). */
+  nameMax: 64,
+  /** Max chars for a human display name. */
+  displayNameMax: 120,
+  /** Max chars for a stdio server command. */
+  commandMax: 1_024,
+  /** Max argv entries for a stdio server. */
+  maxArgs: 64,
+  /** Max chars for a single argv entry. */
+  argMax: 4_096,
+  /** Max env / header entries. */
+  maxEnv: 64,
+  /** Max chars for an env / header key. */
+  keyMax: 256,
+  /** Max chars for a non-secret env / header value. */
+  valueMax: 8_192,
+  /** Max chars for a remote server URL. */
+  urlMax: 2_048,
+  /** Max chars for a working directory. */
+  cwdMax: 1_024,
+  /** Max chars for a secret value accepted from the renderer (never persisted). */
+  secretMax: 8_192,
+  /** Per-tool-call wall-clock cap bounds (ms). */
+  timeoutMs: { min: 1_000, max: 600_000, default: 60_000 },
+  /** Health-probe / heartbeat cadence bounds (ms); 0 disables. */
+  heartbeatInterval: { min: 0, max: 3_600_000, default: 60_000 },
+  /** Single connect / tools-list probe deadline bounds (ms). */
+  probeTimeout: { min: 1_000, max: 120_000, default: 15_000 },
+  /** Max tools cached per server. */
+  maxTools: 500,
+  /** A single MCP client stdio line beyond this is dropped, never buffered. */
+  clientLineMax: 4_194_304,
+  /** Max log lines kept in the per-server ring buffer. */
+  logRingMax: 500,
+} as const;
+
+/**
+ * A server machine name must match this before it reaches the `mcp__<name>__`
+ * tool namespace or a generated provider config. Letters/digits/`_`/`-`, bounded.
+ */
+export const MCP_SERVER_NAME_RE = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/;
+
+/**
+ * Server names reserved by Limboo's own in-process servers and the providers'
+ * built-in servers — a user/imported server may never register under these.
+ */
+export const MCP_RESERVED_NAMES: ReadonlySet<string> = new Set([
+  'limboo_memory',
+  'limboo_search',
+  'workspace',
+  'claude-in-chrome',
+  'computer-use',
+]);
 
 /** Hard limits the renderer and main process both clamp against. */
 export const LAYOUT_LIMITS = {
@@ -643,6 +707,20 @@ export const DEFAULT_SETTINGS: AppSettings = {
     maxCommitsInDelta: RESUME_LIMITS.maxCommitsInDelta.default,
     staleThresholdDays: RESUME_LIMITS.staleThresholdDays.default,
   },
+  mcp: {
+    enabled: true,
+    heartbeatInterval: MCP_LIMITS.heartbeatInterval.default,
+    probeTimeout: MCP_LIMITS.probeTimeout.default,
+    defaultTrust: 'ask',
+    allowPrivateNetwork: false,
+    autoImport: {
+      cursor: true,
+      claude: true,
+    },
+    injectIntoClaude: true,
+    injectIntoCursor: true,
+    logVerbosity: 'normal',
+  },
   attachments: {
     enabled: true,
     maxFileSizeMB: ATTACHMENT_LIMITS.maxFileSizeMB.default,
@@ -713,7 +791,7 @@ export function clamp(value: number, min: number, max: number): number {
 /* ------------------------------------------------------------------ */
 
 /** Bumped whenever the workspace DB schema changes incompatibly. */
-export const WORKSPACE_SCHEMA_VERSION = 13;
+export const WORKSPACE_SCHEMA_VERSION = 14;
 
 /** Input caps the main process enforces on renderer-supplied session values. */
 export const SESSION_LIMITS = {

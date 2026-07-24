@@ -115,6 +115,7 @@ import { createMemoryMcpServer } from './memory/memoryTools';
 import type { AttachmentManager } from './attachments/AttachmentManager';
 import type { SearchManager } from './search/SearchManager';
 import { createSearchMcpServer } from './search/searchTools';
+import type { McpManager } from './mcp/McpManager';
 
 /* ------------------------------------------------------------------ */
 /* ESM loader — the SDK is ESM-only; main is a CJS bundle. Load it with */
@@ -587,6 +588,20 @@ export class AgentManager {
    */
   setResumeManager(resume: ResumeManager): void {
     this.resume = resume;
+  }
+
+  /** MCP platform, wired after construction (provider-neutral tool servers). */
+  private mcp: McpManager | null = null;
+
+  /**
+   * Inject the MCP Manager. MCP is a platform service owned by the app — both
+   * providers CONSUME the same registry: Claude via `options.mcpServers`
+   * (+ trusted `allowedTools`), Cursor via the generated `.cursor/mcp.json`
+   * (+ `Mcp()` allow rules). Every resulting tool call still flows through
+   * {@link decideToolUse}; trusted servers are the only auto-approve widening.
+   */
+  setMcpManager(mcp: McpManager): void {
+    this.mcp = mcp;
   }
 
   /** Provider-Neutral Hook Engine, wired after construction (governance/audit). */
@@ -1741,6 +1756,20 @@ export class AgentManager {
           limboo_search: createSearchMcpServer(sdk, this.search, this.workspace),
         };
       }
+      // User-configured MCP servers from the provider-independent registry. Both
+      // providers consume the SAME registry; for Claude they ride
+      // options.mcpServers with secrets resolved in-memory (never persisted).
+      // Trusted servers auto-approve inside decideToolUse (via
+      // trustedToolMatchers), NOT via allowedTools, so the single permission
+      // authority + governance audit still cover every MCP call.
+      if (this.mcp) {
+        const inj = this.mcp.claudeServersFor();
+        const mcpNames = Object.keys(inj.servers);
+        if (mcpNames.length > 0) {
+          options.mcpServers = { ...(options.mcpServers ?? {}), ...inj.servers };
+          this.recordStatus(sessionId, `Loading ${mcpNames.length} MCP server(s)…`, mcpNames.join(', '));
+        }
+      }
       this.diag('lifecycle', 'debug', 'Handshake — query opened', undefined, sessionId);
       // Attachments ride the SDK prompt only (the persisted transcript keeps the
       // raw prompt): a compact manifest tells the agent what is staged on disk so
@@ -2163,14 +2192,23 @@ export class AgentManager {
       }
     }
 
+    // User-configured MCP servers from the app-owned registry (git-clean per-run
+    // injection): secret values ride the cursor-agent child env and are
+    // referenced as ${env:NAME} in the generated .cursor/mcp.json (never the
+    // file). Independent of the limboo bridge pipe — external servers don't need
+    // it — so a server is registered even when the bridge failed to start.
+    const cursorMcp = this.mcp ? this.mcp.cursorSpecFor() : { userServers: {}, allowRules: [], secretEnv: {} };
+    const hasUserServers = Object.keys(cursorMcp.userServers).length > 0;
+    const limbooBridge = !!(pipe && mcpBridgePath);
     const mcpSpec: McpBridgeSpec | null =
-      pipe && mcpBridgePath
+      limbooBridge || hasUserServers
         ? {
-            nodeCommand: bridgeNodeCommand(),
-            bridgePath: mcpBridgePath,
-            bridgeEnv: pipe.env,
-            memory: !!this.memory,
-            search: !!this.search,
+            nodeCommand: limbooBridge ? bridgeNodeCommand() : '',
+            bridgePath: mcpBridgePath ?? '',
+            bridgeEnv: pipe ? pipe.env : {},
+            memory: limbooBridge && !!this.memory,
+            search: limbooBridge && !!this.search,
+            userServers: cursorMcp.userServers,
           }
         : null;
     const hookCfg =
@@ -2224,11 +2262,16 @@ export class AgentManager {
     // matters even propose-only), with allow rules translated from the
     // standing posture. Deny beats allow, so the merge only tightens.
     const denyRules = sessionDenyRules(app.getPath('userData'));
-    const allowRules = sessionAllowRules({
-      autoApproveReads: agent.autoApproveReads && agent.permissionMode !== 'approve-all',
-      limbooMcp: mcpSpec != null,
-      attachmentsStaged: attachmentStaging != null,
-    });
+    const allowRules = [
+      ...sessionAllowRules({
+        autoApproveReads: agent.autoApproveReads && agent.permissionMode !== 'approve-all',
+        limbooMcp: limbooBridge,
+        attachmentsStaged: attachmentStaging != null,
+      }),
+      // Trusted user MCP servers auto-approve declaratively too (Mcp(<name>:*)),
+      // matching the decideToolUse trust for the Claude path.
+      ...cursorMcp.allowRules,
+    ];
     // Workspace secrets (.env / SSH keys / key-cert material) are ask-for-approval,
     // not hard-denied: on a hook-verified run the beforeReadFile hook drives the
     // Limboo prompt (touchesSensitiveFile); `ask` (unlike `deny`) never poisons
@@ -2250,7 +2293,15 @@ export class AgentManager {
         approveMcps,
         // ELECTRON_RUN_AS_NODE lets cursor-agent's children run the bundled
         // .cjs bridges through the Electron binary; harmless to the CLI itself.
-        extraEnv: pipe ? { ...pipe.env, ELECTRON_RUN_AS_NODE: '1' } : undefined,
+        // cursorMcp.secretEnv carries resolved MCP secret values referenced as
+        // ${env:NAME} in .cursor/mcp.json — kept off the file, on the child env.
+        extraEnv: ((): Record<string, string> | undefined => {
+          const e = {
+            ...(pipe ? { ...pipe.env, ELECTRON_RUN_AS_NODE: '1' } : {}),
+            ...cursorMcp.secretEnv,
+          };
+          return Object.keys(e).length > 0 ? e : undefined;
+        })(),
         abort,
       };
 
@@ -3225,6 +3276,17 @@ export class AgentManager {
       // own permissionMode; the Cursor hook path lands here, so mirror it.
       if (permMode === 'acceptEdits' && risk === 'write') {
         return { behavior: 'allow', updatedInput: input };
+      }
+
+      // User-configured MCP servers marked "trusted" auto-approve — the single
+      // permission authority both providers share for external tools. Placed
+      // AFTER the plan/ask read-only gate and the path guard (so trust never
+      // reopens a plan run), and untrusted MCP tools fall through to the prompt
+      // below like any other 'command'-risk tool.
+      if (this.mcp && toolName.startsWith('mcp__')) {
+        for (const prefix of this.mcp.trustedToolMatchers()) {
+          if (toolName.startsWith(prefix)) return { behavior: 'allow', updatedInput: input };
+        }
       }
 
       const autoRead =

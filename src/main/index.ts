@@ -36,6 +36,7 @@ import { AttachmentManager } from './managers/attachments/AttachmentManager';
 import { SecretStore } from './secrets/SecretStore';
 import { CursorAuthManager } from './managers/cursor/CursorAuthManager';
 import { CursorRuntime } from './managers/cursor/CursorRuntime';
+import { McpManager } from './managers/mcp/McpManager';
 import { configureCursorExec } from './managers/cursor/exec';
 import { registerCursorModels } from '@shared/constants';
 import { getDb, closeDb } from './db/database';
@@ -101,6 +102,7 @@ function bootstrap(): void {
   let voice: VoiceManager;
   let cursorAuth: CursorAuthManager;
   let cursorRuntime: CursorRuntime;
+  let mcp: McpManager;
   let memorySweepTimer: ReturnType<typeof setInterval> | undefined;
   const windowState = new WindowStateManager();
   const appMenu = new AppMenuManager();
@@ -172,6 +174,12 @@ function bootstrap(): void {
     hooks = new HookEngine(settings);
     // In-app updater (electron-updater + GitHub releases). No-op in dev / non-AppImage.
     updates = new AutoUpdateManager(settings, notifications);
+    // The MCP platform — a provider-independent Model Context Protocol registry
+    // owned by the app. Both agents CONSUME it (Claude via options.mcpServers,
+    // Cursor via generated .cursor/mcp.json); it owns discovery, secrets,
+    // health probes, and permission trust. Its own SecretStore instance (the
+    // store is stateless — filesystem-backed) keeps MCP secrets namespaced.
+    mcp = new McpManager(new SecretStore(), settings, workspace);
     // The agent mirrors its shell commands into the integrated terminal.
     agent.setTerminalManager(terminal);
     // The agent auto-titles untitled sessions from their first prompt.
@@ -196,6 +204,10 @@ function bootstrap(): void {
     // too. Revalidation results land in the session timeline via recordStatus.
     agent.setResumeManager(resume);
     git.setResumeManager(resume);
+    // Both providers consume the same MCP registry: Claude via options.mcpServers
+    // (+ trusted allow inside decideToolUse), Cursor via the generated
+    // .cursor/mcp.json (+ Mcp() allow rules). One registry, no drift.
+    agent.setMcpManager(mcp);
     // The agent + git engine emit normalized lifecycle/checkpoint events onto the
     // Hook Engine so both providers produce one identical governance audit trail.
     // Additive: existing hot-path wiring (auto-checkpoint, mirror, reindex) stays.
@@ -284,9 +296,12 @@ function bootstrap(): void {
       voice,
       voiceModels,
       cursorAuth,
+      mcp,
     });
     // Begin capability supervision (probe + heartbeat) once IPC is wired.
     agent.start();
+    // Begin MCP health probes + heartbeat once IPC is wired.
+    mcp.start();
     // Wire the voice agent-event tap + honor the auto-download preference.
     voice.start();
     // Begin the auto-update check + hourly poll (packaged builds only).
@@ -324,6 +339,11 @@ function bootstrap(): void {
     workspace.onActiveChanged((ws) => {
       retargetEffectiveRoot();
       if (ws) memory.seedDefaults(ws.id);
+      // Re-scope the MCP registry to the new workspace and, on first activation,
+      // discover servers already configured in that repo's provider config files
+      // (read-only import; new servers land disabled for the user to review).
+      if (ws) mcp.importActive();
+      mcp.refresh();
     });
     // Session switches (and worktree create/remove/missing on the active
     // session) retarget the same way — the SessionManager only emits when the
@@ -385,6 +405,7 @@ function bootstrap(): void {
     agent?.cleanup();
     cursorRuntime?.dispose();
     cursorAuth?.dispose();
+    mcp?.dispose();
     void fileSystem?.dispose();
     proxy?.stop();
     services?.dispose();

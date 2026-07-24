@@ -36,6 +36,12 @@ export function closeDb(): void {
   }
 }
 
+// SQLite cannot bind DDL identifiers, so table/column/type are interpolated.
+// These are always compile-time literals below, but validate defensively so a
+// future caller can never turn this into an injection vector (CWE-89).
+const SQL_IDENTIFIER_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
+const SQL_COLUMN_TYPE_RE = /^[A-Za-z0-9_ '()]+$/;
+
 /** Add a column to a table if it isn't already present (idempotent migration). */
 function addColumnIfMissing(
   database: Database.Database,
@@ -43,6 +49,9 @@ function addColumnIfMissing(
   column: string,
   type: string,
 ): void {
+  if (!SQL_IDENTIFIER_RE.test(table)) throw new Error(`Unsafe table identifier: ${table}`);
+  if (!SQL_IDENTIFIER_RE.test(column)) throw new Error(`Unsafe column identifier: ${column}`);
+  if (!SQL_COLUMN_TYPE_RE.test(type)) throw new Error(`Unsafe column type: ${type}`);
   const cols = database.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
   if (cols.some((c) => c.name === column)) return;
   database.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${type}`);
@@ -466,6 +475,45 @@ function migrate(database: Database.Database): void {
       ON search_refs (workspace_id, src_path);
     CREATE INDEX IF NOT EXISTS idx_search_refs_target
       ON search_refs (workspace_id, ref_path);
+
+    -- Provider-independent MCP registry (schema v14) — one row per configured
+    -- Model Context Protocol server, consumed by BOTH Claude (options.mcpServers)
+    -- and Cursor (generated .cursor/mcp.json). workspace_id NULL = global/user
+    -- scope (all workspaces), else the owning workspace, mirroring the memories
+    -- table. NO plaintext secrets live here: env/header values flagged secret
+    -- carry an empty value and the real value is safeStorage-encrypted in the
+    -- secret store under mcp-<id>-<key>. args_json/env_json/headers_json/
+    -- providers_json/tools_json are validated JSON written with bound params.
+    CREATE TABLE IF NOT EXISTS mcp_servers (
+      id                    TEXT PRIMARY KEY,
+      workspace_id          TEXT,
+      name                  TEXT NOT NULL,
+      display_name          TEXT NOT NULL,
+      transport             TEXT NOT NULL,
+      command               TEXT,
+      args_json             TEXT NOT NULL DEFAULT '[]',
+      env_json              TEXT NOT NULL DEFAULT '{}',
+      cwd                   TEXT,
+      url                   TEXT,
+      headers_json          TEXT NOT NULL DEFAULT '{}',
+      enabled               INTEGER NOT NULL DEFAULT 1,
+      startup               TEXT NOT NULL DEFAULT 'on-demand',
+      trust                 TEXT NOT NULL DEFAULT 'ask',
+      timeout_ms            INTEGER NOT NULL DEFAULT 60000,
+      restart_policy        TEXT NOT NULL DEFAULT 'on-failure',
+      providers_json        TEXT NOT NULL DEFAULT '{"claude":true,"cursor":true}',
+      allow_private_network INTEGER NOT NULL DEFAULT 0,
+      category              TEXT NOT NULL DEFAULT 'custom',
+      icon                  TEXT NOT NULL DEFAULT '',
+      source                TEXT NOT NULL DEFAULT 'user',
+      tools_json            TEXT NOT NULL DEFAULT '[]',
+      created_at            INTEGER NOT NULL,
+      updated_at            INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_mcp_servers_scope
+      ON mcp_servers (workspace_id, updated_at DESC);
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_mcp_servers_name
+      ON mcp_servers (workspace_id, name);
   `);
 
   // Idempotent column additions for databases created before a column existed.

@@ -189,6 +189,23 @@ export const IpcChannels = {
   searchSavedCreate: 'search:savedCreate',
   searchSavedDelete: 'search:savedDelete',
 
+  // MCP platform — provider-independent Model Context Protocol registry.
+  // Server config crosses freely; secret env/header values cross only on
+  // add/update (never returned). All access is validated in the main process.
+  mcpList: 'mcp:list',
+  mcpGet: 'mcp:get',
+  mcpAdd: 'mcp:add',
+  mcpUpdate: 'mcp:update',
+  mcpRemove: 'mcp:remove',
+  mcpSetEnabled: 'mcp:setEnabled',
+  mcpConnect: 'mcp:connect',
+  mcpDisconnect: 'mcp:disconnect',
+  mcpTest: 'mcp:test',
+  mcpRefreshTools: 'mcp:refreshTools',
+  mcpLogs: 'mcp:logs',
+  mcpImport: 'mcp:import',
+  mcpExportToProject: 'mcp:exportToProject',
+
   // Provider-Neutral Hook Engine — governance/audit trail across providers.
   hooksGetAudit: 'hooks:getAudit',
   hooksClearAudit: 'hooks:clearAudit',
@@ -292,6 +309,10 @@ export const IpcEvents = {
   memoryChanged: 'memory:changed',
   /** The search index / history / saved searches changed (reindex, save, clear). */
   searchChanged: 'search:changed',
+  /** The set of MCP servers changed (added / updated / removed / imported). */
+  mcpServersChanged: 'mcp:servers-changed',
+  /** One MCP server's live runtime advanced (status / tools / latency / error). */
+  mcpServerStatus: 'mcp:server-status',
   /** A normalized Hook Engine lifecycle event was appended to the audit trail. */
   hooksAudit: 'hooks:audit',
   /** Progress of an in-flight search index pass. */
