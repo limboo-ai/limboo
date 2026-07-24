@@ -466,6 +466,45 @@ function migrate(database: Database.Database): void {
       ON search_refs (workspace_id, src_path);
     CREATE INDEX IF NOT EXISTS idx_search_refs_target
       ON search_refs (workspace_id, ref_path);
+
+    -- Provider-independent MCP registry (schema v14) — one row per configured
+    -- Model Context Protocol server, consumed by BOTH Claude (options.mcpServers)
+    -- and Cursor (generated .cursor/mcp.json). workspace_id NULL = global/user
+    -- scope (all workspaces), else the owning workspace, mirroring the memories
+    -- table. NO plaintext secrets live here: env/header values flagged secret
+    -- carry an empty value and the real value is safeStorage-encrypted in the
+    -- secret store under mcp-<id>-<key>. args_json/env_json/headers_json/
+    -- providers_json/tools_json are validated JSON written with bound params.
+    CREATE TABLE IF NOT EXISTS mcp_servers (
+      id                    TEXT PRIMARY KEY,
+      workspace_id          TEXT,
+      name                  TEXT NOT NULL,
+      display_name          TEXT NOT NULL,
+      transport             TEXT NOT NULL,
+      command               TEXT,
+      args_json             TEXT NOT NULL DEFAULT '[]',
+      env_json              TEXT NOT NULL DEFAULT '{}',
+      cwd                   TEXT,
+      url                   TEXT,
+      headers_json          TEXT NOT NULL DEFAULT '{}',
+      enabled               INTEGER NOT NULL DEFAULT 1,
+      startup               TEXT NOT NULL DEFAULT 'on-demand',
+      trust                 TEXT NOT NULL DEFAULT 'ask',
+      timeout_ms            INTEGER NOT NULL DEFAULT 60000,
+      restart_policy        TEXT NOT NULL DEFAULT 'on-failure',
+      providers_json        TEXT NOT NULL DEFAULT '{"claude":true,"cursor":true}',
+      allow_private_network INTEGER NOT NULL DEFAULT 0,
+      category              TEXT NOT NULL DEFAULT 'custom',
+      icon                  TEXT NOT NULL DEFAULT '',
+      source                TEXT NOT NULL DEFAULT 'user',
+      tools_json            TEXT NOT NULL DEFAULT '[]',
+      created_at            INTEGER NOT NULL,
+      updated_at            INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_mcp_servers_scope
+      ON mcp_servers (workspace_id, updated_at DESC);
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_mcp_servers_name
+      ON mcp_servers (workspace_id, name);
   `);
 
   // Idempotent column additions for databases created before a column existed.

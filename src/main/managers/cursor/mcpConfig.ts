@@ -22,6 +22,12 @@ export interface McpBridgeSpec {
   bridgeEnv: Record<string, string>;
   memory: boolean;
   search: boolean;
+  /**
+   * User-configured MCP servers from the app-owned registry. Already rendered
+   * commit-safe: secret values are ${env:NAME} references whose real values ride
+   * the cursor-agent child env (see CursorMcpInjection.secretEnv), never the file.
+   */
+  userServers?: Record<string, unknown>;
 }
 
 /** Build the merged mcp.json body (null = nothing to register). */
@@ -38,6 +44,10 @@ export function buildMcpConfig(originalBytes: Buffer | null, spec: McpBridgeSpec
   });
   if (spec.memory) servers.limboo_memory = serverEntry('memory');
   if (spec.search) servers.limboo_search = serverEntry('search');
+  for (const [name, def] of Object.entries(spec.userServers ?? {})) {
+    if (UNSAFE_KEYS.has(name)) continue;
+    servers[name] = def;
+  }
   if (Object.keys(servers).length === 0) return null;
 
   const original = safeParseObject(originalBytes);

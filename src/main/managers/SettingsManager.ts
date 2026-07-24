@@ -18,6 +18,7 @@ import {
   FONT_SCALE_LIMITS,
   GIT_LIMITS,
   LAYOUT_LIMITS,
+  MCP_LIMITS,
   MEMORY_LIMITS,
   RESUME_LIMITS,
   SANDBOX_DOMAIN_RE,
@@ -384,6 +385,26 @@ export class SettingsManager {
     voice.models.autoDownload = !!voice.models.autoDownload;
     voice.models.autoUpdate = !!voice.models.autoUpdate;
     voice.models.offlineOnly = !!voice.models.offlineOnly;
+
+    // MCP platform — coerce the toggles, clamp the probe/heartbeat cadence, and
+    // whitelist the enums. These are only the GLOBAL platform preferences; the
+    // per-server definitions (with their own validated caps) live in the DB, and
+    // secrets live in the SecretStore — nothing security-sensitive is here.
+    const mcp = merged.mcp;
+    mcp.enabled = !!mcp.enabled;
+    mcp.heartbeatInterval = Math.round(
+      clamp(mcp.heartbeatInterval, MCP_LIMITS.heartbeatInterval.min, MCP_LIMITS.heartbeatInterval.max),
+    );
+    mcp.probeTimeout = Math.round(
+      clamp(mcp.probeTimeout, MCP_LIMITS.probeTimeout.min, MCP_LIMITS.probeTimeout.max),
+    );
+    if (!['ask', 'trusted'].includes(mcp.defaultTrust)) mcp.defaultTrust = 'ask';
+    mcp.allowPrivateNetwork = !!mcp.allowPrivateNetwork;
+    mcp.autoImport.cursor = !!mcp.autoImport.cursor;
+    mcp.autoImport.claude = !!mcp.autoImport.claude;
+    mcp.injectIntoClaude = !!mcp.injectIntoClaude;
+    mcp.injectIntoCursor = !!mcp.injectIntoCursor;
+    if (!['quiet', 'normal', 'verbose'].includes(mcp.logVerbosity)) mcp.logVerbosity = 'normal';
 
     return merged;
   }

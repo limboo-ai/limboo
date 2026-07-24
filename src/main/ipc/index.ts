@@ -20,6 +20,7 @@ import type { AutoUpdateManager } from '../managers/AutoUpdateManager';
 import type { VoiceManager } from '../managers/voice/VoiceManager';
 import type { VoiceModelManager } from '../managers/voice/VoiceModelManager';
 import type { CursorAuthManager } from '../managers/cursor/CursorAuthManager';
+import type { McpManager } from '../managers/mcp/McpManager';
 import { registerWindowHandlers } from './windowHandlers';
 import { registerSettingsHandlers } from './settingsHandlers';
 import { registerSystemHandlers } from './systemHandlers';
@@ -39,6 +40,7 @@ import { registerHookHandlers } from './hookHandlers';
 import { registerUpdateHandlers } from './updateHandlers';
 import { registerVoiceHandlers } from './voiceHandlers';
 import { registerCursorHandlers } from './cursorHandlers';
+import { registerMcpHandlers } from './mcpHandlers';
 
 export interface IpcDeps {
   settings: SettingsManager;
@@ -60,6 +62,7 @@ export interface IpcDeps {
   voice: VoiceManager;
   voiceModels: VoiceModelManager;
   cursorAuth: CursorAuthManager;
+  mcp: McpManager;
 }
 
 export function registerAllIpc(deps: IpcDeps): void {
@@ -82,4 +85,5 @@ export function registerAllIpc(deps: IpcDeps): void {
   registerUpdateHandlers(deps.updates);
   registerVoiceHandlers(deps.voice, deps.voiceModels, deps.settings);
   registerCursorHandlers(deps.cursorAuth, () => deps.agent.hasActiveRuns());
+  registerMcpHandlers(deps.mcp);
 }

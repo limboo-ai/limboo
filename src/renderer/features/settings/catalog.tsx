@@ -11,6 +11,7 @@ import {
   FolderGit2,
   Bell,
   Bot,
+  Blocks,
   Brain,
   GitBranch,
   Keyboard,
@@ -27,6 +28,7 @@ import { AppearancePanel } from './panels/AppearancePanel';
 import { WorkspacePanel } from './panels/WorkspacePanel';
 import { BehaviorPanel } from './panels/BehaviorPanel';
 import { AgentPanel } from './panels/AgentPanel';
+import { McpPanel } from './panels/McpPanel';
 import { PlanTasksPanel } from './panels/PlanTasksPanel';
 import { TerminalPanel } from './panels/TerminalPanel';
 import { GitPanel } from './panels/GitPanel';
@@ -143,6 +145,25 @@ export const SETTINGS_CATALOG: SettingsCategory[] = [
       { id: 'troubleshootTips', label: 'Common fixes', keywords: ['troubleshoot', 'fix', 'help', 'install cli', 'not found', 'sign in required', 'restart'] },
     ],
     Panel: AgentPanel,
+  },
+  {
+    id: 'mcp',
+    label: 'MCP Servers',
+    icon: Blocks,
+    keywords: ['mcp', 'model context protocol', 'server', 'servers', 'tools', 'integration', 'connector', 'stdio', 'http', 'sse', 'streamable', 'plugin', 'extension', 'marketplace'],
+    fields: [
+      { id: 'mcpAddServer', label: 'Add MCP server', keywords: ['add', 'new', 'create', 'server', 'stdio', 'http', 'sse'] },
+      { id: 'mcpImport', label: 'Import from repo', keywords: ['import', 'discover', 'cursor', 'claude', 'mcp.json', 'detect'] },
+      { id: 'mcpEnabled', label: 'Enable MCP', keywords: ['on', 'off', 'toggle', 'master'] },
+      { id: 'mcpDefaultTrust', label: 'Default trust', keywords: ['trust', 'ask', 'trusted', 'approve', 'permission'] },
+      { id: 'mcpAllowPrivate', label: 'Allow private hosts', keywords: ['ssrf', 'private', 'loopback', 'localhost', 'security', 'network'] },
+      { id: 'mcpHeartbeat', label: 'Health-probe interval', keywords: ['heartbeat', 'health', 'probe', 'monitor', 'status'] },
+      { id: 'mcpInjectClaude', label: 'Inject into Claude', keywords: ['claude', 'inject', 'servers'] },
+      { id: 'mcpInjectCursor', label: 'Inject into Cursor', keywords: ['cursor', 'inject', 'servers'] },
+      { id: 'mcpAutoImportCursor', label: 'Auto-detect Cursor mcp.json', keywords: ['cursor', 'auto', 'detect', 'mcp.json'] },
+      { id: 'mcpAutoImportClaude', label: 'Auto-detect Claude .mcp.json', keywords: ['claude', 'auto', 'detect', 'mcp.json'] },
+    ],
+    Panel: McpPanel,
   },
   {
     id: 'plan',
