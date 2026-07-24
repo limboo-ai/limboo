@@ -1,7 +1,7 @@
 import type { AppSettings, WorkspaceConfig } from './types';
 
 /** Bumped whenever the {@link AppSettings} shape changes incompatibly. */
-export const SETTINGS_VERSION = 16;
+export const SETTINGS_VERSION = 17;
 
 /**
  * The agent providers Limboo can run (Claude Code = Anthropic via the Agent
@@ -100,6 +100,31 @@ export const AGENT_CONNECTION_LIMITS = {
   heartbeatFailureThreshold: { min: 1, max: 10, default: 2 },
   idleTimeout: { min: 0, max: 1_800_000, default: 300_000 },
 } as const;
+
+/**
+ * Bounds + caps for the provider-neutral OS-level Sandbox (Layer 3). The
+ * writable root is always the session worktree and userData/secrets are always
+ * denied — these caps only bound the user-configurable *widenings* (extra
+ * write paths / network allowlist), which are persisted user data and must be
+ * sanitized before they reach a sandbox config or argv (CLAUDE.md §6).
+ */
+export const SANDBOX_LIMITS = {
+  /** Max network-allowlist domains kept (older/extra entries dropped). */
+  maxAllowedDomains: 64,
+  /** Max chars for a single allowlist domain before it is rejected. */
+  domainMax: 253,
+  /** Max extra writable paths a user may grant beyond the worktree. */
+  maxAllowWritePaths: 32,
+  /** Max chars for a single extra writable path before it is rejected. */
+  writePathMax: 1_024,
+  /** Max Claude `excludedCommands` entries (commands run outside the jail). */
+  maxExcludedCommands: 64,
+  /** Max chars for a single excluded-command pattern before it is rejected. */
+  excludedCommandMax: 256,
+} as const;
+
+/** A network-allowlist domain must match this before it reaches any sandbox. */
+export const SANDBOX_DOMAIN_RE = /^[A-Za-z0-9*]([A-Za-z0-9.*-]{0,251}[A-Za-z0-9])?$/;
 
 /**
  * Bounds + caps for the Cursor provider (authentication only). All
@@ -530,9 +555,18 @@ export const DEFAULT_SETTINGS: AppSettings = {
       preferredAuth: 'auto',
       manualBrowserLogin: false,
       executablePath: '',
-      sandbox: 'auto',
       hooks: 'auto',
       discoveredModels: [],
+    },
+    sandbox: {
+      mode: 'auto',
+      network: 'all',
+      allowedDomains: [],
+      allowWritePaths: [],
+      excludedCommands: [],
+      readOnlyAttachments: true,
+      failIfUnavailable: false,
+      providerOverride: 'auto',
     },
     hookEngine: {
       enabled: true,

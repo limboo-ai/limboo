@@ -182,24 +182,8 @@ export function CursorProviderCard() {
         </Field>
       )}
 
-      {/* Sandbox posture for runs — a literal-whitelisted --sandbox flag. */}
-      {installed && (
-        <Field
-          id="cursorSandbox"
-          label="Sandbox"
-          hint="Cursor's execution sandbox for runs. Auto leaves the CLI's default; Enabled/Disabled passes --sandbox explicitly."
-        >
-          <SegmentedControl
-            value={cursorPrefs.sandbox}
-            options={[
-              { value: 'auto', label: 'Auto' },
-              { value: 'enabled', label: 'Enabled' },
-              { value: 'disabled', label: 'Disabled' },
-            ]}
-            onChange={(v) => void update({ agent: { cursor: { sandbox: v } } })}
-          />
-        </Field>
-      )}
+      {/* OS-level sandbox now lives in the provider-neutral “Sandbox” section
+          below (one policy translated to both agents), not per-provider here. */}
 
       {/* Session hooks bridge — Limboo's per-tool permission prompts, registered
           per run via a session-scoped hooks.json. Capability-gated: it can only

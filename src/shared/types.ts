@@ -214,8 +214,6 @@ export interface AppSettings {
        * exists, is a file).
        */
       executablePath: string;
-      /** `--sandbox` flag for runs: auto = omit (CLI default). */
-      sandbox: 'auto' | 'enabled' | 'disabled';
       /**
        * Session hooks bridge (interactive per-tool prompts). `auto` writes a
        * session-scoped hooks.json per run (capability-gated — only ever
@@ -242,6 +240,48 @@ export interface AppSettings {
       enabled: boolean;
       /** Audit verbosity: nothing, lifecycle+gate only, or every observe phase. */
       audit: 'off' | 'lifecycle' | 'verbose';
+    };
+    /**
+     * Provider-neutral OS-level Sandbox (defense-in-depth Layer 3). Limboo owns
+     * one sandbox policy and translates it into whichever agent runs: Claude's
+     * Agent-SDK `Options.sandbox` (bubblewrap/Seatbelt) and Cursor's
+     * `.cursor/sandbox.json` + `--sandbox` flag. The sandbox is *containment*,
+     * never *authorization* — the permission gate (`decideToolUse`) is always
+     * the authority and runs on top. The writable root is always the session
+     * worktree and userData/secrets are always denied regardless of these knobs.
+     */
+    sandbox: {
+      /** `auto` = sandbox when the OS supports it; `disabled` = no OS jail. */
+      mode: 'auto' | 'enabled' | 'disabled';
+      /**
+       * Network egress policy for sandboxed commands. `all` keeps the network
+       * open (filesystem is still jailed); `allowlist` permits only
+       * {@link allowedDomains}; `off` blocks all network.
+       */
+      network: 'all' | 'allowlist' | 'off';
+      /** Domains reachable when `network === 'allowlist'` (wildcards allowed). */
+      allowedDomains: string[];
+      /** Extra writable directories granted beyond the session worktree. */
+      allowWritePaths: string[];
+      /**
+       * Commands that run OUTSIDE the jail (e.g. `docker *`, tools incompatible
+       * with bubblewrap), still gated by the permission engine. Claude-only —
+       * maps to the SDK's `sandbox.excludedCommands`; Cursor has no equivalent.
+       */
+      excludedCommands: string[];
+      /** Mount the session's attachment staging dir read-only inside the jail. */
+      readOnlyAttachments: boolean;
+      /**
+       * Strict mode. When true a run is blocked if the sandbox cannot start
+       * (missing bubblewrap, unsupported platform); when false it degrades to
+       * an unsandboxed run with a surfaced timeline note.
+       */
+      failIfUnavailable: boolean;
+      /**
+       * Force a specific provider's native sandbox instead of the one that
+       * matches the running agent. `auto` = follow the active provider.
+       */
+      providerOverride: 'auto' | 'claude-native' | 'cursor-native';
     };
   };
   /**

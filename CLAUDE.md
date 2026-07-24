@@ -854,9 +854,10 @@ an active coding agent". Full research/design doc:
   it is the ONLY candidate — absolute + exists + is-file validated in
   `exec.ts`, `.cmd` shims still refused for runs, probe problems surfaced via
   the auth state's error line; `configureCursorExec()` wired at boot + on
-  settings change in `index.ts`); an **`agent.cursor.sandbox` toggle**
-  (`auto`/`enabled`/`disabled` → a literal-whitelisted `--sandbox` argv flag);
-  and **CLI self-update** (`agent:cursorUpdateCli` → single-flight
+  settings change in `index.ts`); the OS-level sandbox now lives in the
+  **provider-neutral `agent.sandbox`** config (see "Unified OS-level Sandbox"
+  below), not a per-Cursor toggle; and **CLI self-update**
+  (`agent:cursorUpdateCli` → single-flight
   `cursor-agent update`, refused while any run/login is live via
   `AgentManager.hasActiveRuns()`, re-resolve + re-probe after). Argv
   hardening: the model id (charset + membership in static ∪ discovered) and
@@ -868,6 +869,48 @@ an active coding agent". Full research/design doc:
 - **Later:** Cursor Cloud Agents (SSE-streamed remote runs; SSRF-allowlisted
   fetch per §6) and an **ACP adapter** (`agent acp`, JSON-RPC over stdio) as the
   universal route to any ACP-speaking agent.
+
+**Unified OS-level Sandbox (defense-in-depth Layer 3) — BUILT.** Limboo's three
+security layers are: (1) the orchestration authority (`decideToolUse` — the one
+gate both providers share), (2) provider permission translation (Cursor
+`.cursor/cli.json`, Claude `canUseTool` + `settingSources`), and now (3) an
+**OS-level sandbox** driven by a single provider-neutral policy. The sandbox is
+*containment, not authorization* — the permission gate always runs on top; the
+jail is the kernel-enforced net beneath it.
+- **One policy, resolved once.** `agent.sandbox` (`SETTINGS_VERSION` 17;
+  migrated from the old `agent.cursor.sandbox`; bounds in `SANDBOX_LIMITS`) →
+  `resolveSandboxConfig()` in
+  [`src/main/managers/sandbox/policy.ts`](src/main/managers/sandbox/policy.ts)
+  produces one `EffectiveSandbox` both adapters translate, so they never drift.
+  Non-configurable floor: the writable root is always the session worktree, and
+  the **crown jewels** — `secrets/`, `limboo.db`, `settings.json`,
+  `window-state.json` (`crownJewelPaths()`) — are always denied read+write. The
+  floor is those SPECIFIC paths, NOT the whole `userData` root, because the
+  worktree (`{userData}/worktrees`) and attachments (`{userData}/attachments`)
+  live under it and must stay usable; Layer 1's `touchesAppData` still denies
+  `userData` broadly at the authorization layer. User knobs only widen writes
+  (`allowWritePaths`, each screened against the floor via `screenExtraWritePath`
+  — a path into a crown jewel / `/` / `$HOME` is dropped) or tighten the network;
+  `excludedCommands` (Claude-only) lists commands that run outside the jail.
+- **Claude** (`mapClaudeSandbox` → SDK `Options.sandbox`, Seatbelt/bubblewrap):
+  `autoAllowBashIfSandboxed:false` keeps `decideToolUse` authoritative;
+  `failIfUnavailable` off by default (graceful degrade if bwrap missing) and,
+  when on (Strict), also sets `allowUnsandboxedCommands:false` to close the
+  `dangerouslyDisableSandbox` escape hatch. Claude's jail couples
+  filesystem+network (no allow-all network sentinel), so network `all` (the
+  default) skips Claude's OS jail rather than sever its network — `allowlist`/
+  `off` engage the full jail. A `dangerouslyDisableSandbox` retry is recorded in
+  the timeline as a sandbox-escape audit row; subagents inherit the parent's
+  jail (same process, same `canUseTool`/cwd).
+- **Cursor** (`cursor/sandbox.ts`): the same policy → a snapshot/restored
+  `.cursor/sandbox.json` (`additionalReadwritePaths` / `networkPolicy`,
+  `withSessionSandboxJson` — git-clean like every generated session file) plus
+  the `--sandbox` flag. Cursor's `networkPolicy:'all'` keeps network open under
+  filesystem isolation, so Cursor jails under any policy.
+- **UI:** one provider-neutral **Sandbox** section in `AgentPanel.tsx` (the
+  Cursor card's per-provider knob is gone); sandbox lifecycle streams into the
+  timeline as ordinary `status` markers ("Preparing isolated execution
+  environment…", "Workspace boundary established.", "Network policy loaded.").
 
 **Still open / future** — the Agent Adapter Architecture above (Cursor as the
 second first-class agent), repository clone/track UI, a dedicated Permission System

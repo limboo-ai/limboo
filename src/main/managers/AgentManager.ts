@@ -91,6 +91,12 @@ import { createSessionDir } from './cursor/sessionFile';
 import { executionPostureNote, withSessionContextRule } from './cursor/rules';
 import { supportsApproveMcps } from './cursor/exec';
 import { mapHookEvent } from './cursor/translate';
+import { withSessionSandboxJson } from './cursor/sandbox';
+import {
+  mapClaudeSandbox,
+  resolveSandboxConfig,
+  type EffectiveSandbox,
+} from './sandbox/policy';
 import { isReadOnlyShellCommand } from './agent/readOnlyCommands';
 import { HookEngine, type HookEmit } from './hooks/HookEngine';
 import type { CursorRunOutcome, ProviderRunBridge } from './cursor/types';
@@ -232,7 +238,13 @@ function classifyTool(name: string): ToolRisk {
   if (WRITE_TOOLS.has(name)) return 'write';
   if (COMMAND_TOOLS.has(name)) return 'command';
   if (READ_TOOLS.has(name)) return 'read';
-  // Unknown / MCP tools are gated as commands (the conservative default).
+  // Unknown / MCP tools are gated as commands (the conservative default). This
+  // also covers the SDK's Task subagent tool: it is gated as a command through
+  // decideToolUseCore, and every tool the subagent then runs re-enters the SAME
+  // canUseTool with the SAME cwd — and the parent run's `Options.sandbox` is
+  // process-wide — so a subagent inherits the exact worktree boundary, network
+  // policy, and OS jail of its parent. No path here ever widens a subagent's
+  // access (per the SDK docs: subagents use the parent's sandbox configuration).
   return 'command';
 }
 
@@ -2043,10 +2055,13 @@ export class AgentManager {
       }
     }
 
-    // `--sandbox` is a literal whitelist; 'auto' omits the flag (CLI default).
-    const sandboxPref = agent.cursor?.sandbox;
-    const sandbox =
-      sandboxPref === 'enabled' || sandboxPref === 'disabled' ? sandboxPref : undefined;
+    // OS-level Sandbox (Layer 3) — the SAME provider-neutral policy Claude gets,
+    // resolved once here and translated for Cursor into a session
+    // `.cursor/sandbox.json` (writable root + denied userData + network policy)
+    // plus the `--sandbox` flag. 'auto' omits the flag (CLI default) but still
+    // writes the declarative sandbox.json.
+    const sandbox = this.resolveSandboxFor(sessionId, cwd, 'cursor', agent);
+    if (sandbox.enabled) this.recordSandboxStatus(sessionId, sandbox);
 
     // Did this run exercise any write/command tool? Feeds the hook-capability
     // check in the finally: a FORCED run that used gated tools while the hooks
@@ -2254,7 +2269,11 @@ export class AgentManager {
       const inner = injectViaRules
         ? (): Promise<CursorRunOutcome> => withSessionContextRule(cwd, ruleBlock, withHooks)
         : withHooks;
-      return withSessionCliJson(cwd, { deny: denyRules, allow: allowRules, ask: askRules }, inner);
+      const withCli = (): Promise<CursorRunOutcome> =>
+        withSessionCliJson(cwd, { deny: denyRules, allow: allowRules, ask: askRules }, inner);
+      // Outermost: the declarative `.cursor/sandbox.json` (snapshot+restored like
+      // every other generated session file, so `git status` stays clean).
+      return withSessionSandboxJson(cwd, sandbox, withCli);
     };
 
     let outcome: CursorRunOutcome;
@@ -2954,6 +2973,20 @@ export class AgentManager {
     const attachmentsDir = this.attachmentsDirFor(sessionId);
     if (attachmentsDir) options.additionalDirectories = [attachmentsDir];
 
+    // OS-level Sandbox (defense-in-depth Layer 3). Limboo's one sandbox policy
+    // becomes the SDK's `Options.sandbox` — a Seatbelt/bubblewrap jail fencing
+    // Bash + its children to the worktree and the configured network, beneath
+    // (never replacing) the canUseTool permission gate. Graceful by default:
+    // `failIfUnavailable=false` degrades to an unsandboxed run if bubblewrap is
+    // missing. `autoAllowBashIfSandboxed` is pinned off so decideToolUse stays
+    // the authority. The metadata is recorded onto the run for the timeline.
+    const eff = this.resolveSandboxFor(sessionId, cwd, 'anthropic', agent);
+    const claudeSandbox = mapClaudeSandbox(eff);
+    if (claudeSandbox) {
+      options.sandbox = claudeSandbox;
+      this.recordSandboxStatus(sessionId, eff);
+    }
+
     // Resume the Claude Code session so multi-turn conversations keep context.
     const sdkSessionId = this.loadProviderSession(sessionId, 'anthropic');
     if (sdkSessionId) options.resume = sdkSessionId;
@@ -3051,6 +3084,24 @@ export class AgentManager {
     signal: AbortSignal,
     gate?: { prompted: boolean },
   ): Promise<PermissionResult> {
+      // Sandbox-escape audit (G4): when a Bash command sets the SDK's
+      // `dangerouslyDisableSandbox` flag, it is being retried OUTSIDE the OS jail
+      // and falls back to this normal permission flow. Record it in the timeline
+      // so the audit trail shows whether a command stayed contained or escaped —
+      // enforcement is unchanged (the command still passes every guard below).
+      if (
+        toolName === 'Bash' &&
+        (input as { dangerouslyDisableSandbox?: unknown }).dangerouslyDisableSandbox === true
+      ) {
+        this.pushActivity(
+          sessionId,
+          'status',
+          'Command ran outside the sandbox — normal permission flow',
+          undefined,
+          'warning',
+        );
+      }
+
       // Attachment carve-out (before the app-data guard, which would otherwise
       // block the staging dir inside userData): READ tools may open files inside
       // THIS session's own attachments dir — the userData staging dir (Claude)
@@ -3349,6 +3400,58 @@ export class AgentManager {
       detail?.slice(0, ACTIVITY_LIMITS.detailMax),
       'info',
     );
+  }
+
+  /**
+   * Resolve the effective OS-level sandbox policy for a run. Shared by both
+   * providers (Claude via {@link mapClaudeSandbox}, Cursor via
+   * {@link withSessionSandboxJson}) so the two containment layers never drift —
+   * the writable root, userData/secrets denials, and network policy are decided
+   * exactly once, here.
+   */
+  private resolveSandboxFor(
+    sessionId: string,
+    cwd: string,
+    provider: AgentProvider,
+    agent: ReturnType<SettingsManager['getAll']>['agent'],
+  ): EffectiveSandbox {
+    return resolveSandboxConfig(agent.sandbox, {
+      cwd,
+      provider,
+      attachmentsDir: this.attachmentsDirFor(sessionId) ?? undefined,
+    });
+  }
+
+  /**
+   * Stream the sandbox lifecycle into the session timeline as ordinary status
+   * markers (same typography/animation as every other streamed status event —
+   * never a modal). Also records the sandbox metadata as an audit row so the
+   * timeline carries mode / writable root / network policy for the run.
+   */
+  private recordSandboxStatus(sessionId: string, eff: EffectiveSandbox): void {
+    if (!eff.enabled) return;
+    const netLabel =
+      eff.network.policy === 'all'
+        ? 'network open'
+        : eff.network.policy === 'off'
+          ? 'network blocked'
+          : `network allowlist (${eff.network.allowedDomains.length})`;
+    // The full sandbox-init sequence, streamed as ordinary status markers (same
+    // typography/animation as any other status event — never a modal). The
+    // first line's detail doubles as the per-run sandbox audit summary (mode,
+    // writable root, network policy, strict); run exit/duration land via the
+    // existing run-finished activity row.
+    this.recordStatus(
+      sessionId,
+      'Preparing isolated execution environment…',
+      `mode=${eff.mode} · writable=${eff.writeRoots[0]} · ${netLabel}` +
+        (eff.excludedCommands.length ? ` · ${eff.excludedCommands.length} excluded` : '') +
+        (eff.failIfUnavailable ? ' · strict' : ''),
+    );
+    this.recordStatus(sessionId, 'Workspace boundary established.');
+    this.recordStatus(sessionId, 'Filesystem restrictions applied.');
+    this.recordStatus(sessionId, 'Network policy loaded.', netLabel);
+    this.recordStatus(sessionId, 'Running command inside sandbox.');
   }
 
   private rememberProviderSession(
