@@ -39,6 +39,12 @@ interface RawResult {
 /** POST one JSON-RPC payload; resolves with the raw response (bounded body). */
 function post(spec: HttpProbeSpec, payload: unknown, sessionId?: string): Promise<RawResult> {
   return new Promise<RawResult>((resolve, reject) => {
+    let settled = false;
+    const finish = (fn: () => void): void => {
+      if (settled) return;
+      settled = true;
+      fn();
+    };
     let url: URL;
     try {
       url = new URL(spec.url);
@@ -73,24 +79,37 @@ function post(spec: HttpProbeSpec, payload: unknown, sessionId?: string): Promis
         const chunks: Buffer[] = [];
         let total = 0;
         res.on('data', (c: Buffer) => {
+          if (settled) return;
           total += c.length;
-          if (total <= MCP_LIMITS.clientLineMax) chunks.push(c);
-          else res.destroy();
+          if (total > MCP_LIMITS.clientLineMax) {
+            // Reject immediately — do NOT buffer the over-limit chunk or wait
+            // for `end` (which may never fire after destroy). Prevents a
+            // hostile server from exhausting memory or hanging the probe.
+            res.destroy();
+            finish(() => reject(new Error('Response too large')));
+            return;
+          }
+          chunks.push(c);
         });
         res.on('end', () => {
           const sid = res.headers['mcp-session-id'];
-          resolve({
-            status: res.statusCode ?? 0,
-            contentType: String(res.headers['content-type'] ?? ''),
-            body: Buffer.concat(chunks).toString('utf8'),
-            sessionId: typeof sid === 'string' ? sid : sessionId,
-          });
+          finish(() =>
+            resolve({
+              status: res.statusCode ?? 0,
+              contentType: String(res.headers['content-type'] ?? ''),
+              body: Buffer.concat(chunks).toString('utf8'),
+              sessionId: typeof sid === 'string' ? sid : sessionId,
+            }),
+          );
         });
-        res.on('error', reject);
+        res.on('error', (err) => finish(() => reject(err)));
+        // A destroyed/aborted socket ends without `end`; never leave pending.
+        res.on('aborted', () => finish(() => reject(new Error('Response aborted'))));
+        res.on('close', () => finish(() => reject(new Error('Connection closed before response completed'))));
       },
     );
     req.on('timeout', () => req.destroy(new Error('Request timed out')));
-    req.on('error', reject);
+    req.on('error', (err) => finish(() => reject(err)));
     req.write(data);
     req.end();
   });

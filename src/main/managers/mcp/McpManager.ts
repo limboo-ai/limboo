@@ -45,7 +45,7 @@ import {
   setToolsCache,
   upsertServer,
 } from './registry';
-import { prepareServer } from './validate';
+import { prepareServer, isUnsafeKey } from './validate';
 import { probeStdioServer } from './client/stdioClient';
 import { probeHttpServer } from './client/httpClient';
 import type { ProbeOutcome } from './client/protocol';
@@ -596,25 +596,31 @@ export class McpManager {
 
   /** Merge server entries into a provider config file under root (git-visible). */
   private mergeIntoFile(file: string, servers: Record<string, unknown>, root: string): boolean {
+    // Resolve BOTH sides before comparing — an un-normalized `root` (e.g. one
+    // containing `..`) must not defeat the containment check.
+    const base = path.resolve(root);
     const resolved = path.resolve(file);
-    if (resolved !== root && !resolved.startsWith(root + path.sep)) return false;
+    if (resolved !== base && !resolved.startsWith(base + path.sep)) return false;
+    // Symlink-escape guard: realpath the deepest EXISTING ancestor of the target
+    // and require it to still sit inside the real base, so a symlinked `.cursor/`
+    // (or any parent) pointing outside the repo can't redirect the write.
+    if (!this.pathStaysInside(resolved, base)) return false;
     try {
-      let existing: Record<string, unknown> = {};
-      try {
-        const raw = fs.readFileSync(resolved, 'utf8');
-        const parsed = JSON.parse(raw);
-        if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-          existing = parsed as Record<string, unknown>;
-        }
-      } catch {
-        /* new file */
-      }
-      const mcpServers =
+      // Parse any existing file, then rebuild it prototype-safely: an on-disk
+      // file is untrusted input, so a smuggled `__proto__`/`constructor` key
+      // (top-level or under mcpServers) is dropped, never assigned.
+      const existing = this.readSafeObject(resolved);
+      const prior =
         existing.mcpServers && typeof existing.mcpServers === 'object' && !Array.isArray(existing.mcpServers)
           ? (existing.mcpServers as Record<string, unknown>)
           : {};
+      const mcpServers: Record<string, unknown> = {};
+      for (const [name, def] of Object.entries(prior)) {
+        if (isUnsafeKey(name)) continue;
+        mcpServers[name] = def;
+      }
       for (const [name, def] of Object.entries(servers)) {
-        if (name === '__proto__' || name === 'constructor' || name === 'prototype') continue;
+        if (isUnsafeKey(name)) continue;
         mcpServers[name] = def;
       }
       existing.mcpServers = mcpServers;
@@ -623,6 +629,51 @@ export class McpManager {
       return true;
     } catch (err) {
       logger.warn(`MCP export: could not write ${file}`, err);
+      return false;
+    }
+  }
+
+  /**
+   * Read a JSON object file, returning a prototype-safe own-property copy (unsafe
+   * keys stripped) or `{}` when absent/invalid. The parsed value is never trusted
+   * wholesale — only its safe own keys are carried forward.
+   */
+  private readSafeObject(file: string): Record<string, unknown> {
+    const out: Record<string, unknown> = {};
+    try {
+      const parsed = JSON.parse(fs.readFileSync(file, 'utf8'));
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        for (const [k, v] of Object.entries(parsed as Record<string, unknown>)) {
+          if (!isUnsafeKey(k)) out[k] = v;
+        }
+      }
+    } catch {
+      /* absent or invalid — treat as a new file */
+    }
+    return out;
+  }
+
+  /**
+   * True if `target`'s real filesystem location stays inside `base`, following
+   * symlinks on the deepest existing ancestor (the target itself may not exist).
+   */
+  private pathStaysInside(target: string, base: string): boolean {
+    try {
+      const realBase = fs.realpathSync(base);
+      let ancestor = target;
+      // Walk up to the first path that actually exists on disk.
+      for (;;) {
+        try {
+          const real = fs.realpathSync(ancestor);
+          return real === realBase || real.startsWith(realBase + path.sep);
+        } catch {
+          const parent = path.dirname(ancestor);
+          if (parent === ancestor) return false; // reached the fs root
+          ancestor = parent;
+        }
+      }
+    } catch {
+      // base itself is missing/unresolvable — fail closed.
       return false;
     }
   }

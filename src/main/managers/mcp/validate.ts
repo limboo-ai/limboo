@@ -23,6 +23,19 @@ import type {
 } from '@shared/types';
 import { categorizeServer } from './categorize';
 
+/**
+ * Property names that pollute `Object.prototype` when used as object keys.
+ * Any renderer- or disk-sourced object merged into a plain object must skip
+ * these (CLAUDE.md §6). Shared by the config importer, the registry JSON
+ * parsers, and the export merge.
+ */
+export const UNSAFE_KEYS: ReadonlySet<string> = new Set(['__proto__', 'constructor', 'prototype']);
+
+/** True if `key` would pollute the prototype chain when used as an object key. */
+export function isUnsafeKey(key: string): boolean {
+  return UNSAFE_KEYS.has(key);
+}
+
 const TRANSPORTS: McpTransport[] = ['stdio', 'http', 'sse'];
 const CATEGORIES: McpCategory[] = [
   'version-control', 'search', 'memory', 'documentation', 'cloud', 'issue-tracker',

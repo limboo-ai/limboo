@@ -31,12 +31,20 @@ export function probeStdioServer(spec: StdioProbeSpec): Promise<ProbeOutcome> {
     let child: ChildProcess | undefined;
     let stderrTail = '';
     let buf = '';
-    const pending = new Map<number, (r: JsonRpcResponse) => void>();
+    const pending = new Map<
+      number,
+      { resolve: (r: JsonRpcResponse) => void; reject: (e: Error) => void }
+    >();
 
     const done = (o: ProbeOutcome): void => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
+      // Drain any in-flight requests so their awaiting frames unwind instead of
+      // leaking (a hung child would otherwise pin them forever). The IIFE's
+      // try/catch swallows the rejection; its done() is already a no-op.
+      for (const p of pending.values()) p.reject(new Error('probe settled'));
+      pending.clear();
       try {
         child?.kill('SIGKILL');
       } catch {
@@ -98,7 +106,7 @@ export function probeStdioServer(spec: StdioProbeSpec): Promise<ProbeOutcome> {
         if (typeof parsed.id === 'number' && pending.has(parsed.id)) {
           const cb = pending.get(parsed.id);
           pending.delete(parsed.id);
-          cb?.(parsed);
+          cb?.resolve(parsed);
         }
       }
     });
@@ -111,8 +119,8 @@ export function probeStdioServer(spec: StdioProbeSpec): Promise<ProbeOutcome> {
       }
     };
     const request = (id: number, method: string, params?: unknown): Promise<JsonRpcResponse> =>
-      new Promise<JsonRpcResponse>((res) => {
-        pending.set(id, res);
+      new Promise<JsonRpcResponse>((res, rej) => {
+        pending.set(id, { resolve: res, reject: rej });
         write({ jsonrpc: '2.0', id, method, params });
       });
 

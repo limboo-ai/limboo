@@ -36,6 +36,12 @@ export function closeDb(): void {
   }
 }
 
+// SQLite cannot bind DDL identifiers, so table/column/type are interpolated.
+// These are always compile-time literals below, but validate defensively so a
+// future caller can never turn this into an injection vector (CWE-89).
+const SQL_IDENTIFIER_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
+const SQL_COLUMN_TYPE_RE = /^[A-Za-z0-9_ '()]+$/;
+
 /** Add a column to a table if it isn't already present (idempotent migration). */
 function addColumnIfMissing(
   database: Database.Database,
@@ -43,6 +49,9 @@ function addColumnIfMissing(
   column: string,
   type: string,
 ): void {
+  if (!SQL_IDENTIFIER_RE.test(table)) throw new Error(`Unsafe table identifier: ${table}`);
+  if (!SQL_IDENTIFIER_RE.test(column)) throw new Error(`Unsafe column identifier: ${column}`);
+  if (!SQL_COLUMN_TYPE_RE.test(type)) throw new Error(`Unsafe column type: ${type}`);
   const cols = database.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
   if (cols.some((c) => c.name === column)) return;
   database.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${type}`);
