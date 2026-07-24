@@ -118,7 +118,7 @@ export function SettingsModal() {
       onMouseDown={attemptClose}
     >
       <div
-        className="animate-pop-in flex h-[78vh] max-h-[640px] w-full max-w-3xl overflow-hidden rounded-md border border-line-strong bg-elevated shadow-2xl"
+        className="animate-pop-in flex h-[78vh] max-h-[640px] w-full max-w-5xl overflow-hidden rounded-md border border-line-strong bg-elevated shadow-2xl"
         onMouseDown={(e) => e.stopPropagation()}
       >
         <SettingsNav

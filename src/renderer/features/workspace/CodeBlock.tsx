@@ -6,7 +6,7 @@
  * (highlighting kicks in once the block settles) to avoid re-highlighting on
  * every token.
  */
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type CSSProperties } from 'react';
 import { Check, Copy } from 'lucide-react';
 import { cn } from '@/renderer/lib/cn';
 import { highlightCode } from '@/renderer/lib/highlight';
@@ -15,10 +15,18 @@ export function CodeBlock({
   code,
   lang,
   streaming = false,
+  startLine,
+  label,
+  className,
 }: {
   code: string;
   lang?: string;
   streaming?: boolean;
+  /** First line's real number in the source file — offsets the gutter counter. */
+  startLine?: number;
+  /** Replaces the language badge (e.g. the path a Read tool actually read). */
+  label?: string;
+  className?: string;
 }) {
   const [html, setHtml] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
@@ -43,11 +51,24 @@ export function CodeBlock({
     setTimeout(() => setCopied(false), 1400);
   };
 
+  // The gutter counter starts at 1 by default; an offset read (Read with an
+  // `offset`) starts wherever the file actually did.
+  const gutter =
+    startLine && startLine > 1
+      ? ({ ['--limboo-code-start' as string]: String(startLine - 1) } as CSSProperties)
+      : undefined;
+
   return (
-    <div className="my-2 overflow-hidden rounded-xl border border-line bg-[#0a0a0a]">
-      <div className="flex items-center justify-between border-b border-line/70 bg-surface px-3 py-1">
-        <span className="font-mono text-[10px] uppercase tracking-wider text-faint">
-          {lang || 'text'}
+    <div className={cn('my-2 overflow-hidden rounded-xl border border-line bg-[#0a0a0a]', className)}>
+      <div className="flex items-center justify-between gap-2 border-b border-line/70 bg-surface px-3 py-1">
+        <span
+          className={cn(
+            'min-w-0 truncate font-mono text-[10px] tracking-wider text-faint',
+            label ? '' : 'uppercase',
+          )}
+          title={label}
+        >
+          {label || lang || 'text'}
         </span>
         <button
           type="button"
@@ -59,9 +80,13 @@ export function CodeBlock({
         </button>
       </div>
       {html ? (
-        <div className="limboo-code overflow-x-auto text-[12.5px]" dangerouslySetInnerHTML={{ __html: html }} />
+        <div
+          className="limboo-code overflow-x-auto text-[12.5px]"
+          style={gutter}
+          dangerouslySetInnerHTML={{ __html: html }}
+        />
       ) : (
-        <pre className={cn('limboo-code overflow-x-auto px-3 py-2.5 text-[12.5px]')}>
+        <pre className={cn('limboo-code overflow-x-auto px-3 py-2.5 text-[12.5px]')} style={gutter}>
           <code className="font-mono text-fg">{code}</code>
         </pre>
       )}

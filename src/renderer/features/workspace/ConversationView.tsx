@@ -17,7 +17,7 @@ import { memo, useEffect, useMemo, useRef, useState, type ReactNode } from 'reac
 import { Check, ChevronRight, CircleAlert } from 'lucide-react';
 import type { AgentActivityItem, AgentToolCall, AttachmentMeta, ChatMessage, PermissionRequest } from '@shared/types';
 import { Logo } from '@/renderer/components/brand/Logo';
-import { Spinner } from '@/renderer/components/ui';
+import { HelixLoader, Spinner } from '@/renderer/components/ui';
 import { DiffStat } from '@/renderer/components/ui/DiffStat';
 import { cn } from '@/renderer/lib/cn';
 import { useAgentStore, EMPTY_SNAPSHOT } from '@/renderer/stores/useAgentStore';
@@ -30,6 +30,7 @@ import { Markdown } from './Markdown';
 import { MessageSkeleton, ThinkingPulse } from './MessageSkeleton';
 import { InlineApproval } from './InlineApproval';
 import { ToolDiff } from './ToolDiff';
+import { CodeBlock } from './CodeBlock';
 
 /** Human label for a file-edit tool's change status, shown inline in the stream. */
 const CHANGE_WORD: Record<string, string> = {
@@ -294,12 +295,24 @@ const TurnView = memo(function TurnView({
     </>
   ) : null;
   return (
-    <div className="flex flex-col gap-4">
+    // The anchor the ConversationRail scrolls to (and observes for the "current
+    // turn" tick). `scroll-mt-4` keeps the prompt clear of the scroller's top
+    // edge when jumped to.
+    <div
+      id={turnAnchorId(turn.key)}
+      data-turn-id={turn.key}
+      className="flex scroll-mt-4 flex-col gap-4"
+    >
       {turn.user && <UserBubble message={turn.user} />}
       {showAssistant && <AssistantBlock blocks={turn.blocks} trailing={trailing} />}
     </div>
   );
 }, turnsEqual);
+
+/** DOM id for a turn's anchor — shared with the ConversationRail. */
+export function turnAnchorId(turnKey: string): string {
+  return `limboo-turn-${turnKey}`;
+}
 
 /** The payload behind a block (message / tool call / activity item). Blocks are
  *  rebuilt (fresh wrappers) on every event, but the underlying entities keep their
@@ -363,7 +376,7 @@ function LiveStatusRow({ sessionId }: { sessionId: string }) {
   const elapsed = secs >= 60 ? `${Math.floor(secs / 60)}m ${secs % 60}s` : `${secs}s`;
   return (
     <div className="flex items-center gap-2 text-[12px] text-muted animate-fade-in" aria-live="polite">
-      <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-accent animate-pulse" />
+      <HelixLoader size={14} label={phaseLabel(phase, toolName)} />
       <span>{phaseLabel(phase, toolName)}</span>
       {secs >= 3 && <span className="tabular-nums text-faint">{elapsed}</span>}
     </div>
@@ -481,7 +494,10 @@ function InlineEventRow({ call }: { call: AgentToolCall }) {
   // A file-edit tool carries a structured change + diff preview; prefer showing
   // the Shiki diff on expand over the plain-text `detail`.
   const hasDiff = !!call.edit && (call.edit.before.length > 0 || call.edit.after.length > 0);
-  const expandable = hasDiff || (!!call.detail && call.detail !== call.target);
+  // A settled Read carries the content the model actually saw — show that code
+  // rather than making the path the only thing the turn reveals.
+  const hasRead = !!call.read?.content;
+  const expandable = hasDiff || hasRead || (!!call.detail && call.detail !== call.target);
 
   return (
     <div className="flex flex-col gap-1">
@@ -526,8 +542,10 @@ function InlineEventRow({ call }: { call: AgentToolCall }) {
           {call.target && (
             <span
               className={cn(
-                'min-w-0 flex-1 truncate text-[11.5px]',
-                isWeb ? 'font-mono text-accent-fg' : 'text-faint',
+                // File paths and commands read as code — mono everywhere, with
+                // the web tools keeping their accent link tone.
+                'min-w-0 flex-1 truncate font-mono text-[11.5px]',
+                isWeb ? 'text-accent-fg' : 'text-faint',
               )}
               title={call.target}
             >
@@ -565,7 +583,23 @@ function InlineEventRow({ call }: { call: AgentToolCall }) {
       {open && hasDiff && call.edit && (
         <ToolDiff edit={call.edit} status={call.change?.status} />
       )}
-      {open && !hasDiff && expandable && (
+      {open && !hasDiff && hasRead && call.read && (
+        <div className="ml-6">
+          <CodeBlock
+            code={call.read.content}
+            lang={call.read.lang}
+            label={call.target}
+            startLine={call.read.startLine}
+            className="my-0 max-h-96 overflow-y-auto rounded-md"
+          />
+          {call.read.truncated && (
+            <div className="px-3 py-1 text-[10.5px] text-faint">
+              Preview truncated — the agent received the full file.
+            </div>
+          )}
+        </div>
+      )}
+      {open && !hasDiff && !hasRead && expandable && (
         <pre className="ml-6 max-h-48 overflow-auto rounded-md border border-line bg-[#0a0a0a] px-3 py-2 font-mono text-[11.5px] leading-relaxed text-muted">
           {call.detail}
         </pre>

@@ -22,6 +22,7 @@ import { Composer } from './Composer';
 import { McpStrip } from './McpStrip';
 import { ClarificationCard } from './ClarificationCard';
 import { ConversationView } from './ConversationView';
+import { ConversationRail } from './ConversationRail';
 import { useSessionStore } from '@/renderer/stores/useSessionStore';
 import { useAgentStore } from '@/renderer/stores/useAgentStore';
 import { useLayoutStore } from '@/renderer/stores/useLayoutStore';
@@ -69,49 +70,54 @@ export function CenterWorkspace() {
       {session && <ResumeBanner sessionId={session.id} />}
 
       {/* Scroll region — the single scroller. Messages live entirely above the
-          docked composer below, so they are never overlapped or clipped. */}
-      <div className="min-h-0 flex-1 overflow-y-auto px-4 pt-6">
-        <div className="mx-auto flex min-h-full max-w-3xl flex-col chat-font">
-          {session ? (
-            messageCount > 0 ? (
-              <ConversationView sessionId={session.id} />
+          docked composer below, so they are never overlapped or clipped. The
+          relative wrapper hosts the ConversationRail as a fixed overlay on the
+          right edge (a sibling of the scroller, so it does not scroll away). */}
+      <div className="relative min-h-0 flex-1">
+        <div className="h-full overflow-y-auto px-4 pt-6">
+          <div className="mx-auto flex min-h-full max-w-3xl flex-col chat-font">
+            {session ? (
+              messageCount > 0 ? (
+                <ConversationView sessionId={session.id} />
+              ) : (
+                <div className="m-auto flex max-w-md flex-col items-center gap-5 py-16 text-center">
+                  <Logo size={60} />
+                  <div className="flex flex-col gap-1.5">
+                    <span className="text-[16px] font-semibold tracking-tight text-fg">
+                      Start the conversation
+                    </span>
+                    <span className="text-[13px] leading-relaxed text-muted">
+                      Describe what you want to build. Limboo coordinates the repository,
+                      files, terminal, and tasks while the agent does the work.
+                    </span>
+                  </div>
+                </div>
+              )
             ) : (
-              <div className="m-auto flex max-w-md flex-col items-center gap-5 py-16 text-center">
-                <Logo size={60} />
-                <div className="flex flex-col gap-1.5">
-                  <span className="text-[16px] font-semibold tracking-tight text-fg">
-                    Start the conversation
+              <div className="m-auto flex flex-col items-center gap-4 text-center">
+                <Logo size={40} />
+                <div className="flex flex-col gap-1">
+                  <span className="text-[15px] font-semibold tracking-tight text-fg">
+                    Welcome to Limboo
                   </span>
-                  <span className="text-[13px] leading-relaxed text-muted">
-                    Describe what you want to build. Limboo coordinates the repository,
-                    files, terminal, and tasks while the agent does the work.
+                  <span className="max-w-md text-[13px] leading-relaxed text-muted">
+                    The local-first workspace for orchestrating coding agents. Create
+                    a session to begin — every task lives inside one.
                   </span>
                 </div>
+                <button
+                  type="button"
+                  onClick={() => createSession()}
+                  className="flex items-center gap-1.5 rounded-md bg-accent px-3 py-1.5 text-[12px] font-semibold text-base transition-opacity hover:opacity-90"
+                >
+                  <Plus size={13} />
+                  New session
+                </button>
               </div>
-            )
-          ) : (
-            <div className="m-auto flex flex-col items-center gap-4 text-center">
-              <Logo size={40} />
-              <div className="flex flex-col gap-1">
-                <span className="text-[15px] font-semibold tracking-tight text-fg">
-                  Welcome to Limboo
-                </span>
-                <span className="max-w-md text-[13px] leading-relaxed text-muted">
-                  The local-first workspace for orchestrating coding agents. Create
-                  a session to begin — every task lives inside one.
-                </span>
-              </div>
-              <button
-                type="button"
-                onClick={() => createSession()}
-                className="flex items-center gap-1.5 rounded-md bg-accent px-3 py-1.5 text-[12px] font-semibold text-base transition-opacity hover:opacity-90"
-              >
-                <Plus size={13} />
-                New session
-              </button>
-            </div>
-          )}
+            )}
+          </div>
         </div>
+        {session && messageCount > 0 && <ConversationRail sessionId={session.id} />}
       </div>
 
       {/* Composer docked in normal flow — a soft top fade gives a clean scroll

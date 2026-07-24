@@ -240,7 +240,16 @@ export const useAgentStore = create<AgentStoreState>((set, get) => {
           break;
         case 'tool-end':
           next.toolCalls = prev.toolCalls.map((c) =>
-            c.id === event.callId ? { ...c, status: event.status, endedAt: Date.now() } : c,
+            c.id === event.callId
+              ? {
+                  ...c,
+                  status: event.status,
+                  endedAt: Date.now(),
+                  // Read content only exists once the tool has run; keep any
+                  // previous value when the event carries none.
+                  read: event.read ?? c.read,
+                }
+              : c,
           );
           break;
         case 'file-change':

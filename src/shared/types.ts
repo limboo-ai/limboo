@@ -2225,6 +2225,14 @@ export interface AgentToolCall {
    * empty for creates, `after` empty for deletes.
    */
   edit?: { before: string; after: string; lang?: string };
+  /**
+   * For file-reading tools (Read): the truncated content the tool actually
+   * returned + language id, so the stream can render the same Shiki-highlighted
+   * code block the model saw instead of just the path. Arrives on `tool-end`
+   * (the content only exists once the tool has run). `startLine` is the file's
+   * real first line so the gutter matches the file when the read was offset.
+   */
+  read?: { content: string; lang?: string; startLine?: number; truncated?: boolean };
   status: ToolCallStatus;
   startedAt: number;
   endedAt?: number;
@@ -2401,7 +2409,14 @@ export type AgentEvent =
   | { kind: 'message-delta'; sessionId: string; messageId: string; text: string }
   | { kind: 'message-done'; sessionId: string; message: ChatMessage }
   | { kind: 'tool-start'; sessionId: string; call: AgentToolCall }
-  | { kind: 'tool-end'; sessionId: string; callId: string; status: ToolCallStatus }
+  | {
+      kind: 'tool-end';
+      sessionId: string;
+      callId: string;
+      status: ToolCallStatus;
+      /** Read-tool content preview (see {@link AgentToolCall.read}). */
+      read?: AgentToolCall['read'];
+    }
   | { kind: 'file-change'; sessionId: string; change: FileChange }
   | { kind: 'activity'; sessionId: string; item: AgentActivityItem }
   | { kind: 'tasks'; sessionId: string; tasks: TaskItem[] }

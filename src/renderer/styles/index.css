@@ -220,6 +220,118 @@ html[data-reduced-motion="true"] *::after {
   animation: limboo-check-tick 300ms ease-out 380ms forwards;
 }
 
+/* Modern range slider (Settings ▸ Slider). A token-styled track + accent fill +
+   vertical-bar thumb is layered over a visually-hidden native <input type=range>
+   so pointer/keyboard/a11y come for free. The eased "spring" glide on the fill
+   width and thumb position uses an overshoot cubic-bezier; the press-scale and
+   focus ring are driven purely by CSS off the native input via :has(). The
+   global reduced-motion switch collapses these transitions automatically. */
+.limboo-slider {
+  position: relative;
+  display: flex;
+  align-items: center;
+  width: 100%;
+  height: 2.25rem;
+}
+.limboo-slider-track {
+  position: relative;
+  width: 100%;
+  height: 0.375rem;
+  border-radius: 9999px;
+  background: var(--color-surface-2);
+  overflow: hidden;
+}
+.limboo-slider-fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  border-radius: 9999px;
+  background: var(--color-accent);
+  transition: width 200ms cubic-bezier(0.34, 1.4, 0.64, 1);
+}
+.limboo-slider-ticks {
+  position: absolute;
+  inset: 0 0.25rem;
+  pointer-events: none;
+}
+.limboo-slider-tick {
+  position: absolute;
+  top: 50%;
+  width: 3px;
+  height: 3px;
+  border-radius: 9999px;
+  background: var(--color-line-strong);
+  transform: translate(-50%, -50%);
+}
+.limboo-slider-thumb {
+  position: absolute;
+  top: 50%;
+  height: 1.25rem;
+  width: 0.375rem;
+  border-radius: 0.1875rem;
+  background: var(--color-fg);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.55);
+  transform: translate(-50%, -50%);
+  transition:
+    left 200ms cubic-bezier(0.34, 1.4, 0.64, 1),
+    transform 200ms cubic-bezier(0.34, 1.55, 0.64, 1),
+    box-shadow 160ms ease-out;
+  pointer-events: none;
+}
+.limboo-slider-input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  opacity: 0;
+  cursor: grab;
+  -webkit-appearance: none;
+  appearance: none;
+  background: transparent;
+}
+.limboo-slider-input:active { cursor: grabbing; }
+.limboo-slider-input:disabled { cursor: not-allowed; }
+.limboo-slider-input::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 1.25rem;
+  height: 1.25rem;
+}
+.limboo-slider:has(.limboo-slider-input:active) .limboo-slider-thumb {
+  transform: translate(-50%, -50%) scaleY(1.35);
+}
+.limboo-slider:has(.limboo-slider-input:focus-visible) .limboo-slider-thumb {
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--color-accent) 32%, transparent);
+}
+
+/* Preview rail (PreviewRail): the hover "pyramid". Each tick scales on its
+   anchored edge, so the run of ticks swells toward the pointer and falls away
+   by distance. The overshoot easing gives the same spring the reference gets
+   from its layout animation; the global reduced-motion switch collapses it. */
+.limboo-rail-tick {
+  border-radius: 9999px;
+  transition:
+    transform 220ms cubic-bezier(0.34, 1.4, 0.64, 1),
+    background-color 160ms ease-out;
+}
+
+/* Helix loader (HelixLoader): two columns of dots weaving left↔right with a
+   per-row phase offset — the session-live + generate/stream indicator. Each row
+   renders two dots running this keyframe in antiphase (one delayed by half the
+   cycle). Uses currentColor so it inherits the surrounding token. The global
+   reduced-motion switch collapses it to a static state. */
+@keyframes limboo-helix {
+  0% { transform: translateX(var(--helix-amp)) scale(1); opacity: 1; }
+  50% { transform: translateX(calc(-1 * var(--helix-amp))) scale(0.5); opacity: 0.45; }
+  100% { transform: translateX(var(--helix-amp)) scale(1); opacity: 1; }
+}
+.limboo-helix-dot {
+  position: absolute;
+  border-radius: 9999px;
+  background: currentColor;
+  animation: limboo-helix var(--helix-speed, 1s) ease-in-out infinite;
+}
+
 /* ------------------------------------------------------------------ */
 /* Markdown rendering (assistant messages)                            */
 /* ------------------------------------------------------------------ */
@@ -277,7 +389,9 @@ html[data-reduced-motion="true"] *::after {
 }
 .limboo-code code {
   display: block;
-  counter-reset: line;
+  /* `--limboo-code-start` offsets the gutter so an offset Read (or any excerpt)
+     numbers its lines the way the real file does. Default 0 → starts at 1. */
+  counter-reset: line var(--limboo-code-start, 0);
   padding: 0.6rem 0;
   font-family: var(--font-mono);
 }

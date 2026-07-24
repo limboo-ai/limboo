@@ -19,6 +19,7 @@ export type AgentProvider = 'anthropic' | 'cursor';
  */
 export const AGENT_MODELS = [
   { value: 'claude-fable-5', label: 'Fable 5', provider: 'anthropic' },
+  { value: 'claude-opus-5', label: 'Opus 5', provider: 'anthropic' },
   { value: 'claude-opus-4-8', label: 'Opus 4.8', provider: 'anthropic' },
   { value: 'claude-opus-4-7', label: 'Opus 4.7', provider: 'anthropic' },
   { value: 'claude-opus-4-6', label: 'Opus 4.6', provider: 'anthropic' },
@@ -568,7 +569,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
     notifications: true,
   },
   agent: {
-    model: 'claude-sonnet-4-6',
+    model: 'claude-opus-5',
     thinking: 'adaptive',
     permissionMode: 'approve-edits',
     webSearch: true,
