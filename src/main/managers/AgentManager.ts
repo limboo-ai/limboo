@@ -2550,7 +2550,19 @@ export class AgentManager {
     if (!call) return;
     call.status = status;
     call.endedAt = Date.now();
-    this.pushEvent({ kind: 'tool-end', sessionId, callId: toolUseId, status });
+    // A successful Read carries the file content the model just saw. Keep a
+    // bounded, gutter-stripped copy so the stream can render it as a highlighted
+    // code block rather than only the path.
+    const read =
+      status === 'done' && call.name === 'Read' ? readFromResult(output, call.target) : null;
+    if (read) call.read = read;
+    this.pushEvent({
+      kind: 'tool-end',
+      sessionId,
+      callId: toolUseId,
+      status,
+      read: read ?? undefined,
+    });
     this.emitHook(sessionId, 'post-tool-use', {
       tool: call.name,
       summary: call.summary,
@@ -4177,6 +4189,47 @@ function editFromInput(
     return { before: truncate(before, DIFF_PREVIEW_CAP), after: truncate(after, DIFF_PREVIEW_CAP), lang };
   }
   return null;
+}
+
+/**
+ * Build the code preview for a completed `Read` from the tool's own result text.
+ *
+ * Both providers hand back the file the way the model saw it: `cat -n` style
+ * gutter lines (`   12→const x = 1`), optionally wrapped in `<system-reminder>`
+ * blocks the model is meant to read but the user should not. We strip the
+ * reminders and the gutter (the code block draws its own line numbers, starting
+ * from the real first line so an offset read still lines up with the file), and
+ * cap the content like the diff preview. Returns null when the result is not a
+ * text read at all (images, errors, empty files).
+ */
+function readFromResult(
+  output: string | undefined,
+  target: string | undefined,
+): { content: string; lang?: string; startLine?: number; truncated?: boolean } | null {
+  const raw = (output ?? '').replace(/<system-reminder>[\s\S]*?<\/system-reminder>/g, '').trim();
+  if (!raw) return null;
+
+  const lines = raw.split('\n');
+  // Only treat this as a gutter read when the result actually looks like one —
+  // otherwise (a tool that returned prose, an image placeholder) leave it alone.
+  const GUTTER = /^\s*(\d+)→(.*)$/;
+  const gutter = lines.filter((l) => GUTTER.test(l));
+  if (gutter.length < Math.max(1, Math.floor(lines.length / 2))) return null;
+
+  const startLine = Number(GUTTER.exec(gutter[0])?.[1] ?? 1);
+  const content = lines
+    .map((l) => {
+      const m = GUTTER.exec(l);
+      return m ? m[2] : l;
+    })
+    .join('\n');
+  const capped = truncate(content, DIFF_PREVIEW_CAP);
+  return {
+    content: capped,
+    lang: target ? langFromPath(target) : undefined,
+    startLine: Number.isFinite(startLine) && startLine > 1 ? startLine : undefined,
+    truncated: capped.length < content.length,
+  };
 }
 
 /** Map a file extension to a Shiki language id for the stream diff view. */

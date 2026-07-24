@@ -304,6 +304,17 @@ html[data-reduced-motion="true"] *::after {
   box-shadow: 0 0 0 4px color-mix(in srgb, var(--color-accent) 32%, transparent);
 }
 
+/* Preview rail (PreviewRail): the hover "pyramid". Each tick scales on its
+   anchored edge, so the run of ticks swells toward the pointer and falls away
+   by distance. The overshoot easing gives the same spring the reference gets
+   from its layout animation; the global reduced-motion switch collapses it. */
+.limboo-rail-tick {
+  border-radius: 9999px;
+  transition:
+    transform 220ms cubic-bezier(0.34, 1.4, 0.64, 1),
+    background-color 160ms ease-out;
+}
+
 /* Helix loader (HelixLoader): two columns of dots weaving left↔right with a
    per-row phase offset — the session-live + generate/stream indicator. Each row
    renders two dots running this keyframe in antiphase (one delayed by half the
@@ -378,7 +389,9 @@ html[data-reduced-motion="true"] *::after {
 }
 .limboo-code code {
   display: block;
-  counter-reset: line;
+  /* `--limboo-code-start` offsets the gutter so an offset Read (or any excerpt)
+     numbers its lines the way the real file does. Default 0 → starts at 1. */
+  counter-reset: line var(--limboo-code-start, 0);
   padding: 0.6rem 0;
   font-family: var(--font-mono);
 }
