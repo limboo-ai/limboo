@@ -6,11 +6,20 @@
 
 **The operating system for AI software development.**
 
-A local-first desktop workspace that gives a connected coding agent everything it
-needs to do real engineering: projects, sessions, file watching, repository
-indexing, git, terminals, memory, permissions, and context. Limboo is not an AI
-model. It is the environment around one.
+A local-first desktop workspace that gives a coding agent everything it needs to do
+real engineering: projects, sessions, file watching, repository indexing, git,
+worktrees, terminals, memory, search, permissions, and context. Limboo is not an AI
+model, and it is not an agent. It is the environment around one — and it works with
+more than one.
 
+[![Release](https://img.shields.io/github/v/release/limboo-ai/limboo?label=release&color=6e9bff)](https://github.com/limboo-ai/limboo/releases/latest)
+[![CI](https://github.com/limboo-ai/limboo/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/limboo-ai/limboo/actions/workflows/ci.yml)
+[![Security](https://github.com/limboo-ai/limboo/actions/workflows/security.yml/badge.svg?branch=main)](https://github.com/limboo-ai/limboo/actions/workflows/security.yml)
+[![Platforms](https://img.shields.io/badge/platforms-Windows%20%7C%20macOS%20%7C%20Linux-1c1c1c)](https://github.com/limboo-ai/limboo/releases/latest)
+[![License](https://img.shields.io/badge/license-MIT-3fb950)](LICENSE)
+
+[Download](#download) ·
+[Why it exists](#why-it-exists) ·
 [Documentation](docs/README.md) ·
 [Architecture](docs/architecture/overview.md) ·
 [Contributing](CONTRIBUTING.md) ·
@@ -34,83 +43,213 @@ at its highest level: it manages the repository, watches the filesystem, runs th
 terminal, owns the database, holds durable project memory, and enforces a strict
 security boundary, while the agent focuses exclusively on writing software.
 
+It works with **more than one agent**. Claude (through the Claude Agent SDK) and
+Cursor (through the `cursor-agent` CLI) both run as first-class providers behind a
+narrow adapter seam — picking a model picks the provider, and everything above that
+seam behaves identically either way.
+
 Every unit of work is a **Session** — a bundle of a repository, branch, chat
 history, agent, terminal history, checkpoints, permissions, context, memory, tasks,
 and generated files. Instead of opening many windows, everything lives inside one
 workspace.
 
+## Download
+
+Installers for **Windows, macOS, and Linux** are published on every release.
+
+| Platform | Download | Notes |
+| --- | --- | --- |
+| **Windows** | [`Limboo-Setup-1.5.1-x64.exe`](https://github.com/limboo-ai/limboo/releases/latest) | NSIS installer, x64 |
+| **macOS** (Apple silicon) | [`Limboo-1.5.1-arm64.dmg`](https://github.com/limboo-ai/limboo/releases/latest) | |
+| **macOS** (Intel) | [`Limboo-1.5.1.dmg`](https://github.com/limboo-ai/limboo/releases/latest) | |
+| **Linux** | [`Limboo-1.5.1.AppImage`](https://github.com/limboo-ai/limboo/releases/latest) · [`.deb`](https://github.com/limboo-ai/limboo/releases/latest) · [`.rpm`](https://github.com/limboo-ai/limboo/releases/latest) | AppImage needs `chmod +x` |
+
+The app updates itself from the release feed once installed.
+
+### These builds are unsigned — here's what you'll see
+
+Code-signing certificates are not yet configured in the release pipeline, so your
+OS will warn you. This is expected, and worth knowing before you assume the
+download is broken:
+
+- **Windows** — SmartScreen says "Windows protected your PC." Choose
+  **More info → Run anyway**.
+- **macOS** — Gatekeeper refuses an app from an unidentified developer. Right-click
+  the app → **Open**, or clear the quarantine flag:
+
+  ```bash
+  xattr -dr com.apple.quarantine /Applications/Limboo.app
+  ```
+
+Rather than ask you to take that on trust, every artifact ships with a checksum
+manifest and a build-provenance attestation recorded in a public transparency log:
+
+```bash
+sha256sum -c SHA256SUMS                                              # integrity
+gh attestation verify Limboo-1.5.1.AppImage --repo limboo-ai/limboo  # provenance
+```
+
+Signed builds are the next release-engineering task. Prefer to build it yourself?
+See [Quick start](#quick-start).
+
 ## Why it exists
 
-Traditional IDEs revolve around files. Limboo revolves around conversations. You do
-not ask "which file should I edit?" — you say "implement authentication," and the
-agent figures out the files while Limboo visualizes the process: the streaming
-reply, the tool calls, the file changes, the git diff, and the running commands.
+There is no shortage of ways to put a face on a coding agent. Most of them are
+genuinely good at what they set out to do: run several agents at once, show you the
+diffs, give each task its own branch, keep the transcripts tidy. If that is what you
+need, you are well served today.
 
-It is **local-first** by design. There is no backend and no cloud sync. The only
-network traffic is the connected coding agent talking to its AI provider. The
-project, its history, and its memory belong to the developer.
+Limboo starts from a different observation — one you have probably felt without
+naming it.
+
+### The agents reason brilliantly and remember the wrong things
+
+Ask a coding agent to resume yesterday's task and it will pick up the conversation
+perfectly. It remembers what it decided, what it tried, what you told it to avoid.
+What it does *not* remember is the world that conversation was about.
+
+Sessions persist the conversation, not the filesystem. In between, your teammate
+merged a refactor. A dependency went up a major version. Someone rebased the branch
+out from under the diff. The transcript is intact and now subtly fictional — and the
+agent argues confidently from it, because nothing told it otherwise. You spend the
+first few turns of every resumed session pushing it back to reality, and the worst
+cases are the ones where you don't notice.
+
+This is not a flaw in the model's reasoning. It is a missing system. Nothing in the
+stack is responsible for the *world* the agent acts in.
+
+### Watching an agent is not the same as grounding it
+
+The tooling that grew up around these agents solved a real and different problem:
+visibility. Boards, parallel sessions, isolated branches, inline review — they make
+many agents *watchable*. Limboo has most of that too, and none of it is what makes
+it worth building.
+
+Because underneath the dashboards, the environment is still ambient. Whatever
+changed between turns remains the agent's problem to rediscover. Each provider keeps
+its own memory, its own permission model, its own configuration. Switch agents and
+you start over: the knowledge your last agent accumulated stays locked in that
+vendor's format, and the safety rules you carefully tuned apply to only one of them.
+
+### So Limboo makes the environment a system
+
+The bet is simple: **the environment deserves to be real infrastructure, owned by
+the app, with its own state — not a side effect of whichever agent happens to be
+running.** Four consequences follow, and they are the actual product:
+
+**Sessions resume against verified repository reality.** Reopen a session and Limboo
+revalidates the worktree against the exact state that session last saw, then computes
+a structured *repository delta*: commits landed, files changed with dependency
+manifests and migrations flagged, symbols added or removed, and which files import
+what moved. That delta is handed to the agent once, before your next prompt, so it
+reconciles up front instead of discovering the drift three tool calls in. Bounded,
+argv-only git; never blocks you from switching sessions.
+
+**The app owns the knowledge, so it outlives the agent.** Durable project memory and
+the code-search index are platform services Limboo maintains — offline, in local
+SQLite with FTS5/BM25 ranking, no embeddings API. Both agents query the *same*
+memory and the *same* index through the same tools. Your project's accumulated
+knowledge is not a vendor's asset, and it survives switching models mid-project.
+Memory even links to repository symbols, so guidance whose code was deleted is
+automatically demoted until that code returns.
+
+**One authorization core, whichever agent is running.** Every tool call — Claude's
+through the SDK callback, Cursor's through a per-run hooks bridge — enters the *same*
+decision function, with the same risk classes, the same path guards, and the same
+approval dialog. Beneath it sits a provider-neutral OS-level sandbox whose
+non-negotiable floor keeps your secrets store, database, and settings unreadable no
+matter what the agent is told to do. Two agents, one set of rules you actually wrote.
+
+**The UI never knows which agent is running.** Providers sit behind a narrow adapter
+seam: executable detection, run invocation, wire-format translation, permission
+mapping, resume tokens. Everything above it — the timeline, approvals, plans, memory,
+search, worktrees — is provider-neutral by construction. Adding an agent is writing
+an adapter, not forking the app.
+
+### Why this isn't another Claude Code or Codex clone
+
+A clone reimplements the parts that are already excellent: the agent loop, the tool
+protocol, the chat.
+
+Limboo deliberately owns none of them. It has no model, no agent loop, and no
+inference of its own. It doesn't hold your API keys — each agent authenticates
+itself, exactly as it does in your terminal. Run the CLI directly tomorrow and it
+still works; nothing here is a lock-in layer.
+
+What Limboo owns is everything the agent *isn't* responsible for and every agent
+needs: the repository's state across time, durable knowledge that isn't a vendor's,
+a permission model with an OS-level floor, isolated execution roots, and the
+translation that makes those work for more than one provider.
+
+The distinction in one line: **wrapper-style tools make the agent easier to look at;
+Limboo makes the world the agent acts in durable, verifiable, and yours.**
+
+And it is **local-first** by construction. There is no backend, no telemetry, and no
+cloud sync. The only network traffic is the agent talking to its own provider. The
+project, its history, and its memory stay on your machine.
 
 ## Key features
 
 - **Session-centric workspace** — repo + branch + chat + agent + terminal +
   checkpoints + memory, all in one place.
-- **Coding agent orchestration** — drives the Claude Code agent (plan and implement
-  modes) with risk-gated tool approvals, path-guarded to the workspace.
-- **Deep git engine** — status, diff, stage, commit, log, branches, tags, blame,
-  fetch, push, pull, plus lightweight per-session **checkpoints** for instant
-  recovery.
-- **Integrated terminal** — workspace-scoped PTY sessions; agent commands are
-  mirrored into the terminal view.
-- **File System Layer** — live watch + indexed tree + guarded reads, pushing live
-  git status into the session list.
-- **Local Memory System** — durable, provider-independent project knowledge with
-  fully offline FTS5 / BM25 retrieval, injected into the agent prompt.
+- **Two agents, one workspace** — Claude (via the Claude Agent SDK) and Cursor (via
+  the `cursor-agent` CLI) are both first-class. The model picker *is* the provider
+  selector; everything above the adapter seam is provider-neutral.
 - **Resume Pipeline** — reopening a session revalidates the repository against the
   state it last saw and hands the agent a structured **repository delta** (commits,
   files, symbols, dependency manifests) so it continues against current reality, not
   a stale transcript. Fully local, bounded git, never blocks switching.
+- **Git worktrees per session** — each session can own a real isolated checkout and
+  branch, and that worktree is the single execution root every subsystem resolves
+  against (agent, terminal, git, search, file writes).
+- **Deep git engine** — status, diff, stage, commit, log, branches, tags, blame,
+  fetch, push (`--force-with-lease`, never bare force), pull, plus lightweight
+  per-session **checkpoints** for instant recovery. Argv-only, never through a shell.
+- **Local Memory System** — durable, provider-independent project knowledge with
+  fully offline FTS5 / BM25 retrieval, injected into whichever agent is running.
+- **Search Engine** — a local index of files, symbols, and import edges that both
+  ranks retrieval and answers the agent's own queries as read-only tools.
+- **Three-layer permissions** — one shared authorization core for both providers,
+  provider-native permission translation, and a provider-neutral **OS-level sandbox**
+  with a non-negotiable floor around secrets, the database, and settings.
+- **MCP platform layer** — MCP servers are configured once by the app and shared
+  across both agents, rather than per-provider.
+- **Scripts & Services** — repo-declared dev servers supervised as PTYs with
+  auto-assigned loopback ports, behind an explicit trust gate for repo-authored
+  commands.
+- **Integrated terminal** — workspace-scoped PTY sessions; agent commands are
+  mirrored into the terminal view.
+- **File System Layer** — live watch + indexed tree + guarded reads and writes,
+  pushing live git status into the session list.
 - **Unified streaming timeline** — one continuous, turn-grouped event stream of the
-  conversation, tool calls, and status.
+  conversation, tool calls, and status, with file reads and edits expanding into
+  syntax-highlighted code.
 - **Pure-black, dark-only UI** — a minimal three-pane shell tuned for a true
   `#000000` background.
 
-## What makes Limboo different
+## Under the hood
 
-Most agent tools stop at "resume the conversation." That restores what the agent
-*said*, but not the world it said it in. Limboo treats the environment as a
-first-class, continuously-maintained system that cooperates with the agent instead
-of leaving it to rediscover reality on every turn.
+Every capability above is a subsystem in the main process with its own documentation
+— start anywhere:
 
-- **The agent resumes against verified repository reality, not a transcript.** The
-  **Resume Pipeline** is the flagship of this idea. When you reopen a session — after
-  an hour or after three weeks of other people's commits, rebases, and dependency
-  bumps — Limboo revalidates the git worktree against the exact state the session
-  last saw and computes a structured *repository delta*: commits landed, files
-  changed (with dependency manifests and migrations flagged), symbols added or
-  removed, and which files import what changed. That delta is injected once, before
-  your next prompt, so the agent reconciles its assumptions up front instead of
-  burning turns re-reading the tree. It is fully local, uses only bounded argv-only
-  git, and never blocks you from switching sessions. See
-  [the Resume Pipeline](docs/architecture/subsystems/resume-pipeline.md).
+| Subsystem | What it owns |
+| --- | --- |
+| [Resume Pipeline](docs/architecture/subsystems/resume-pipeline.md) | Repository snapshots, revalidation, and the structured delta injected on resume |
+| [Agent Manager](docs/architecture/subsystems/agent-manager.md) | The provider adapter seam, the shared authorization core, streaming translation |
+| [Worktree Manager](docs/architecture/subsystems/worktree-manager.md) | Per-session isolated checkouts; the single resolver of a session's execution root |
+| [Memory System](docs/architecture/subsystems/memory-system.md) | Tiered durable knowledge, BM25 retrieval, proposals, symbol links |
+| [Git Engine](docs/architecture/subsystems/git-engine.md) | Argv-only git, checkpoints, push/pull, diffs |
+| [File System Layer](docs/architecture/subsystems/file-system-layer.md) | Watching, indexing, guarded reads and writes |
+| [Terminal Manager](docs/architecture/subsystems/terminal-manager.md) | PTY sessions and agent command mirroring |
+| [Service Manager](docs/architecture/subsystems/service-manager.md) | Repo-declared scripts and supervised dev servers |
+| [Database](docs/architecture/subsystems/database.md) | Local SQLite, WAL, versioned schema, bound parameters only |
 
-- **Isolation by default.** Every session can own its own git worktree — a real
-  isolated checkout and branch — so parallel work never collides, and "continue where
-  I left off" means a specific filesystem, not a shared one.
-
-- **The app owns the knowledge, not the model.** Durable project memory, the search
-  index, and now a symbol/dependency graph are platform services the app maintains
-  and injects — provider-independent and offline. Memory even references repository
-  symbols, so guidance whose code was deleted is automatically demoted until it
-  reappears.
-
-- **A hard security boundary you can trust.** The renderer performs nothing: all
-  filesystem, git, shell, and database access lives in the main process behind a
-  single typed IPC bridge with sender validation, deny-by-default permissions, and
-  parameterized SQL throughout. Git never runs through a shell; paths are guarded
-  against traversal; secrets are never stored.
-
-The result: continuation feels genuinely intelligent, because the agent begins each
-resumed task with an accurate, up-to-date understanding of a living codebase.
+**The security posture, briefly.** The renderer performs nothing: all filesystem,
+git, shell, and database access lives in the main process behind a single typed IPC
+bridge with sender validation, deny-by-default web permissions, and parameterized SQL
+throughout. Git and every spawned process take argv arrays, never a shell. Paths are
+guarded against traversal and symlink escape. Secrets go through Electron
+`safeStorage` and are redacted before logging. Details in [SECURITY.md](SECURITY.md).
 
 ## Screenshots
 
@@ -157,10 +296,12 @@ in the main process and crosses a single typed IPC bridge. See
 | Language         | TypeScript                                      |
 | Styling          | Tailwind CSS v4 (CSS-first, no config)          |
 | State            | Zustand 5 (slice-per-domain stores)             |
-| Database         | better-sqlite3 (WAL, FTS5)                       |
+| Database         | better-sqlite3 (WAL, FTS5 + trigram)            |
 | Terminal         | node-pty (Node-API) + xterm                     |
 | File watching    | chokidar                                        |
-| Coding agent     | `@anthropic-ai/claude-agent-sdk`                |
+| Coding agents    | `@anthropic-ai/claude-agent-sdk` (Claude) · `cursor-agent` CLI (Cursor) |
+| Highlighting     | Shiki (JS RegExp engine — CSP-safe, no WASM)    |
+| Packaging        | electron-builder (NSIS, dmg, AppImage, deb, rpm) |
 | Icons            | lucide-react                                    |
 
 ## Quick start
@@ -172,9 +313,11 @@ in the main process and crosses a single typed IPC bridge. See
   Line Tools / MSVC Build Tools depending on platform) — it may compile on
   install if no matching prebuilt is published. `node-pty` (pinned to the
   Node-API `1.2.0-beta` line) ships an ABI-stable prebuilt and never compiles.
-- The coding agent owns its own authentication. Limboo never stores credentials;
-  it reads the agent's existing sign-in (for example `ANTHROPIC_API_KEY` or the
-  Claude Code credentials file). See
+- **Each agent owns its own authentication.** Limboo never asks for or stores your
+  provider credentials; it uses the agent's existing sign-in (for example
+  `ANTHROPIC_API_KEY` or the Claude Code credentials file for Claude, and your
+  `cursor-agent` CLI login for Cursor). A Cursor API key, if you choose to set one,
+  is encrypted with Electron `safeStorage` and decrypted only at spawn time. See
   [docs/guides/using-the-agent.md](docs/guides/using-the-agent.md).
 
 **Run in development**
@@ -191,8 +334,14 @@ notes live in [docs/getting-started/installation.md](docs/getting-started/instal
 
 ```bash
 npm run package   # package the app (no installers)
-npm run make      # platform installers (deb / rpm / zip / squirrel)
+npm run dist      # branded installers for the current OS -> dist/
 ```
+
+`npm run dist` builds for whichever OS you run it on: NSIS on Windows, dmg/zip on
+macOS, AppImage/deb/rpm on Linux. Releases are **tag-driven** — CI stamps the version
+from the `v*` tag at build time, so `package.json`'s version is only a dev
+placeholder and should never be hand-bumped. See
+[docs/operations/release-process.md](docs/operations/release-process.md).
 
 ## Documentation
 
@@ -230,14 +379,27 @@ for contributors: [`CLAUDE.md`](CLAUDE.md) (the code-level working contract) and
 
 ## Project status
 
-Limboo is at `1.0.0`. The desktop foundation and platform services are built:
-workspaces, sessions with per-session git worktrees, the git engine, the integrated
-terminal, the File System Layer, agent orchestration, the Local Memory System, the
-Search Engine, the Resume Pipeline ("continue exactly where you left off"), and a
-hardened IPC layer over a local SQLite database. Planned work (repository clone/track
-UI, a standalone permission system, merge-conflict resolution, remote management,
-stash, and a tree-sitter / vector-embeddings upgrade of the code-intelligence layer)
-is tracked in [ROADMAP.md](ROADMAP.md).
+**Current release: `v1.5.1`.** The desktop foundation and the platform services are
+built and in daily use: workspaces, sessions with per-session git worktrees, the git
+engine, the integrated terminal, the File System Layer, multi-agent orchestration
+(Claude and Cursor), the Local Memory System, the Search Engine, the Resume Pipeline,
+the MCP platform layer, the OS-level sandbox, and a hardened IPC layer over local
+SQLite.
+
+Being honest about the rough edges, because you will meet them:
+
+- **Installers are unsigned.** Expect SmartScreen and Gatekeeper warnings until
+  signing certificates are wired into the pipeline. See [Download](#download).
+- **Cursor's default mode is propose-only.** Until the interactive hooks bridge is
+  verified for your exact CLI build, proposed edits surface as a reviewable plan you
+  approve, rather than applying directly. This is a deliberate safety posture.
+- **Cursor Cloud Agents and ACP are not supported yet** — local CLI runs only. Image
+  attachments remain Claude-only.
+
+Planned work — repository clone/track UI, a standalone permission system,
+merge-conflict resolution, remote management, stash, and a tree-sitter /
+vector-embeddings upgrade of the code-intelligence layer — is tracked in
+[ROADMAP.md](ROADMAP.md).
 
 ## Contributing
 
