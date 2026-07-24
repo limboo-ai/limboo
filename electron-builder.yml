@@ -102,6 +102,14 @@ linux:
   category: Development
   icon: assets/icon.png
   synopsis: The operating system for AI software development
+  # MUST match the binary Forge produces (packagerConfig.name = 'Limboo'), which
+  # `--prepackaged` hands over as-is. electron-builder does NOT read that name:
+  # it defaults executableName to package.json `name` ('limboo', lowercase) and
+  # writes every Linux launcher path from it. Without this, v1.5.0 shipped an
+  # AppRun that exec'd a non-existent `limboo` (the AppImage could not start at
+  # all), a .desktop `Exec=/opt/Limboo/limboo`, and a dangling
+  # /usr/bin/limboo symlink. Case matters on Linux — keep these two in sync.
+  executableName: Limboo
   target:
     - AppImage
     - deb

@@ -32,6 +32,21 @@ All notable changes to Limboo are documented here. The format is based on
   roughly Electron 29's ABI, so it didn't actually fix the problem; superseded
   by this change.) See [installation](docs/getting-started/installation.md).
 
+## [1.5.1] - 2026-07-25
+
+### Fixed
+
+- **Linux packages could not launch.** `electron-builder.yml` set no
+  `linux.executableName`, so electron-builder derived every Linux launcher path
+  from the package name (`limboo`, lowercase) while Electron Forge — which owns
+  packaging and hands the result over via `--prepackaged` — produced the binary
+  as `Limboo`. On a case-sensitive filesystem that mismatch broke all three
+  Linux artifacts in v1.5.0: the AppImage's `AppRun` exec'd a non-existent
+  `limboo` and failed to start at all, and the deb/rpm shipped a
+  `.desktop` entry pointing at `/opt/Limboo/limboo` plus a dangling
+  `/usr/bin/limboo` symlink. Windows and macOS were unaffected. The application
+  itself was never broken — only the launchers around it.
+
 ## [1.5.0] - 2026-07-25
 
 Restores boot after a regression that made the app unlaunchable, and adds
