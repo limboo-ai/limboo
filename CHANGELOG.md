@@ -32,6 +32,68 @@ All notable changes to Limboo are documented here. The format is based on
   roughly Electron 29's ABI, so it didn't actually fix the problem; superseded
   by this change.) See [installation](docs/getting-started/installation.md).
 
+## [1.5.0] - 2026-07-25
+
+Restores boot after a regression that made the app unlaunchable, and adds
+conversation navigation plus visible file reads.
+
+### Fixed
+
+- **The app could not start.** The SQL-injection hardening added in v1.4.2's
+  `addColumnIfMissing` validated the column definition against a character
+  allowlist that had no `[` or `]`, so the pre-existing `sessions.tags`
+  migration (`TEXT NOT NULL DEFAULT '[]'`) threw inside `migrate()` before the
+  window opened — on fresh installs as well as existing databases, because the
+  check ran ahead of the column-existence guard. `ALTER TABLE … ADD COLUMN` is
+  now composed from validated parts (a typed column spec plus SQL-escaped
+  literals) instead of a pattern-matched SQL fragment, so the CWE-89 defense is
+  kept without guessing at legal defaults. The emitted DDL is unchanged, so no
+  data migration is required.
+- **Syntax highlighting in packaged builds** — Shiki now runs on its JavaScript
+  RegExp engine, which needs neither WASM nor `unsafe-eval` under the production
+  CSP; secret files prompt instead of hard-blocking.
+
+### Added
+
+- **Preview Rail** — a Codex-style navigation rail on the right of the
+  conversation: one tick per message block, a hover "pyramid" that swells toward
+  the pointer, and a floating preview of the destination prompt. Clicking jumps
+  to that turn. It appears once a conversation passes three prompts.
+- **File reads show their contents** — a `Read` tool row expands into the
+  Shiki-highlighted code the model actually saw, with gutter numbers matching the
+  real file (offset reads included), instead of surfacing only the path.
+- **App-owned MCP platform layer** shared across Claude and Cursor.
+- **`Slider`** — a token-styled range control over a native `input[type=range]`,
+  keeping pointer, keyboard, and screen-reader behavior; adopted by the
+  Appearance and Agent panels.
+- **`HelixLoader`** — a pure-CSS strand indicator used for streaming status.
+
+### Changed
+
+- The settings modal is wider (768px → 1024px); its height is unchanged.
+- Activity, Console, and Hooks icons moved from the right rail to the title bar,
+  with their drawers still opening on the right.
+- Opus 5 added to the model catalog and set as the default agent model.
+- File paths and commands in tool rows render in the monospace face.
+
+### Security
+
+- **MCP transport hardening** — an over-limit HTTP response now rejects
+  immediately instead of hanging or truncating silently; the stdio client drains
+  and rejects every in-flight request when a child dies, so a hung process no
+  longer pins async frames.
+- **Path traversal** — MCP config merges resolve the root before the containment
+  check and realpath the deepest existing ancestor, defeating a symlinked parent
+  that would redirect the write outside the repository.
+- **Prototype pollution** — untrusted on-disk MCP config is rebuilt from a
+  sanitized copy with unsafe keys stripped.
+- **Sandbox floor corrected** — the OS jail denied the whole `userData` root,
+  which contains the session worktree and attachments the agent must use. It now
+  denies only the crown jewels (`secrets/`, `limboo.db`, `settings.json`,
+  `window-state.json`); `allowWritePaths` entries are screened at both
+  persistence and runtime, and Strict mode closes the
+  `dangerouslyDisableSandbox` escape hatch.
+
 ## [1.0.0]
 
 The first consolidated release. The desktop foundation and platform services are
