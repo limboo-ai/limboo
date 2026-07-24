@@ -31,6 +31,14 @@ jobs:
         uses: gitleaks/gitleaks-action@v2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # gitleaks-action v2 requires a paid license for repositories owned by
+          # an ORGANIZATION (it refuses to scan with "missing gitleaks license").
+          # The key is stored twice on this repo — as an Actions secret AND as a
+          # Dependabot secret — because Dependabot-triggered runs read a separate
+          # store and would otherwise fail this job on every dependency PR.
+          # NOTE: pull requests from FORKS receive no secrets, so this job still
+          # fails there. Pushes, internal branches, and Dependabot are covered.
+          GITLEAKS_LICENSE: ${{ secrets.GITLEAKS_LICENSE }}
 
   dependency-review:
     name: Dependency review
