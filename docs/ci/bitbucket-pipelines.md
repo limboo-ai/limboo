@@ -63,7 +63,7 @@ Set under **Repository settings -> Pipelines -> Repository variables**, always
 
 | Variable | Use |
 | -------- | --- |
-| `GITHUB_TOKEN` | **Required.** GitHub PAT (repo scope / Contents: read+write on `BotCoder254/limboo`). Used by `release-github`, the `package-windows`/`package-macos` uploads, and the manual `sync-github` custom pipeline. **Must be saved on the `limboo_/limboo` repository (or the `limboo_` workspace)** — if the step can't see it, `release-github` fails fast with setup instructions; fix the variable and **re-run the failed step** (no new tag needed). |
+| `GITHUB_TOKEN` | **Required.** GitHub PAT (repo scope / Contents: read+write on `limboo-ai/limboo`). Used by `release-github`, the `package-windows`/`package-macos` uploads, and the manual `sync-github` custom pipeline. **Must be saved on the `limboo_/limboo` repository (or the `limboo_` workspace)** — if the step can't see it, `release-github` fails fast with setup instructions; fix the variable and **re-run the failed step** (no new tag needed). |
 | `BITBUCKET_ACCESS_TOKEN` | Optional repository access token. When present, installers are also uploaded to **Bitbucket Downloads**; when absent that step skips cleanly. |
 
 ## Triggers

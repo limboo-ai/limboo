@@ -43,7 +43,7 @@ supported path today.
 ## Run from source
 
 ```bash
-git clone https://github.com/BotCoder254/limboo.git
+git clone https://github.com/limboo-ai/limboo.git
 cd limboo
 npm install     # installs deps and compiles the native modules
 npm start       # launches Electron + the Vite dev server (renderer on :5173)

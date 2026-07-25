@@ -117,10 +117,31 @@ function main() {
     out.push([...contributors].sort().map((c) => `@${c}`).join(', '), '');
   }
 
+  // Installation notes ride every release because the answers differ per
+  // platform and the questions are otherwise asked every single time: why
+  // SmartScreen appears, why an AppImage will not start on Ubuntu 24.04, and
+  // which Linux package to take. Previously none of this reached users.
+  out.push('### Installing', '');
+  out.push(
+    '| Platform | File | Notes |',
+    '| --- | --- | --- |',
+    '| Windows x64 / arm64 | `Limboo-Setup-*-<arch>.exe` | Signed, but with a self-signed certificate — SmartScreen still warns. Choose **More info → Run anyway**. |',
+    '| macOS Apple silicon / Intel | `Limboo-*-arm64.dmg` / `Limboo-*-x64.dmg` | Signed and notarized; Gatekeeper opens it normally. |',
+    '| Debian / Ubuntu | `limboo-*-<arch>.deb` | |',
+    '| Fedora / RHEL / openSUSE | `limboo-*-<arch>.rpm` | |',
+    '| Arch / Manjaro | `limboo-*-<arch>.pacman` | `sudo pacman -U <file>` |',
+    '| Any Linux | `limboo-*-<arch>.AppImage` | `chmod +x` first. On Ubuntu 24.04+ install `libfuse2t64`, or it fails with `error loading libfuse.so.2`. |',
+    '| Any Linux (no installer) | `limboo-*-<arch>.tar.gz` | Extract and run `./Limboo`. |',
+    '',
+    'Once installed, Limboo updates itself from this feed — including the deb, rpm',
+    'and pacman builds, which apply updates through your package manager.',
+    '',
+  );
+
   out.push('### Verifying this release', '');
   out.push(
     'Each artifact is listed in `SHA256SUMS`. Verify with `sha256sum -c SHA256SUMS`,',
-    'and verify build provenance with `gh attestation verify <file> --repo BotCoder254/limboo`.',
+    'and verify build provenance with `gh attestation verify <file> --repo limboo-ai/limboo`.',
     '',
     `_${commitCount} commit(s) in this release._`,
   );

@@ -10,7 +10,7 @@ you get a useful answer quickly.
   [guides](docs/guides/using-the-agent.md), and the
   [reference](docs/reference/window-limboo-api.md).
 - **Questions and ideas** — use GitHub Discussions on the
-  [repository](https://github.com/BotCoder254/limboo) for usage questions, ideas,
+  [repository](https://github.com/limboo-ai/limboo) for usage questions, ideas,
   and general help.
 - **Bugs** — open an issue using the **Bug report** template.
 - **Feature requests** — open an issue using the **Feature request** template.
