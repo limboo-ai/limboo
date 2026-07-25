@@ -7,6 +7,26 @@ All notable changes to Limboo are documented here. The format is based on
 
 ## [Unreleased]
 
+### Fixed
+
+- **Two release gates were not actually verifying anything.** Both were found by
+  checking the published v1.6.0 artifacts by hand rather than trusting a green
+  pipeline:
+  - The Squirrel.Mac layout check — the gate that exists to catch the defect that
+    made every macOS update in v1.5.x impossible — reported "no macOS update zips
+    in this build" and passed. It matched on a `-mac.zip` filename suffix, and
+    the packaging fix in 1.6.0 renamed the artifacts to `-<arch>.zip`. The zip
+    list now comes from `latest-mac.yml`, which is naming-independent and
+    authoritative, and a macOS feed with no matching zip is a failure rather than
+    a skip — a build can no longer opt out of its own regression gate.
+  - `SHA256SUMS` listed `limboo-package.cyclonedx.json`, a side-file the SBOM
+    action writes but the upload globs exclude, so `sha256sum -c SHA256SUMS`
+    exited non-zero on an otherwise correct release — discrediting the one
+    verification command the README and release notes give users. It is excluded
+    from the publish set, and a new check fails the build if the manifest names
+    anything that is not being published. (The v1.6.0 manifest was corrected in
+    place; its remaining hashes were always valid.)
+
 ## [1.6.0] - 2026-07-25
 
 Repairs in-app updating, which has never worked on macOS and could fail to
