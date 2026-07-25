@@ -17,6 +17,7 @@ import {
   DEFAULT_SETTINGS,
   FONT_SCALE_LIMITS,
   GIT_LIMITS,
+  GRAPH_LIMITS,
   LAYOUT_LIMITS,
   MCP_LIMITS,
   MEMORY_LIMITS,
@@ -118,6 +119,11 @@ export class SettingsManager {
       merged.layout.rightWidth,
       LAYOUT_LIMITS.right.min,
       LAYOUT_LIMITS.right.max,
+    );
+    merged.layout.graphWidth = clamp(
+      merged.layout.graphWidth,
+      LAYOUT_LIMITS.graph.min,
+      LAYOUT_LIMITS.graph.max,
     );
     merged.agent.maxTurns = Math.round(
       clamp(merged.agent.maxTurns, AGENT_LIMITS.maxTurns.min, AGENT_LIMITS.maxTurns.max),
@@ -317,6 +323,56 @@ export class SettingsManager {
         RESUME_LIMITS.staleThresholdDays.max,
       ),
     );
+
+    // Work Graph (SETTINGS_VERSION 18 -> 19: `settings.graph` introduced; the
+    // deep-merge above supplies every default, so there is no data migration).
+    // Clamp the numeric knobs and whitelist the enums — several of these bound
+    // a recursive SQL traversal and the renderer's layout loop, so an
+    // out-of-range value is a hang, not a cosmetic bug.
+    const graph = merged.graph;
+    const G = GRAPH_LIMITS;
+    graph.enabled = !!graph.enabled;
+    graph.persist = !!graph.persist;
+    graph.pruneOnSessionEnd = !!graph.pruneOnSessionEnd;
+    graph.showEdgeLabels = !!graph.showEdgeLabels;
+    graph.showSemanticEdges = !!graph.showSemanticEdges;
+    graph.showDerivedEdges = !!graph.showDerivedEdges;
+    graph.artifactPreviews = !!graph.artifactPreviews;
+    graph.animate = !!graph.animate;
+    graph.animationSpeed = clamp(
+      graph.animationSpeed,
+      GRAPH_LIMITS.animationSpeed.min,
+      GRAPH_LIMITS.animationSpeed.max,
+    );
+    graph.groupSubagents = !!graph.groupSubagents;
+    graph.autoCollapseCompleted = !!graph.autoCollapseCompleted;
+    graph.timelineSync = !!graph.timelineSync;
+    graph.checkpointIntegration = !!graph.checkpointIntegration;
+    for (const key of Object.keys(graph.overlays) as Array<keyof typeof graph.overlays>) {
+      graph.overlays[key] = !!graph.overlays[key];
+    }
+    const roundClamp = (v: number, b: { min: number; max: number }): number =>
+      Math.round(clamp(v, b.min, b.max));
+    graph.updateFrequency = roundClamp(graph.updateFrequency, G.updateFrequency);
+    graph.retentionPerSession = roundClamp(graph.retentionPerSession, G.retentionPerSession);
+    graph.retentionDays = roundClamp(graph.retentionDays, G.retentionDays);
+    graph.collapseRunsOlderThan = roundClamp(graph.collapseRunsOlderThan, G.collapseRunsOlderThan);
+    graph.maxDepth = roundClamp(graph.maxDepth, G.maxDepth);
+    graph.maxNodes = roundClamp(graph.maxNodes, G.maxNodes);
+    graph.maxLanes = roundClamp(graph.maxLanes, G.maxLanes);
+    graph.virtualizeThreshold = roundClamp(graph.virtualizeThreshold, G.virtualizeThreshold);
+    if (!['lanes', 'compact'].includes(graph.layoutAlgorithm)) {
+      graph.layoutAlgorithm = DEFAULT_SETTINGS.graph.layoutAlgorithm;
+    }
+    if (!['kind', 'status', 'provider'].includes(graph.nodeColoring)) {
+      graph.nodeColoring = DEFAULT_SETTINGS.graph.nodeColoring;
+    }
+    if (!['none', 'kind', 'tool', 'file'].includes(graph.outlineGroupBy)) {
+      graph.outlineGroupBy = DEFAULT_SETTINGS.graph.outlineGroupBy;
+    }
+    if (!['json', 'md', 'mermaid', 'dot', 'csv', 'html', 'svg', 'png'].includes(graph.exportFormat)) {
+      graph.exportFormat = DEFAULT_SETTINGS.graph.exportFormat;
+    }
 
     // Attachments — clamp the numeric caps, coerce the toggles, and whitelist
     // the elevated-risk policy (renderer-supplied values gate real file I/O).

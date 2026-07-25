@@ -219,6 +219,7 @@ export class WorktreeManager {
     });
     logger.info(`Worktree created for session ${sessionId}: ${path.basename(target)} (${branch})`);
     this.broadcast();
+    this.graph?.onWorktreeChanged(sessionId, 'created', branch);
     return updated;
   }
 
@@ -305,6 +306,7 @@ export class WorktreeManager {
       });
       logger.info(`Worktree removed for session ${sessionId}`);
       this.broadcast();
+      this.graph?.onWorktreeChanged(sessionId, 'removed', branch);
     } catch (err) {
       // Leave the session in a recoverable state on unexpected failure.
       const current = this.sessions.get(sessionId);
@@ -774,6 +776,19 @@ export class WorktreeManager {
       logger.warn(`Worktree missing for session ${sessionId}`);
       this.broadcast();
     }
+  }
+
+  /**
+   * Optional Work Graph — a worktree is a branch plus a checkout, so its
+   * lifecycle is genuine repository work and belongs in the execution graph.
+   */
+  private graph?: {
+    onWorktreeChanged(sessionId: string, op: 'created' | 'removed', branch: string | null): void;
+  };
+
+  /** Wire the Work Graph so worktree lifecycle lands in the execution graph. */
+  setWorkGraph(graph: NonNullable<WorktreeManager['graph']>): void {
+    this.graph = graph;
   }
 
   private broadcast(): void {

@@ -4,13 +4,15 @@
  * Tags appear as milestone markers.
  */
 import { useEffect, useState } from 'react';
-import { ChevronDown, ChevronRight, GitCommit as GitCommitIcon, Tag } from 'lucide-react';
+import { ChevronDown, ChevronRight, GitCommit as GitCommitIcon, Tag, Workflow } from 'lucide-react';
 import type { GitCommit, GitCommitDetail } from '@shared/types';
 import { EmptyState } from '@/renderer/components/ui';
 import { cn } from '@/renderer/lib/cn';
 import { relativeTime } from '@/renderer/lib/format';
 import { useGitStore } from '@/renderer/stores/useGitStore';
+import { useGraphStore } from '@/renderer/stores/useGraphStore';
 import { useWorkspaceStore } from '@/renderer/stores/useWorkspaceStore';
+import { revealInGraph } from '@/renderer/features/graph/focus';
 
 export function GitHistory() {
   const log = useGitStore((s) => s.log);
@@ -53,8 +55,14 @@ function CommitRow({ commit }: { commit: GitCommit }) {
     }
   }, [expanded, detail, wsId, commit.hash]);
 
+  // Shown only when this commit really is in the loaded graph — an affordance
+  // that leads nowhere is worse than none.
+  const inGraph = useGraphStore((s) =>
+    s.nodes.some((n) => n.ref?.kind === 'commit' && n.ref.id === commit.hash),
+  );
+
   return (
-    <li className="border-b border-line/60 last:border-0">
+    <li className="group border-b border-line/60 last:border-0">
       <button
         type="button"
         onClick={() => setExpanded((v) => !v)}
@@ -68,6 +76,26 @@ function CommitRow({ commit }: { commit: GitCommit }) {
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
             <span className="min-w-0 flex-1 truncate text-[12px] text-fg">{commit.subject}</span>
+            {inGraph && (
+              <span
+                role="button"
+                tabIndex={0}
+                aria-label="View in work graph"
+                title="View in work graph"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  revealInGraph({ kind: 'commit', id: commit.hash });
+                }}
+                onKeyDown={(e) => {
+                  if (e.key !== 'Enter' && e.key !== ' ') return;
+                  e.stopPropagation();
+                  revealInGraph({ kind: 'commit', id: commit.hash });
+                }}
+                className="shrink-0 text-faint opacity-0 transition-opacity hover:text-fg group-hover:opacity-100"
+              >
+                <Workflow size={12} />
+              </span>
+            )}
             <span className="shrink-0 font-mono text-[10px] text-faint">{commit.shortHash}</span>
           </div>
           <div className="mt-0.5 flex flex-wrap items-center gap-2">

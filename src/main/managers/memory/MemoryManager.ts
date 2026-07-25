@@ -109,6 +109,34 @@ export function isMemorySource(v: unknown): v is MemorySource {
 export class MemoryManager {
   constructor(private readonly settings: SettingsManager) {}
 
+  /**
+   * Optional Work Graph — memory retrieval and writes become graph nodes.
+   * A narrow structural type keeps MemoryManager decoupled from the graph
+   * module, and every call site is optional-chained, so the graph is never
+   * load-bearing for memory itself.
+   *
+   * Retrieval is the highest-value signal in the app: it is the only record of
+   * WHICH remembered decisions shaped a given run, and at what rank.
+   */
+  private graph?: {
+    onMemoryRetrieved(
+      sessionId: string,
+      hits: Array<{ id: string; tier: MemoryTier; score: number; title: string }>,
+    ): void;
+    onMemoryWritten(op: 'create' | 'accept', memory: Memory): void;
+  };
+
+  /** Wire the Work Graph so memory usage lands in the execution graph. */
+  setWorkGraph(graph: {
+    onMemoryRetrieved(
+      sessionId: string,
+      hits: Array<{ id: string; tier: MemoryTier; score: number; title: string }>,
+    ): void;
+    onMemoryWritten(op: 'create' | 'accept', memory: Memory): void;
+  }): void {
+    this.graph = graph;
+  }
+
   private get db(): Database.Database {
     return getDb();
   }
@@ -144,7 +172,9 @@ export class MemoryManager {
     this.insert(row);
     this.writeLinks(row.id, row.file_path, input.symbolRefs);
     this.notifyChanged();
-    return rowToMemory(row);
+    const created = rowToMemory(row);
+    this.graph?.onMemoryWritten('create', created);
+    return created;
   }
 
   /**
@@ -480,7 +510,9 @@ export class MemoryManager {
       .prepare("UPDATE memories SET status = 'active', updated_at = ? WHERE id = ?")
       .run(Date.now(), id);
     this.notifyChanged();
-    return this.get(id);
+    const accepted = this.get(id);
+    if (accepted) this.graph?.onMemoryWritten('accept', accepted);
+    return accepted;
   }
 
   rejectProposal(id: string): void {
@@ -623,7 +655,16 @@ export class MemoryManager {
       return { hit: { ...stripInternal(c), score }, score };
     });
     scored.sort((a, b) => b.score - a.score);
-    return scored.slice(0, k).map((s) => s.hit);
+    const hits = scored.slice(0, k).map((s) => s.hit);
+    // The Work Graph wants the RANKED result, not just the ids: "which memory
+    // was used, and how strongly did it rank" is the question the graph answers.
+    if (ctx.sessionId && hits.length > 0) {
+      this.graph?.onMemoryRetrieved(
+        ctx.sessionId,
+        hits.map((h) => ({ id: h.id, tier: h.tier, score: h.score, title: h.title })),
+      );
+    }
+    return hits;
   }
 
   /**

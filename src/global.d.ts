@@ -9,4 +9,12 @@ declare global {
   }
 }
 
+// Vite's `?worker` suffix import (used by the Work Graph layout worker). Vite
+// rewrites it to a constructor returning a real `Worker`; without this the
+// import would be implicitly `any`.
+declare module '*?worker' {
+  const WorkerConstructor: new () => Worker;
+  export default WorkerConstructor;
+}
+
 export {};

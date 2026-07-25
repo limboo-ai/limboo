@@ -32,6 +32,7 @@ import { useVoiceStore } from '@/renderer/stores/useVoiceStore';
 import { useAttachmentStore } from '@/renderer/stores/useAttachmentStore';
 import { useResumeStore } from '@/renderer/stores/useResumeStore';
 import { useHookStore } from '@/renderer/stores/useHookStore';
+import { useGraphStore } from '@/renderer/stores/useGraphStore';
 
 export function App() {
   useKeyboardShortcuts();
@@ -80,6 +81,8 @@ export function App() {
     useResumeStore.getState().hydrate();
     // Subscribe to Hook Engine governance-audit pushes (drives the Hooks tab).
     useHookStore.getState().hydrate();
+    // Subscribe to Work Graph deltas + follow the selected session.
+    useGraphStore.getState().hydrate();
   }, []);
 
   return (

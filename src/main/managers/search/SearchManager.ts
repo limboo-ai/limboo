@@ -546,6 +546,27 @@ export class SearchManager {
     return row?.n ?? 0;
   }
 
+  /**
+   * Workspace-relative paths that `srcPath` imports, from the real extracted
+   * import graph. Used by the Work Graph to derive file-level `depends-on`
+   * edges: the import itself is a fact read from source, so only the leap to
+   * "work-level dependency" is inferred.
+   */
+  importsOf(workspaceId: string, srcPath: string): string[] {
+    const rows = this.db
+      .prepare(
+        `SELECT DISTINCT ref_path FROM search_refs
+          WHERE workspace_id = ? AND src_path = ? AND ref_path IS NOT NULL
+          LIMIT ?`,
+      )
+      .all(workspaceId, srcPath, SEARCH_LIMITS.maxRefsPerFile) as Array<{
+      ref_path: string | null;
+    }>;
+    const out: string[] = [];
+    for (const r of rows) if (r.ref_path) out.push(r.ref_path);
+    return out;
+  }
+
   /** Drop a workspace's entire index (called when a workspace is removed). */
   dropWorkspace(workspaceId: string): void {
     this.clearWorkspace(workspaceId);

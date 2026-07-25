@@ -15,6 +15,7 @@ import { z } from 'zod';
 import type { McpSdkServerConfigWithInstance } from '@anthropic-ai/claude-agent-sdk';
 import type { Memory, MemoryTier } from '@shared/types';
 import { intArg, strArg, type PlainTool } from '../cursor/bridge/plainTool';
+import { observePlainTools } from '../graph/instrument';
 import type { MemoryManager } from './MemoryManager';
 import type { WorkspaceManager } from '../WorkspaceManager';
 
@@ -59,7 +60,9 @@ function fmt(m: Memory): string {
  */
 export function memoryPlainTools(memory: MemoryManager, workspace: WorkspaceManager): PlainTool[] {
   const wsId = (): string | null => workspace.getActive()?.id ?? null;
-  return [
+  // Wrapped once HERE so all three consumers — the two SDK in-process servers
+  // (Claude) and the Cursor bridge dispatcher — are observed by one edit.
+  return observePlainTools([
     {
       name: 'list_memories',
       description:
@@ -139,7 +142,7 @@ export function memoryPlainTools(memory: MemoryManager, workspace: WorkspaceMana
         );
       },
     },
-  ];
+  ], 'limboo_memory');
 }
 
 /** Zod arg shapes per memory tool (the SDK path keeps typed validation). */

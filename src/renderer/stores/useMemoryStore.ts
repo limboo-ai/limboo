@@ -25,8 +25,14 @@ interface MemoryState {
   tierFilter: MemoryTier | null;
   loading: boolean;
   hydrated: boolean;
+  /**
+   * Memory id the panel should scroll to and highlight once. Set by the Work
+   * Graph's "reveal" navigation; cleared by the panel after it acts.
+   */
+  focus: string | null;
 
   hydrate: () => void;
+  setFocus: (id: string | null) => void;
   refresh: () => Promise<void>;
   setQuery: (q: string) => void;
   setTierFilter: (tier: MemoryTier | null) => void;
@@ -56,6 +62,9 @@ export const useMemoryStore = create<MemoryState>((set, get) => ({
   tierFilter: null,
   loading: false,
   hydrated: false,
+  focus: null,
+
+  setFocus: (id) => set({ focus: id }),
 
   hydrate: () => {
     if (get().hydrated) return;

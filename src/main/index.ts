@@ -37,6 +37,8 @@ import { SecretStore } from './secrets/SecretStore';
 import { CursorAuthManager } from './managers/cursor/CursorAuthManager';
 import { CursorRuntime } from './managers/cursor/CursorRuntime';
 import { McpManager } from './managers/mcp/McpManager';
+import { WorkGraphManager } from './managers/graph/WorkGraphManager';
+import { setMcpObserver } from './managers/graph/instrument';
 import { configureCursorExec } from './managers/cursor/exec';
 import { registerCursorModels } from '@shared/constants';
 import { getDb, closeDb } from './db/database';
@@ -103,7 +105,9 @@ function bootstrap(): void {
   let cursorAuth: CursorAuthManager;
   let cursorRuntime: CursorRuntime;
   let mcp: McpManager;
+  let workGraph: WorkGraphManager;
   let memorySweepTimer: ReturnType<typeof setInterval> | undefined;
+  let graphSweepTimer: ReturnType<typeof setInterval> | undefined;
   const windowState = new WindowStateManager();
   const appMenu = new AppMenuManager();
   const tray = new TrayManager();
@@ -183,6 +187,11 @@ function bootstrap(): void {
     // health probes, and permission trust. Its own SecretStore instance (the
     // store is stateless — filesystem-backed) keeps MCP secrets namespaced.
     mcp = new McpManager(new SecretStore(), settings, workspace);
+    // The Work Graph — a provider-neutral platform service owned by the app,
+    // peer to Memory / Search / Resume. It normalizes BOTH adapters' event
+    // streams into one typed, queryable DAG of the work itself. Purely
+    // additive: it only observes, so no existing wiring path changes.
+    workGraph = new WorkGraphManager(settings, sessions);
     // The agent mirrors its shell commands into the integrated terminal.
     agent.setTerminalManager(terminal);
     // The agent auto-titles untitled sessions from their first prompt.
@@ -216,6 +225,33 @@ function bootstrap(): void {
     // Additive: existing hot-path wiring (auto-checkpoint, mirror, reindex) stays.
     agent.setHookEngine(hooks);
     git.setHookEngine(hooks);
+    // The Work Graph observes every platform service so a session's execution
+    // structure is complete regardless of which subsystem did the work. Every
+    // one of these is a NARROW structural type and every call site is
+    // optional-chained, so the graph is purely additive: removing it would not
+    // change any subsystem's behavior.
+    git.setWorkGraph(workGraph.gitSink());
+    memory.setWorkGraph(workGraph.memorySink());
+    fileSystem.setWorkGraph(workGraph.fsSink());
+    services.setWorkGraph(workGraph.serviceSink());
+    // Permission decisions are the one signal the public event stream cannot
+    // carry: the gate computes the answer internally and only its effect is
+    // observable. Wired to the decision core BOTH providers call, so approvals
+    // stay provider-neutral by construction.
+    agent.setWorkGraph(workGraph.permissionSink());
+    worktrees.setWorkGraph(workGraph.worktreeSink());
+    resume.setWorkGraph(workGraph.resumeSink());
+    attachments.setWorkGraph(workGraph.attachmentSink());
+    workGraph.setGitManager(git);
+    // Inference inputs: the Search Engine's REAL import graph, and the repo's
+    // own declared scripts (a stronger "this command verifies" signal than any
+    // builtin pattern). Both optional — without them the inference is skipped
+    // rather than guessed.
+    workGraph.setSearchManager(search);
+    workGraph.setScriptSource(services);
+    // Real PTYs (user / hook / service) carry genuine exit codes, unlike agent
+    // commands — fired alongside the existing per-caller onExit, never instead.
+    terminal.onLifecycle((ev) => workGraph.terminalSink().onLifecycle(ev));
     // A real bus consumer: the Hook Engine dispatches to whichever service
     // registers interest (not just the audit sink). Here, session-lifecycle
     // bookends surface in the unified session timeline via recordStatus — the
@@ -300,11 +336,24 @@ function bootstrap(): void {
       voiceModels,
       cursorAuth,
       mcp,
+      graph: workGraph,
     });
     // Begin capability supervision (probe + heartbeat) once IPC is wired.
     agent.start();
     // Begin MCP health probes + heartbeat once IPC is wired.
     mcp.start();
+    // Subscribe the Work Graph to the agent's normalized event stream. This is
+    // the ONLY load-bearing source: it is ungated and provider-neutral, and
+    // AgentManager swallows listener throws, so the graph can never break a run.
+    // (The Hook Engine bus is enrichment only — it is gated on
+    // `agent.hookEngine.enabled`, so a graph depending on it would go blank
+    // whenever a user turns hooks off.)
+    workGraph.start(agent);
+    // Observe Limboo's OWN MCP tools. Both providers call the same PlainTool
+    // handlers, so this one hook covers the SDK in-process servers (Claude) and
+    // the stdio bridge dispatcher (Cursor). Enrichment only — these calls
+    // already arrive as tool events, so this adds real durations, not nodes.
+    setMcpObserver(workGraph.mcpObserver());
     // Wire the voice agent-event tap + honor the auto-download preference.
     voice.start();
     // Begin the auto-update check + hourly poll (packaged builds only).
@@ -382,6 +431,9 @@ function bootstrap(): void {
     // path; runs hourly and once shortly after boot.
     memory.sweep();
     memorySweepTimer = setInterval(() => memory.sweep(), 60 * 60 * 1000);
+    // The Work Graph's age sweep rides the same low-frequency tick.
+    workGraph.sweep();
+    graphSweepTimer = setInterval(() => workGraph.sweep(), 60 * 60 * 1000);
 
     appMenu.install();
     const win = createMainWindow(windowState);
@@ -422,6 +474,13 @@ function bootstrap(): void {
     safeDispose('voiceModels', () => voiceModels?.dispose());
     safeDispose('memorySweep', () => {
       if (memorySweepTimer) clearInterval(memorySweepTimer);
+    });
+    safeDispose('workGraph', () => {
+      setMcpObserver(null);
+      workGraph?.dispose();
+    });
+    safeDispose('graphSweep', () => {
+      if (graphSweepTimer) clearInterval(graphSweepTimer);
     });
     safeDispose('tray', () => tray.destroy());
     safeDispose('db', () => closeDb());

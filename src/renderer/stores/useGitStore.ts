@@ -27,6 +27,8 @@ interface GitFocus {
   view: GitView;
   path?: string;
   staged?: boolean;
+  /** Commit hash to reveal in the History view (set by the Work Graph). */
+  hash?: string;
 }
 
 interface GitState {

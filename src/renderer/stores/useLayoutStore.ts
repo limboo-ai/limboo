@@ -30,6 +30,12 @@ interface LayoutState {
    * terminal — it keeps its own remembered width (clamped to the git bounds).
    */
   gitWidth: number;
+  /**
+   * Width (px) used for the right drawer when the Work Graph tab is active. The
+   * graph is a canvas, so it wants the widest drawer of any tab and — like the
+   * terminal and git workspaces — keeps its own remembered width.
+   */
+  graphWidth: number;
 
   seed: (layout: {
     leftWidth: number;
@@ -38,10 +44,12 @@ interface LayoutState {
     sessionsCollapsed?: boolean;
     terminalWidth?: number;
     gitWidth?: number;
+    graphWidth?: number;
   }) => void;
   setLeftWidth: (width: number) => void;
   setRightWidth: (width: number) => void;
   setGitWidth: (width: number) => void;
+  setGraphWidth: (width: number) => void;
   setActiveTab: (tab: ActivityTab | null) => void;
   toggleTab: (tab: ActivityTab) => void;
   /** Collapse the drawer if open, otherwise reopen the last-used tab. */
@@ -64,6 +72,7 @@ const persist = debounce((layout: Partial<LayoutState>) => {
       sessionsCollapsed: layout.sessionsCollapsed,
       terminalWidth: layout.terminalWidth,
       gitWidth: layout.gitWidth,
+      graphWidth: layout.graphWidth,
     },
   });
 }, 300);
@@ -76,6 +85,7 @@ export const useLayoutStore = create<LayoutState>((set, get) => ({
   sessionsCollapsed: false,
   terminalWidth: LAYOUT_LIMITS.terminal.default,
   gitWidth: LAYOUT_LIMITS.git.default,
+  graphWidth: LAYOUT_LIMITS.graph.default,
 
   seed: (layout) =>
     set({
@@ -93,6 +103,11 @@ export const useLayoutStore = create<LayoutState>((set, get) => ({
         layout.gitWidth ?? LAYOUT_LIMITS.git.default,
         LAYOUT_LIMITS.git.min,
         LAYOUT_LIMITS.git.max,
+      ),
+      graphWidth: clamp(
+        layout.graphWidth ?? LAYOUT_LIMITS.graph.default,
+        LAYOUT_LIMITS.graph.min,
+        LAYOUT_LIMITS.graph.max,
       ),
     }),
 
@@ -139,6 +154,12 @@ export const useLayoutStore = create<LayoutState>((set, get) => ({
   setGitWidth: (width) => {
     const gitWidth = clamp(width, LAYOUT_LIMITS.git.min, LAYOUT_LIMITS.git.max);
     set({ gitWidth });
+    persist(get());
+  },
+
+  setGraphWidth: (width) => {
+    const graphWidth = clamp(width, LAYOUT_LIMITS.graph.min, LAYOUT_LIMITS.graph.max);
+    set({ graphWidth });
     persist(get());
   },
 

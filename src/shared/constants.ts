@@ -1,7 +1,7 @@
 import type { AppSettings, WorkspaceConfig } from './types';
 
 /** Bumped whenever the {@link AppSettings} shape changes incompatibly. */
-export const SETTINGS_VERSION = 18;
+export const SETTINGS_VERSION = 20;
 
 /**
  * The agent providers Limboo can run (Claude Code = Anthropic via the Agent
@@ -268,6 +268,8 @@ export const LAYOUT_LIMITS = {
   terminal: { min: 320, max: 900, default: 480 },
   /** The Git workspace drawer benefits from a wider default (diffs/history). */
   git: { min: 360, max: 1_000, default: 560 },
+  /** The Work Graph is a canvas — it needs the widest default of any tab. */
+  graph: { min: 380, max: 1_200, default: 640 },
 } as const;
 
 /** Bounds for the integrated terminal subsystem (main + renderer both clamp). */
@@ -441,6 +443,63 @@ export const RESUME_LIMITS = {
   planItemCharMax: 200,
 } as const;
 
+/**
+ * Bounds for the Work Graph. `{min, max, default}` members are user-configurable
+ * (clamped on every read); bare numbers are hard caps the user cannot raise.
+ */
+export const GRAPH_LIMITS = {
+  /** Nodes retained per session (ring-capped; oldest pruned, edges cascade). */
+  retentionPerSession: { min: 200, max: 50_000, default: 5_000 },
+  /** Days before a node is swept (0 = keep forever). */
+  retentionDays: { min: 0, max: 365, default: 30 },
+  /** Days before a completed run folds into a summary row (0 = off). */
+  collapseRunsOlderThan: { min: 0, max: 365, default: 0 },
+  /** Nodes the renderer holds for one session. */
+  maxNodes: { min: 200, max: 50_000, default: 10_000 },
+  /** Parallel lanes before overflow shares the last lane with a +N badge. */
+  maxLanes: { min: 4, max: 64, default: 16 },
+  /** Traversal depth for queries + the semantic-edge neighborhood. */
+  maxDepth: { min: 1, max: 32, default: 8 },
+  /** Node count above which row windowing kicks in. */
+  virtualizeThreshold: { min: 50, max: 5_000, default: 300 },
+  /** Delta-coalescing window in ms (0 = flush synchronously). */
+  updateFrequency: { min: 0, max: 2_000, default: 120 },
+  /** Nodes one query may return. Bounds the recursive CTE. */
+  queryLimit: { min: 10, max: 2_000, default: 200 },
+  /** Canvas zoom range. */
+  zoom: { min: 0.25, max: 4, default: 1 },
+  /** Replay/animation speed multiplier (1 = one node every ~220 ms). */
+  animationSpeed: { min: 0.25, max: 4, default: 1 },
+  /**
+   * Node ceiling for the synchronous layout fallback used when a Web Worker
+   * cannot be created. Above this the panel refuses rather than blocking the
+   * UI thread — never a hang.
+   */
+  syncLayoutMax: 1_500,
+  /** Nodes in one delta push; overflow forces a reset + refetch instead. */
+  maxDeltaNodes: 500,
+  /** Max chars kept for a node's title. */
+  titleMax: 120,
+  /** Max chars kept for a node's detail line. */
+  detailMax: 400,
+  /** Max chars accepted for a query's free-text predicate. */
+  textMax: 200,
+  /** Max chars of a node's serialized JSON payload (defense in depth). */
+  payloadMax: 8_000,
+  /**
+   * Max edge rows one read may load. `snapshot`/`edgesFor` used to run an
+   * unbounded `SELECT *` and filter in JS, so a long session could pull the
+   * whole edge table into the main process on every panel open.
+   */
+  edgeReadMax: 20_000,
+  /** Max edges in one delta push; overflow forces a reset like `maxDeltaNodes`. */
+  maxDeltaEdges: 2_000,
+  /** Max bytes one `graph:export`/`graph:save` result may produce. */
+  exportBytesMax: 25_000_000,
+  /** Consecutive persist failures before the panel shows a health banner. */
+  healthFailureThreshold: 3,
+} as const;
+
 /** Bounds + caps for the Voice subsystem (main + renderer both clamp). */
 export const VOICE_LIMITS = {
   /** VAD speech-probability threshold. */
@@ -563,6 +622,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
     terminalOpen: false,
     terminalWidth: LAYOUT_LIMITS.terminal.default,
     gitWidth: LAYOUT_LIMITS.git.default,
+    graphWidth: LAYOUT_LIMITS.graph.default,
   },
   behavior: {
     minimizeToTray: false,
@@ -708,6 +768,48 @@ export const DEFAULT_SETTINGS: AppSettings = {
     maxCommitsInDelta: RESUME_LIMITS.maxCommitsInDelta.default,
     staleThresholdDays: RESUME_LIMITS.staleThresholdDays.default,
   },
+  graph: {
+    enabled: true,
+    persist: true,
+    updateFrequency: GRAPH_LIMITS.updateFrequency.default,
+
+    retentionPerSession: GRAPH_LIMITS.retentionPerSession.default,
+    retentionDays: GRAPH_LIMITS.retentionDays.default,
+    collapseRunsOlderThan: GRAPH_LIMITS.collapseRunsOlderThan.default,
+    pruneOnSessionEnd: true,
+
+    layoutAlgorithm: 'lanes',
+    nodeColoring: 'kind',
+    showEdgeLabels: false,
+    showSemanticEdges: true,
+    showDerivedEdges: true,
+    artifactPreviews: true,
+    animate: true,
+    animationSpeed: GRAPH_LIMITS.animationSpeed.default,
+
+    outlineGroupBy: 'none',
+    groupSubagents: false,
+    autoCollapseCompleted: false,
+    maxDepth: GRAPH_LIMITS.maxDepth.default,
+
+    maxNodes: GRAPH_LIMITS.maxNodes.default,
+    maxLanes: GRAPH_LIMITS.maxLanes.default,
+    virtualizeThreshold: GRAPH_LIMITS.virtualizeThreshold.default,
+
+    timelineSync: true,
+    checkpointIntegration: true,
+    overlays: {
+      git: true,
+      terminal: true,
+      mcp: true,
+      memory: true,
+      file: true,
+      search: true,
+      service: true,
+    },
+
+    exportFormat: 'json',
+  },
   mcp: {
     enabled: true,
     heartbeatInterval: MCP_LIMITS.heartbeatInterval.default,
@@ -792,7 +894,7 @@ export function clamp(value: number, min: number, max: number): number {
 /* ------------------------------------------------------------------ */
 
 /** Bumped whenever the workspace DB schema changes incompatibly. */
-export const WORKSPACE_SCHEMA_VERSION = 14;
+export const WORKSPACE_SCHEMA_VERSION = 15;
 
 /** Input caps the main process enforces on renderer-supplied session values. */
 export const SESSION_LIMITS = {

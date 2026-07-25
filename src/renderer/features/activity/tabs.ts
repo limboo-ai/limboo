@@ -8,6 +8,7 @@ import {
   SquareTerminal,
   TerminalSquare,
   Webhook,
+  Workflow,
 } from 'lucide-react';
 import type { ComponentType } from 'react';
 import type { ActivityTab } from '@shared/types';
@@ -28,15 +29,17 @@ export const ACTIVITY_TABS: TabMeta[] = [
   { id: 'activity', label: 'Activity', icon: Activity },
   { id: 'console', label: 'Console', icon: TerminalSquare },
   { id: 'hooks', label: 'Hooks', icon: Webhook },
+  { id: 'graph', label: 'Work Graph', icon: Workflow },
   { id: 'terminal', label: 'Terminal', icon: SquareTerminal },
 ];
 
 /**
- * Activity, Console, and Hooks render as a horizontal strip in the top TitleBar
- * (next to Settings) instead of the vertical rail — while still opening their
- * drawer on the right. Everything else stays on the vertical `ActivityRail`.
+ * Activity, Console, Hooks, and the Work Graph render as a horizontal strip in
+ * the top TitleBar (next to Settings) instead of the vertical rail — while
+ * still opening their drawer on the right. Everything else stays on the
+ * vertical `ActivityRail`.
  */
-export const TOP_BAR_TABS: readonly ActivityTab[] = ['activity', 'console', 'hooks'];
+export const TOP_BAR_TABS: readonly ActivityTab[] = ['activity', 'console', 'hooks', 'graph'];
 
 /** Tabs shown in the top bar, in display order. */
 export const TOP_TABS: TabMeta[] = ACTIVITY_TABS.filter((t) => TOP_BAR_TABS.includes(t.id));

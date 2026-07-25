@@ -189,6 +189,20 @@ export const IpcChannels = {
   searchSavedCreate: 'search:savedCreate',
   searchSavedDelete: 'search:savedDelete',
 
+  // Work Graph — Limboo's own provider-neutral DAG of engineering work.
+  // Read + maintenance only: nodes are produced in the main process from the
+  // normalized event stream, never submitted by the renderer.
+  graphGet: 'graph:get',
+  graphQuery: 'graph:query',
+  graphNodeDetail: 'graph:nodeDetail',
+  graphExport: 'graph:export',
+  /** Write an export to a user-chosen file (main owns the path — see `save`). */
+  graphSave: 'graph:save',
+  /** Resolve a commit / message / terminal / memory entity to its graph node. */
+  graphFindByRef: 'graph:findByRef',
+  graphPrune: 'graph:prune',
+  graphClear: 'graph:clear',
+
   // MCP platform — provider-independent Model Context Protocol registry.
   // Server config crosses freely; secret env/header values cross only on
   // add/update (never returned). All access is validated in the main process.
@@ -315,6 +329,8 @@ export const IpcEvents = {
   mcpServerStatus: 'mcp:server-status',
   /** A normalized Hook Engine lifecycle event was appended to the audit trail. */
   hooksAudit: 'hooks:audit',
+  /** An incremental Work Graph delta (appended nodes/edges), or a reset signal. */
+  graphChanged: 'graph:changed',
   /** Progress of an in-flight search index pass. */
   searchIndexProgress: 'search:index-progress',
   /** A session's revalidation state advanced (checking / clean / delta). */

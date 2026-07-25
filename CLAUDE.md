@@ -682,6 +682,51 @@ boot revalidation chains after `worktrees.recover().finally(retarget)`).
   gated to the active session) + `resume:state-changed`. Settings under the **Memory
   & Search** category (`settings.resume`, bounds in `RESUME_LIMITS`).
 
+### Work Graph (DAWG)
+
+A provider-independent **platform service owned by the app** — the fourth peer
+of Memory, Search, and Resume. Neither Claude nor Cursor exposes a work graph
+(both are conversation-driven), but both emit enough structure — tool calls,
+plans, file edits, shell runs, MCP calls, results — for the host to derive one.
+This subsystem normalizes BOTH adapters' event streams into a single typed,
+queryable **Directed Acyclic Work Graph**, so every future adapter contributes
+nodes for free. Full doc: `docs/architecture/subsystems/work-graph.md`.
+
+- **Storage** — `work_graph_nodes` / `work_graph_edges` (+ `work_graph_nodes_fts`,
+  FTS5 BM25 over title+detail) in `limboo.db`, schema v15. Unique `(src,dst,kind)`
+  makes re-emitting an edge idempotent; `ON DELETE CASCADE` + a ring cap per
+  session bound growth. Bound parameters only.
+- **Vocabulary** — 15 node kinds (objective, planning, task, subagent,
+  investigation, search, memory, mcp, terminal, git, file, approval, artifact,
+  completion, service) and 9 edge kinds: the spine (`follows`, `contains`) plus
+  the semantic set (`generated`, `depends-on`, `implemented-in`, `verified-by`,
+  `blocked-by`, `reviewed-by`, `produced-artifact`). `derived: true` is the
+  honesty valve — inferred edges render dashed and filter separately.
+- **Ingestion** — `builder.ts` is a **pure reducer** (no DB, no IPC, no clock).
+  `AgentManager.onEvent()` is the only load-bearing source; the platform
+  services (`git`/`memory`/`fs`/`services`/`terminal`/`worktree`/`resume`/
+  `attachments`) attach via narrow setter-injected sinks in the composition
+  root. **Permission decisions come from `AgentManager.decideToolUse`** — the
+  one gate both providers call — so approvals are provider-neutral by
+  construction; only denials and prompted approvals become nodes.
+  **Subagent nesting** rides the Agent SDK's `parent_tool_use_id`
+  (`AgentToolCall.parentCallId`) → `contains`. Provider and mode are captured
+  **per run**, never read from current settings.
+- **Every failure is swallowed** so the graph can never break a run — and is
+  therefore surfaced as `WorkGraphHealth` on the snapshot/push, so a graph that
+  stopped recording never looks like a quiet session.
+- **Export** — six data formats in main (JSON, Markdown, Mermaid, DOT, CSV,
+  self-contained HTML) plus SVG/PNG rendered **offscreen from the full layout**
+  in the renderer. `graph:save` is the subsystem's only filesystem write and the
+  renderer never supplies a path: main opens `dialog.showSaveDialog` and writes
+  where the user chose.
+- **UI** — a full-bleed drawer panel (`features/graph/`) reached from the
+  TitleBar tab strip, deliberately shaped like a **git history** (vertical lanes,
+  one node per row, commits in a right-hand gutter) rather than a node editor.
+  Layout runs in a Web Worker; rows virtualize above
+  `settings.graph.virtualizeThreshold`. Settings under the **Work Graph**
+  category (`settings.graph`, bounds in `GRAPH_LIMITS`).
+
 ### Agent Adapter Architecture (multi-agent: Claude + Cursor) — IN PROGRESS
 
 **Build-order items (1) Authentication, (2) Runtime, (3) Permissions,

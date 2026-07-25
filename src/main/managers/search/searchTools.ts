@@ -14,6 +14,7 @@ import { z } from 'zod';
 import type { McpSdkServerConfigWithInstance } from '@anthropic-ai/claude-agent-sdk';
 import type { SearchHit } from '@shared/types';
 import { intArg, strArg, type PlainTool } from '../cursor/bridge/plainTool';
+import { observePlainTools } from '../graph/instrument';
 import type { SearchManager } from './SearchManager';
 import type { WorkspaceManager } from '../WorkspaceManager';
 
@@ -50,7 +51,9 @@ function querySchema(queryHint: string, limitHint: string): Record<string, unkno
  */
 export function searchPlainTools(search: SearchManager, workspace: WorkspaceManager): PlainTool[] {
   const wsId = (): string | null => workspace.getActive()?.id ?? null;
-  return [
+  // Wrapped once HERE so all three consumers — the two SDK in-process servers
+  // (Claude) and the Cursor bridge dispatcher — are observed by one edit.
+  return observePlainTools([
     {
       name: 'search_project',
       description:
@@ -110,7 +113,7 @@ export function searchPlainTools(search: SearchManager, workspace: WorkspaceMana
         return hits.map(fmt).join('\n');
       },
     },
-  ];
+  ], 'limboo_search');
 }
 
 /**

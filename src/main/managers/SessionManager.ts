@@ -82,6 +82,38 @@ export class SessionManager {
     return () => this.activeListeners.delete(cb);
   }
 
+  /**
+   * Session lifecycle observers — a SEPARATE, UNGATED set.
+   *
+   * `activeListeners` above only fires when the effective execution root
+   * changes (it drives the watcher/index retarget, and that guard must stay),
+   * so create / duplicate / trash / restore / purge are invisible to it. This
+   * set is fired directly from those methods instead of from `broadcast`,
+   * because `broadcast` cannot tell the caller's intent apart.
+   */
+  private lifecycleListeners = new Set<(ev: SessionLifecycleSignal) => void>();
+
+  onLifecycle(cb: (ev: SessionLifecycleSignal) => void): () => void {
+    this.lifecycleListeners.add(cb);
+    return () => this.lifecycleListeners.delete(cb);
+  }
+
+  private emitLifecycle(kind: SessionLifecycleSignal['kind'], session: Session): void {
+    const ev: SessionLifecycleSignal = {
+      kind,
+      sessionId: session.id,
+      workspaceId: session.workspaceId,
+      at: Date.now(),
+    };
+    for (const cb of this.lifecycleListeners) {
+      try {
+        cb(ev);
+      } catch (err) {
+        logger.warn('session lifecycle listener failed', err);
+      }
+    }
+  }
+
   /* -------------------------------------------------------------- reads */
 
   /**
@@ -176,6 +208,7 @@ export class SessionManager {
     this.setActive(session.id, false);
     logger.info(`Session created: ${session.title} (${session.id})`);
     this.broadcast();
+    this.emitLifecycle('created', session);
     return session;
   }
 
@@ -307,6 +340,7 @@ export class SessionManager {
     this.setActive(copy.id, false);
     logger.info(`Session duplicated: ${src.id} -> ${copy.id}`);
     this.broadcast();
+    this.emitLifecycle('duplicated', copy);
     return copy;
   }
 
@@ -323,6 +357,7 @@ export class SessionManager {
       else this.clearActive(false);
     }
     this.broadcast();
+    this.emitLifecycle('trashed', session);
   }
 
   /** Restore a trashed session back to the live list. */
@@ -331,23 +366,34 @@ export class SessionManager {
       .prepare('UPDATE sessions SET deleted_at = NULL, updated_at = ? WHERE id = ?')
       .run(Date.now(), id);
     this.broadcast();
-    return this.requireById(id);
+    const restored = this.requireById(id);
+    this.emitLifecycle('restored', restored);
+    return restored;
   }
 
   /** Permanently remove a session and all of its agent data. Irreversible. */
   purge(id: string): void {
+    // Read the row before the transaction deletes it — observers need the
+    // workspace id, and after `purgeAll` there is nothing left to read.
+    const purged = this.byId(id);
     const purgeAll = this.db.transaction(() => {
       this.db.prepare('DELETE FROM agent_messages WHERE session_id = ?').run(id);
       this.db.prepare('DELETE FROM agent_activity WHERE session_id = ?').run(id);
       this.db.prepare('DELETE FROM agent_session_meta WHERE session_id = ?').run(id);
       this.db.prepare('DELETE FROM agent_provider_sessions WHERE session_id = ?').run(id);
       this.db.prepare('DELETE FROM agent_diagnostics WHERE session_id = ?').run(id);
+      // Work Graph: edges BEFORE nodes (explicit, so it survives foreign_keys
+      // being off). This path does NOT go through AgentManager.clearSession,
+      // so the deletes must be repeated here or a purge orphans the graph.
+      this.db.prepare('DELETE FROM work_graph_edges WHERE session_id = ?').run(id);
+      this.db.prepare('DELETE FROM work_graph_nodes WHERE session_id = ?').run(id);
       this.db.prepare('DELETE FROM sessions WHERE id = ?').run(id);
     });
     purgeAll();
     if (this.activeId() === id) this.clearActive(false);
     logger.info(`Session purged: ${id}`);
     this.broadcast();
+    if (purged) this.emitLifecycle('purged', purged);
   }
 
   /** Make a session the active one (a coordinated switch the renderer mirrors). */
@@ -629,4 +675,16 @@ function coerceMode(value: string | null): SessionPermissionMode | undefined {
   if (value === 'plan' || value === 'ask' || value === 'default' || value === 'acceptEdits') return value;
   if (value === 'implement') return 'default';
   return undefined;
+}
+
+/**
+ * One session lifecycle transition. Deliberately minimal and provider-neutral:
+ * subscribers need identity and intent, not the whole {@link Session} row.
+ */
+export interface SessionLifecycleSignal {
+  kind: 'created' | 'duplicated' | 'trashed' | 'restored' | 'purged';
+  sessionId: string;
+  workspaceId: string;
+  /** Epoch ms. */
+  at: number;
 }
