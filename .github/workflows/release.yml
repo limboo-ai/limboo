@@ -58,6 +58,12 @@ jobs:
     with:
       ref: ${{ inputs.tag }}
       attest: true
+      # The fallback must be able to produce the COMPLETE release on its own, so
+      # it runs every architecture — including the ones GitLab's SaaS runners
+      # cannot build (Intel macOS, arm64 Linux, arm64 Windows).
+      runners: >-
+        ["ubuntu-latest", "ubuntu-24.04-arm", "macos-latest", "macos-15-intel",
+         "windows-latest", "windows-11-arm"]
 
   publish:
     name: Publish GitHub Release
@@ -74,8 +80,34 @@ jobs:
       - name: Download all packaged artifacts
         uses: actions/download-artifact@v4
         with:
-          path: dist
-          merge-multiple: true
+          path: artifacts
+          # Deliberately NOT merge-multiple: two macOS runners both emit
+          # `latest-mac.yml` (arm64 and x64), and a flat merge would let one
+          # silently overwrite the other — removing an entire architecture from
+          # the update feed. They are merged explicitly in the next step.
+          merge-multiple: false
+
+      - name: Merge update feeds and assemble the publish set
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          # Feeds first: the merger unions the `files:` arrays per platform.
+          node ci/scripts/merge-update-metadata.mjs dist artifacts/*/
+          # Then every non-feed artifact. Feeds are skipped so the merged copies
+          # written above are not clobbered by a per-runner original.
+          for file in artifacts/*/*; do
+            [ -f "$file" ] || continue
+            case "$(basename "$file")" in
+              latest*.yml) continue ;;
+              builder-debug.yml|builder-effective-config.yaml) continue ;;
+              SHA256SUMS) continue ;;
+            esac
+            cp -n "$file" dist/
+          done
+          ls -la dist
+
+      - name: Verify artifact structure
+        run: node ci/scripts/verify-artifacts.mjs dist --publish-set
 
       - name: Consolidate checksums
         # Each OS produced its own SHA256SUMS; combine into one top-level manifest.
@@ -96,13 +128,16 @@ jobs:
           # — electron-updater reads latest.yml / latest-mac.yml / latest-linux.yml
           # from the Release to detect and verify new versions. They MUST be attached.
           files: |
-            dist/**/*.exe
-            dist/**/*.dmg
-            dist/**/*.AppImage
-            dist/**/*.deb
-            dist/**/*.rpm
-            dist/**/*.zip
-            dist/**/*.yml
-            dist/**/*.blockmap
-            dist/**/*.cdx.json
+            dist/*.exe
+            dist/*.dmg
+            dist/*.AppImage
+            dist/*.deb
+            dist/*.rpm
+            dist/*.pacman
+            dist/*.tar.gz
+            dist/*.appx
+            dist/*.zip
+            dist/*.yml
+            dist/*.blockmap
+            dist/*.cdx.json
             SHA256SUMS
