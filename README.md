@@ -402,7 +402,7 @@ for contributors: [`CLAUDE.md`](CLAUDE.md) (the code-level working contract) and
 
 ## Project status
 
-**Current release: `v1.5.1`.** The desktop foundation and the platform services are
+**Current release: `v1.6.0`.** The desktop foundation and the platform services are
 built and in daily use: workspaces, sessions with per-session git worktrees, the git
 engine, the integrated terminal, the File System Layer, multi-agent orchestration
 (Claude and Cursor), the Local Memory System, the Search Engine, the Resume Pipeline,

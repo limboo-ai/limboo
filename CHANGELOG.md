@@ -7,6 +7,13 @@ All notable changes to Limboo are documented here. The format is based on
 
 ## [Unreleased]
 
+## [1.6.0] - 2026-07-25
+
+Repairs in-app updating, which has never worked on macOS and could fail to
+install or restart anywhere; adds code signing and a Microsoft Store channel;
+and extends the release to every architecture, including Arch/Manjaro packages
+and arm64 builds for all three platforms.
+
 ### Fixed
 
 - **"Restart & install" did nothing.** Clicking it could leave the app running on
@@ -231,7 +238,8 @@ operational.
 - **Unified streaming timeline** — the conversation rendered as one continuous,
   turn-grouped event stream of messages, tool calls, and status markers.
 
-[Unreleased]: https://github.com/limboo-ai/limboo/compare/v1.5.1...HEAD
+[Unreleased]: https://github.com/limboo-ai/limboo/compare/v1.6.0...HEAD
+[1.6.0]: https://github.com/limboo-ai/limboo/compare/v1.5.1...v1.6.0
 [1.5.1]: https://github.com/limboo-ai/limboo/compare/v1.5.0...v1.5.1
 [1.5.0]: https://github.com/limboo-ai/limboo/compare/v1.0.0...v1.5.0
 [1.0.0]: https://github.com/limboo-ai/limboo/releases/tag/v1.0.0
