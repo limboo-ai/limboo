@@ -101,6 +101,12 @@ jobs:
               latest*.yml) continue ;;
               builder-debug.yml|builder-effective-config.yaml) continue ;;
               SHA256SUMS) continue ;;
+              # anchore/sbom-action writes this alongside the SBOM we asked for,
+              # and it is NOT in the release upload globs below. Left in place it
+              # lands in SHA256SUMS without ever being published, so
+              # `sha256sum -c SHA256SUMS` fails on a file the user cannot
+              # download — breaking the very command the release notes give them.
+              *.cyclonedx.json) continue ;;
             esac
             cp -n "$file" dist/
           done
