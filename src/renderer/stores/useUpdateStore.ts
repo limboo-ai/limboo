@@ -9,6 +9,7 @@
  */
 import { create } from 'zustand';
 import type { UpdateStatus } from '@shared/types';
+import { useUIStore } from './useUIStore';
 
 interface UpdateState {
   status: UpdateStatus;
@@ -76,8 +77,20 @@ export const useUpdateStore = create<UpdateState>((set, get) => ({
     await api.download();
   },
 
+  // The install path can refuse (nothing staged, updates disabled, the installer
+  // failed to launch). It used to fail silently, which is indistinguishable from
+  // a dead button — always say something.
   install: async () => {
-    await window.limboo?.updates?.install();
+    const api = window.limboo?.updates;
+    if (!api) return;
+    const result = await api.install();
+    if (result && !result.ok) {
+      useUIStore.getState().addToast({
+        tone: 'danger',
+        title: 'Could not install the update',
+        description: result.error ?? 'The updater refused to start the installer.',
+      });
+    }
   },
 
   dismiss: () => set({ dismissed: true }),

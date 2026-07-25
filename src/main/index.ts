@@ -29,7 +29,7 @@ import { MemoryManager } from './managers/memory/MemoryManager';
 import { SearchManager } from './managers/search/SearchManager';
 import { ResumeManager } from './managers/resume/ResumeManager';
 import { HookEngine } from './managers/hooks/HookEngine';
-import { AutoUpdateManager } from './managers/AutoUpdateManager';
+import { AutoUpdateManager, isQuittingForUpdate } from './managers/AutoUpdateManager';
 import { VoiceManager } from './managers/voice/VoiceManager';
 import { VoiceModelManager } from './managers/voice/VoiceModelManager';
 import { AttachmentManager } from './managers/attachments/AttachmentManager';
@@ -109,6 +109,9 @@ function bootstrap(): void {
   const tray = new TrayManager();
 
   app.on('second-instance', () => {
+    // During an update handoff the "second instance" IS the new version starting
+    // up while we tear down. Focusing our soon-to-die window would steal it back.
+    if (isQuittingForUpdate()) return;
     const win = getMainWindow();
     if (win) {
       if (win.isMinimized()) win.restore();
@@ -401,22 +404,41 @@ function bootstrap(): void {
     }
   });
 
+  // Teardown. Every disposer is isolated: an exception thrown here used to abort
+  // the rest of the handler AND get swallowed by the global uncaughtException
+  // handler, so the process stayed alive with half its resources released — which
+  // is exactly how "Restart & install" ended up quitting nothing at all.
   app.on('before-quit', () => {
-    agent?.cleanup();
-    cursorRuntime?.dispose();
-    cursorAuth?.dispose();
-    mcp?.dispose();
-    void fileSystem?.dispose();
-    proxy?.stop();
-    services?.dispose();
-    terminal?.dispose();
-    updates?.dispose();
-    voice?.dispose();
-    voiceModels?.dispose();
-    if (memorySweepTimer) clearInterval(memorySweepTimer);
-    tray.destroy();
-    closeDb();
+    safeDispose('agent', () => agent?.cleanup());
+    safeDispose('cursorRuntime', () => cursorRuntime?.dispose());
+    safeDispose('cursorAuth', () => cursorAuth?.dispose());
+    safeDispose('mcp', () => mcp?.dispose());
+    safeDispose('fileSystem', () => void fileSystem?.dispose());
+    safeDispose('proxy', () => proxy?.stop());
+    safeDispose('services', () => services?.dispose());
+    safeDispose('terminal', () => terminal?.dispose());
+    safeDispose('updates', () => updates?.dispose());
+    safeDispose('voice', () => voice?.dispose());
+    safeDispose('voiceModels', () => voiceModels?.dispose());
+    safeDispose('memorySweep', () => {
+      if (memorySweepTimer) clearInterval(memorySweepTimer);
+    });
+    safeDispose('tray', () => tray.destroy());
+    safeDispose('db', () => closeDb());
   });
+}
+
+/**
+ * Run one teardown step, containing any failure to that step. Quitting must be
+ * unstoppable: a manager that throws on shutdown is a bug to log, never a reason
+ * to leave the other managers holding their resources.
+ */
+function safeDispose(label: string, fn: () => void): void {
+  try {
+    fn();
+  } catch (err) {
+    logger.error(`before-quit: ${label} disposer failed`, err);
+  }
 }
 
 /**

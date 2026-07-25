@@ -80,6 +80,7 @@ import type {
   TerminalCreateOptions,
   TerminalExit,
   TerminalSession,
+  UpdateInstallResult,
   UpdateStatus,
   VoiceModelState,
   VoiceState,
@@ -638,8 +639,8 @@ const updatesApi = {
   check: (): Promise<UpdateStatus> => ipcRenderer.invoke(IpcChannels.updateCheck),
   /** Start downloading an available update (when autoDownload is off). */
   download: (): Promise<void> => ipcRenderer.invoke(IpcChannels.updateDownload),
-  /** Quit and install a downloaded update. */
-  install: (): Promise<void> => ipcRenderer.invoke(IpcChannels.updateInstall),
+  /** Quit and install a downloaded update. Resolves with why it refused, if it did. */
+  install: (): Promise<UpdateInstallResult> => ipcRenderer.invoke(IpcChannels.updateInstall),
   onStatus: (cb: (status: UpdateStatus) => void): (() => void) =>
     subscribe<UpdateStatus>(IpcEvents.updateStatus, cb),
 };

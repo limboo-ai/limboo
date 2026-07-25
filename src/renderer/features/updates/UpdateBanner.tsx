@@ -11,7 +11,7 @@
  * ring with the live percentage. The X dismisses the strip (renderer-only); the
  * Settings-icon badge stays lit so the update is still reachable.
  */
-import { ArrowUpCircle, Download, RefreshCw, X } from 'lucide-react';
+import { AlertCircle, ArrowUpCircle, Download, RefreshCw, X } from 'lucide-react';
 import { CircularProgress } from '@/renderer/components/ui';
 import { useUpdateStore } from '@/renderer/stores/useUpdateStore';
 import { cn } from '@/renderer/lib/cn';
@@ -20,18 +20,22 @@ export function UpdateBanner() {
   const status = useUpdateStore((s) => s.status);
   const dismissed = useUpdateStore((s) => s.dismissed);
   const busy = useUpdateStore((s) => s.busy);
+  const check = useUpdateStore((s) => s.check);
   const download = useUpdateStore((s) => s.download);
   const install = useUpdateStore((s) => s.install);
   const dismiss = useUpdateStore((s) => s.dismiss);
 
-  // Only surface actionable stages. Checking / not-available / idle / disabled /
-  // errors stay quiet here (errors are visible in the Settings → Updates panel).
+  // Only surface actionable stages. Checking / not-available / idle / disabled
+  // stay quiet here. `error` DOES surface: an update that fails mid-flight used
+  // to make the strip vanish, which reads as "it worked" — the opposite of true.
   const actionable =
     status.stage === 'available' ||
     status.stage === 'downloading' ||
-    status.stage === 'downloaded';
+    status.stage === 'downloaded' ||
+    status.stage === 'error';
   if (!actionable || dismissed) return null;
 
+  const failed = status.stage === 'error';
   const percent = status.percent ?? 0;
   const versionLabel = status.version ? `Limboo ${status.version}` : 'A new version';
 
@@ -41,41 +45,50 @@ export function UpdateBanner() {
         {/* Leading indicator — ring + live % while downloading, otherwise an icon. */}
         {status.stage === 'downloading' ? (
           <CircularProgress value={percent} size={30} showLabel className="shrink-0" />
+        ) : failed ? (
+          <AlertCircle size={20} className="shrink-0 text-danger" />
         ) : (
           <ArrowUpCircle size={20} className="shrink-0 text-accent" />
         )}
 
         <div className="flex min-w-0 flex-1 flex-col">
           <span className="truncate text-[13px] font-medium text-fg">
-            {status.stage === 'downloaded'
-              ? 'Update ready to install'
-              : status.stage === 'downloading'
-                ? status.resuming
-                  ? 'Resuming update…'
-                  : 'Downloading update…'
-                : 'Update available'}
+            {failed
+              ? 'Update failed'
+              : status.stage === 'downloaded'
+                ? 'Update ready to install'
+                : status.stage === 'downloading'
+                  ? status.resuming
+                    ? 'Resuming update…'
+                    : 'Downloading update…'
+                  : 'Update available'}
           </span>
           <span className="truncate text-[11px] text-muted">
-            {status.stage === 'downloaded'
-              ? `${versionLabel} — restart to finish`
-              : status.stage === 'downloading'
-                ? `${versionLabel} · ${percent}%`
-                : `${versionLabel} is available to download`}
+            {failed
+              ? (status.error ?? 'The update could not be applied.')
+              : status.stage === 'downloaded'
+                ? `${versionLabel} — restart to finish`
+                : status.stage === 'downloading'
+                  ? `${versionLabel} · ${percent}%`
+                  : `${versionLabel} is available to download`}
           </span>
         </div>
 
         <div className="flex shrink-0 items-center gap-2">
-          {status.stage === 'available' && (
+          {(status.stage === 'available' || failed) && (
             <button
               type="button"
               disabled={busy}
-              onClick={() => void download()}
+              // A failure can come from either half of the flow, so retrying
+              // restarts from the check rather than assuming a download is valid.
+              onClick={() => void (failed ? check() : download())}
               className={cn(
                 'flex items-center gap-1.5 rounded-md bg-accent px-3 py-1.5 text-[12px] font-medium text-base transition-opacity hover:opacity-90',
                 'disabled:opacity-50',
               )}
             >
-              <Download size={14} /> Download
+              {failed ? <RefreshCw size={14} /> : <Download size={14} />}
+              {failed ? 'Try again' : 'Download'}
             </button>
           )}
           {status.stage === 'downloading' && (
