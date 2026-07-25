@@ -28,6 +28,7 @@
  *
  * Usage: node ci/scripts/verify-artifacts.mjs [artifactDir=dist] [--publish-set]
  */
+import { readFileSync } from 'node:fs';
 import { open, readdir, readFile, stat } from 'node:fs/promises';
 import { basename, join } from 'node:path';
 
@@ -75,12 +76,46 @@ async function firstZipEntry(file) {
   }
 }
 
+/**
+ * Which files are macOS update zips?
+ *
+ * Derived from `latest-mac.yml` rather than from the filename, because the
+ * filename is exactly the wrong thing to trust here: this check once keyed on a
+ * `-mac.zip` suffix, the artifact naming changed to `-<arch>.zip`, and the most
+ * important gate in this script silently reported "nothing to check" on a real
+ * release. The update feed is authoritative — those entries are, by definition,
+ * the archives Squirrel.Mac will be handed.
+ */
+function macZipsFromFeed(files) {
+  const feed = files.find((f) => basename(f).toLowerCase() === 'latest-mac.yml');
+  if (!feed) return { feedPresent: false, zips: [] };
+  const listed = new Set();
+  for (const line of readFileSync(feed, 'utf8').split(/\r?\n/)) {
+    const match = line.match(/^\s*-\s+url:\s*(.+?)\s*$/);
+    if (match && match[1].toLowerCase().endsWith('.zip')) listed.add(basename(match[1]));
+  }
+  return { feedPresent: true, zips: files.filter((f) => listed.has(basename(f))) };
+}
+
 async function checkMacZips(files) {
-  const macZips = files.filter((f) => /-mac(-[a-z0-9]+)?\.zip$/i.test(basename(f)));
+  const { feedPresent, zips: macZips } = macZipsFromFeed(files);
+
   if (macZips.length === 0) {
-    note('no macOS update zips in this build — skipping the Squirrel.Mac layout check');
+    if (feedPresent) {
+      // A macOS update feed with no checkable zip beside it is not a "nothing to
+      // do" case — either the feed lists no zip (Squirrel.Mac has nothing to
+      // install) or the artifacts are missing from the publish set.
+      fail(
+        'latest-mac.yml is present but no macOS update zip could be matched to it. ' +
+          'Squirrel.Mac needs a zip listed in that feed; check the mac targets in ' +
+          'electron-builder.yml and that the zip reached this directory.',
+      );
+      return;
+    }
+    note('no macOS update feed in this build — Squirrel.Mac layout check not applicable');
     return;
   }
+
   for (const zip of macZips) {
     const entry = await firstZipEntry(zip);
     if (!entry) {
