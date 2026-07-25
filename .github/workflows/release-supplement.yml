@@ -15,8 +15,13 @@ name: Release supplement (extra architectures)
 #                        binaries inside an arm64-labelled package)
 #   windows-11-arm    -> Windows arm64
 #
-# Flow: wait for GitLab's release to exist -> build the extra arches -> MERGE the
-# update feeds with the ones already on the release -> upload with --clobber.
+# Flow: wait for the release to exist -> skip if those arches are already there
+# -> build them -> MERGE the update feeds with the ones already on the release ->
+# upload with --clobber.
+#
+# The skip matters: release.yml (the manual fallback) builds the complete matrix
+# itself, so when IT published the release there is nothing to supplement and a
+# rebuild would just burn runners re-uploading identical files.
 #
 # The feed merge is the load-bearing step. Each runner writes a `latest*.yml`
 # describing only its own artifacts, so uploading this workflow's
@@ -44,12 +49,13 @@ jobs:
       contents: read
     outputs:
       tag: ${{ steps.resolve.outputs.tag }}
+      needed: ${{ steps.assets.outputs.needed }}
     steps:
       - name: Resolve tag
         id: resolve
         run: echo "tag=${{ inputs.tag || github.ref_name }}" >> "$GITHUB_OUTPUT"
 
-      - name: Wait for GitLab to publish the release
+      - name: Wait for the release to be published
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ steps.resolve.outputs.tag }}
@@ -70,9 +76,35 @@ jobs:
           echo "::error::Release $TAG was not published within 60 minutes. Re-run this workflow manually once it exists."
           exit 1
 
+      - name: Check whether the extra architectures are already published
+        id: assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.resolve.outputs.tag }}
+        # release.yml (the manual fallback) builds the COMPLETE matrix on its own,
+        # including these three. When it published the release there is nothing
+        # left to supplement, and rebuilding would burn ~30 minutes of runners to
+        # re-upload identical files. Detect that and skip.
+        run: |
+          set -euo pipefail
+          assets=$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name')
+          echo "$assets"
+          missing=0
+          # One representative artifact per architecture this workflow exists to add.
+          grep -qiE 'x64\.dmg$'                  <<<"$assets" || { echo "missing: macOS x64";     missing=1; }
+          grep -qiE 'arm64\.(AppImage|deb|rpm)$' <<<"$assets" || { echo "missing: Linux arm64";   missing=1; }
+          grep -qiE 'arm64\.exe$'                <<<"$assets" || { echo "missing: Windows arm64"; missing=1; }
+          if [ "$missing" -eq 0 ]; then
+            echo "All supplementary architectures are already on the release — nothing to do."
+            echo "needed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "needed=true" >> "$GITHUB_OUTPUT"
+          fi
+
   package:
     name: Package extra architectures
     needs: [wait-for-release]
+    if: needs.wait-for-release.outputs.needed == 'true'
     uses: ./.github/workflows/_package.yml
     permissions:
       contents: read
@@ -86,6 +118,7 @@ jobs:
   upload:
     name: Merge feeds and upload
     needs: [wait-for-release, package]
+    if: needs.wait-for-release.outputs.needed == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: write   # upload assets onto the existing release
