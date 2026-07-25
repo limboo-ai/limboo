@@ -14,11 +14,12 @@
     "dist:publish": "electron-forge package && node scripts/dist.mjs --publish always",
     "gen:icons": "node scripts/gen-icons.mjs",
     "gen:installer": "node scripts/gen-installer-assets.mjs",
+    "gen:appx": "node scripts/gen-appx-assets.mjs",
     "lint": "eslint --ext .ts,.tsx ."
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/BotCoder254/limboo.git"
+    "url": "git+https://github.com/limboo-ai/limboo.git"
   },
   "engines": {
     "node": ">=22.12.0"
