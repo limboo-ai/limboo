@@ -62,13 +62,14 @@ and arm64 builds for all three platforms.
 
 ### Added
 
-- **Code signing.** macOS builds are signed with a Developer ID certificate and
-  notarized (hardened runtime + entitlements), which is also what makes macOS
-  auto-update possible at all — Squirrel.Mac refuses to update an app it cannot
-  verify. Windows installers are signed with a self-signed certificate; this does
-  **not** remove the SmartScreen warning, and is documented as such. Azure Trusted
-  Signing is wired and dormant. All of it is opt-in via environment secrets
-  (`scripts/signing.cjs`), so unsigned dev and PR builds are unchanged.
+- **A code-signing pipeline.** Developer ID signing + notarization for macOS
+  (hardened runtime + entitlements) — which is also what makes macOS auto-update
+  possible at all, since Squirrel.Mac refuses to update an app it cannot verify —
+  and Authenticode for Windows, with Azure Trusted Signing wired and dormant
+  beside a self-signed route. Note that a self-signed certificate does **not**
+  remove the SmartScreen warning; it is documented as such. The whole path is
+  opt-in from environment credentials (`scripts/signing.cjs`), so builds without
+  them — **including this release** — are unsigned and behave exactly as before.
   Because signing runs in Forge rather than electron-builder — `--prepackaged`
   skips the pack step where electron-builder would sign — the split is documented
   in [code signing](docs/ci/code-signing.md).

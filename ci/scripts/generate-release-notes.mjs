@@ -125,8 +125,8 @@ function main() {
   out.push(
     '| Platform | File | Notes |',
     '| --- | --- | --- |',
-    '| Windows x64 / arm64 | `Limboo-Setup-*-<arch>.exe` | Signed, but with a self-signed certificate — SmartScreen still warns. Choose **More info → Run anyway**. |',
-    '| macOS Apple silicon / Intel | `Limboo-*-arm64.dmg` / `Limboo-*-x64.dmg` | Signed and notarized; Gatekeeper opens it normally. |',
+    '| Windows x64 / arm64 | `Limboo-Setup-*-<arch>.exe` | If SmartScreen warns, choose **More info → Run anyway**. |',
+    '| macOS Apple silicon / Intel | `Limboo-*-arm64.dmg` / `Limboo-*-x64.dmg` | If Gatekeeper blocks it, right-click → **Open**, or `xattr -dr com.apple.quarantine /Applications/Limboo.app`. |',
     '| Debian / Ubuntu | `limboo-*-<arch>.deb` | |',
     '| Fedora / RHEL / openSUSE | `limboo-*-<arch>.rpm` | |',
     '| Arch / Manjaro | `limboo-*-<arch>.pacman` | `sudo pacman -U <file>` |',
