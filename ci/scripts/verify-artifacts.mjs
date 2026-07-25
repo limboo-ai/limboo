@@ -212,6 +212,33 @@ async function checkFeeds(dir, files) {
 /* 4. Debug output                                                     */
 /* ------------------------------------------------------------------ */
 
+/**
+ * `SHA256SUMS` must describe exactly what is published — no more.
+ *
+ * A manifest listing a file the user cannot download makes `sha256sum -c
+ * SHA256SUMS` exit non-zero on a perfectly good release, which discredits the
+ * one verification command the README and release notes hand people. v1.6.0
+ * shipped with a stray `limboo-package.cyclonedx.json` entry for exactly this
+ * reason: a build side-file that was checksummed but never uploaded.
+ */
+async function checkChecksumManifest(dir, files) {
+  const manifest = files.find((f) => basename(f) === 'SHA256SUMS');
+  if (!manifest) return;
+  const present = new Set(files.map((f) => basename(f)));
+  for (const line of (await readFile(manifest, 'utf8')).split(/\r?\n/)) {
+    if (!line.trim()) continue;
+    // `<hex>  <name>` — the name may carry a binary-mode `*` prefix.
+    const name = line.slice(line.indexOf(' ')).trim().replace(/^\*/, '');
+    if (name && !present.has(basename(name))) {
+      fail(
+        `SHA256SUMS lists "${name}", which is not in ${dir}. ` +
+          '`sha256sum -c SHA256SUMS` would fail for anyone who downloads the release — ' +
+          'checksum only what actually gets published.',
+      );
+    }
+  }
+}
+
 function checkForbidden(files) {
   if (!publishSet) return;
   for (const file of files) {
@@ -258,6 +285,7 @@ async function main() {
 
   await checkMacZips(files);
   await checkFeeds(artifactDir, files);
+  await checkChecksumManifest(artifactDir, files);
   checkForbidden(files);
 
   for (const n of notes) console.log(`verify-artifacts: ${n}`);
