@@ -38,10 +38,15 @@ intact. Set `SMOKE_TIMEOUT_MS` to adjust the timeout.
 ## Package + secure
 
 ```bash
-npm run make
-node ci/scripts/make-checksums.mjs out/make out/make/SHA256SUMS
-node ci/scripts/verify-signing.mjs out/make    # skips cleanly when unsigned
+npm run dist                                   # `npm run make` is an alias for this
+node ci/scripts/verify-artifacts.mjs dist      # structural gate (zip layout, arch, feeds)
+node ci/scripts/make-checksums.mjs dist dist/SHA256SUMS
+node ci/scripts/verify-signing.mjs dist        # skips cleanly when unsigned
 ```
+
+Output lands in `dist/`, not `out/make` — Forge has no makers here, and
+`npm run make` is an alias for the electron-builder path (see
+[packaging and signing](../operations/packaging-and-signing.md)).
 
 ## Release notes preview
 

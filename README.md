@@ -55,42 +55,65 @@ workspace.
 
 ## Download
 
-Installers for **Windows, macOS, and Linux** are published on every release.
+Installers for **Windows, macOS, and Linux** are published on every release, on
+both x64 and arm64. Every download below lives on the
+[latest release](https://github.com/limboo-ai/limboo/releases/latest).
 
 | Platform | Download | Notes |
 | --- | --- | --- |
-| **Windows** | [`Limboo-Setup-1.5.1-x64.exe`](https://github.com/limboo-ai/limboo/releases/latest) | NSIS installer, x64 |
-| **macOS** (Apple silicon) | [`Limboo-1.5.1-arm64.dmg`](https://github.com/limboo-ai/limboo/releases/latest) | |
-| **macOS** (Intel) | [`Limboo-1.5.1.dmg`](https://github.com/limboo-ai/limboo/releases/latest) | |
-| **Linux** | [`Limboo-1.5.1.AppImage`](https://github.com/limboo-ai/limboo/releases/latest) · [`.deb`](https://github.com/limboo-ai/limboo/releases/latest) · [`.rpm`](https://github.com/limboo-ai/limboo/releases/latest) | AppImage needs `chmod +x` |
+| **Windows** (x64) | `Limboo-Setup-<version>-x64.exe` | NSIS installer |
+| **Windows** (arm64) | `Limboo-Setup-<version>-arm64.exe` | For Windows on ARM |
+| **macOS** (Apple silicon) | `Limboo-<version>-arm64.dmg` | |
+| **macOS** (Intel) | `Limboo-<version>-x64.dmg` | |
+| **Linux** — universal | `limboo-<version>-<arch>.AppImage` | `chmod +x` first; needs `libfuse2` (see below) |
+| **Linux** — Debian / Ubuntu | `limboo-<version>-<arch>.deb` | |
+| **Linux** — Fedora / RHEL / openSUSE | `limboo-<version>-<arch>.rpm` | |
+| **Linux** — Arch / Manjaro | `limboo-<version>-<arch>.pacman` | `sudo pacman -U <file>` |
+| **Linux** — any distro | `limboo-<version>-<arch>.tar.gz` | Extract and run `./Limboo` |
 
-The app updates itself from the release feed once installed.
+The app updates itself from the release feed once installed — including the
+`.deb`, `.rpm` and `.pacman` builds, which apply updates through your system
+package manager and will ask for your password.
 
-### These builds are unsigned — here's what you'll see
+> **AppImage on Ubuntu 24.04+**: AppImages need FUSE 2, which Ubuntu no longer
+> installs by default. `sudo apt install libfuse2t64` fixes
+> `dlopen(): error loading libfuse.so.2`. It installs alongside FUSE 3 without
+> replacing it.
 
-Code-signing certificates are not yet configured in the release pipeline, so your
-OS will warn you. This is expected, and worth knowing before you assume the
-download is broken:
+### What your OS will say about these builds
 
-- **Windows** — SmartScreen says "Windows protected your PC." Choose
-  **More info → Run anyway**.
-- **macOS** — Gatekeeper refuses an app from an unidentified developer. Right-click
-  the app → **Open**, or clear the quarantine flag:
+Signing status differs per platform, and the differences are worth knowing before
+you assume a download is broken.
 
-  ```bash
-  xattr -dr com.apple.quarantine /Applications/Limboo.app
-  ```
+- **macOS — signed and notarized.** Builds are signed with a Developer ID
+  certificate and notarized by Apple, so Gatekeeper opens them normally. (If you
+  are on a build from **v1.5.1 or earlier**, those were unsigned; see the note
+  below.)
+- **Windows — SmartScreen still warns.** The installer carries a signature, but
+  from a self-signed certificate that is not in Windows' trust store, so
+  SmartScreen still shows "Windows protected your PC." Choose **More info → Run
+  anyway**. A chain-trusted certificate is the only thing that removes this
+  prompt, and the Microsoft Store listing is the warning-free route once it is
+  live.
+- **Linux — no code signing exists** for these formats. Integrity comes from the
+  checksum manifest and build provenance below.
 
-Rather than ask you to take that on trust, every artifact ships with a checksum
-manifest and a build-provenance attestation recorded in a public transparency log:
+Rather than ask you to take any of that on trust, every artifact ships with a
+checksum manifest and a build-provenance attestation recorded in a public
+transparency log:
 
 ```bash
-sha256sum -c SHA256SUMS                                              # integrity
-gh attestation verify Limboo-1.5.1.AppImage --repo limboo-ai/limboo  # provenance
+sha256sum -c SHA256SUMS                                             # integrity
+gh attestation verify <file> --repo limboo-ai/limboo                # provenance
 ```
 
-Signed builds are the next release-engineering task. Prefer to build it yourself?
-See [Quick start](#quick-start).
+> **Upgrading from v1.5.1 or earlier on macOS?** Download the new `.dmg` once,
+> manually. Those builds shipped an update archive Squirrel.Mac could not read,
+> so they cannot auto-update to this release — the in-app updater will keep
+> reporting a failure until you replace the app. Windows and Linux upgrade
+> normally.
+
+Prefer to build it yourself? See [Quick start](#quick-start).
 
 ## Why it exists
 
@@ -388,8 +411,11 @@ SQLite.
 
 Being honest about the rough edges, because you will meet them:
 
-- **Installers are unsigned.** Expect SmartScreen and Gatekeeper warnings until
-  signing certificates are wired into the pipeline. See [Download](#download).
+- **Windows installers trip SmartScreen.** They are signed, but with a
+  self-signed certificate that Windows does not trust, so the warning stays until
+  a chain-trusted certificate (or the Microsoft Store listing) lands. macOS is
+  signed and notarized; Linux formats have no signing mechanism to use. See
+  [Download](#download).
 - **Cursor's default mode is propose-only.** Until the interactive hooks bridge is
   verified for your exact CLI build, proposed edits surface as a reviewable plan you
   approve, rather than applying directly. This is a deliberate safety posture.

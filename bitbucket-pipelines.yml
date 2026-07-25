@@ -23,7 +23,7 @@
 #
 # Secrets MUST be provided as SECURED repository variables (Repository settings ->
 # Repository variables), never in this file:
-#   GITHUB_TOKEN            (required) GitHub PAT, repo scope on BotCoder254/limboo —
+#   GITHUB_TOKEN            (required) GitHub PAT, repo scope on limboo-ai/limboo —
 #                           used by the release-github step and the manual
 #                           sync-github custom pipeline.
 #   BITBUCKET_ACCESS_TOKEN  (optional) repository access token; when present the
@@ -189,12 +189,12 @@ definitions:
               echo "ERROR: GITHUB_TOKEN is not visible to this pipeline step." >&2
               echo "Fix: bitbucket.org/limboo_/limboo -> Repository settings -> Pipelines ->" >&2
               echo "     Repository variables -> add Name=GITHUB_TOKEN, Value=<GitHub PAT with" >&2
-              echo "     repo scope on BotCoder254/limboo>, check [Secured]. A workspace" >&2
+              echo "     repo scope on limboo-ai/limboo>, check [Secured]. A workspace" >&2
               echo "     variable on the limboo_ workspace also works. Then RE-RUN this step." >&2
               exit 1
             fi
             export GH_TOKEN="$GITHUB_TOKEN"
-            export GH_REPO=BotCoder254/limboo
+            export GH_REPO=limboo-ai/limboo
             # Verify the token actually reaches the repo before publishing, so an
             # expired/underscoped PAT produces a clear message instead of a gh stack.
             gh api "repos/$GH_REPO" --jq .full_name >/dev/null 2>&1 || {
@@ -272,7 +272,7 @@ definitions:
             Invoke-WebRequest "https://github.com/cli/cli/releases/download/v$v/gh_${v}_windows_amd64.zip" -OutFile gh.zip
             Expand-Archive gh.zip -DestinationPath ghcli -Force
             $env:GH_TOKEN = $env:GITHUB_TOKEN
-            $env:GH_REPO = "BotCoder254/limboo"
+            $env:GH_REPO = "limboo-ai/limboo"
             $files = @(Get-ChildItem artifacts/windows/* | ForEach-Object FullName)
             & ghcli/bin/gh.exe release upload $env:BITBUCKET_TAG @files --clobber
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
@@ -308,7 +308,7 @@ definitions:
             case "$(uname -m)" in arm64) GHARCH=macOS_arm64 ;; *) GHARCH=macOS_amd64 ;; esac
             curl -fsSL -o ghcli.zip "https://github.com/cli/cli/releases/download/v${GH_CLI_VERSION}/gh_${GH_CLI_VERSION}_${GHARCH}.zip"
             unzip -oq ghcli.zip
-            export GH_TOKEN="$GITHUB_TOKEN" GH_REPO=BotCoder254/limboo
+            export GH_TOKEN="$GITHUB_TOKEN" GH_REPO=limboo-ai/limboo
             "./gh_${GH_CLI_VERSION}_${GHARCH}/bin/gh" release upload "$BITBUCKET_TAG" artifacts/macos/* --clobber
         artifacts:
           - artifacts/**
@@ -383,7 +383,7 @@ pipelines:
               # Single-quoted: $GITHUB_TOKEN is expanded by the helper subshell at
               # credential-fill time, not here — the token stays out of argv.
               CRED_HELPER='!f() { echo username=x-access-token; echo password="${GITHUB_TOKEN}"; }; f'
-              git remote add github https://github.com/BotCoder254/limboo.git
+              git remote add github https://github.com/limboo-ai/limboo.git
               git -c credential.helper= -c credential.helper="$CRED_HELPER" fetch github
               BRANCH="${BITBUCKET_BRANCH:-main}"
               echo "Pushing HEAD -> github/$BRANCH (--force-with-lease) + tags"

@@ -33,7 +33,7 @@ Node globals (`require`/`module`/`process`) are absent from the renderer at boot
   (`id-token: write`, `attestations: write`). This provides SLSA Build L2 out of the box;
   the reusable `_package.yml` build is the basis for moving to L3.
 
-Consumers verify with `gh attestation verify <file> --repo BotCoder254/limboo`. Adopt
+Consumers verify with `gh attestation verify <file> --repo limboo-ai/limboo`. Adopt
 verification in **audit mode** first (log, don't block), then enforce.
 
 ## Secrets and tokens

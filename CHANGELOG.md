@@ -7,13 +7,98 @@ All notable changes to Limboo are documented here. The format is based on
 
 ## [Unreleased]
 
+### Fixed
+
+- **"Restart & install" did nothing.** Clicking it could leave the app running on
+  the old version, or quit without ever coming back. Four separate causes:
+  - The install request was gated on the UI stage being `downloaded`, but the
+    hourly poll re-emitted `update-available` for the already-downloaded version
+    and moved the stage off it. The click then returned with no log, no error and
+    no feedback of any kind. Staged updates are now tracked by version
+    independently of the UI stage, polling is suspended while an update is
+    staged, and every refusal is logged and surfaced to the user.
+  - **The restart lost a race with itself.** `quitAndInstall` spawns the
+    replacement process synchronously but defers `app.quit()` to the next tick,
+    so the new instance hit `requestSingleInstanceLock()` while the old one still
+    held it and quit itself. The lock is now released before the handoff, and
+    `second-instance` events are ignored while an update is in flight.
+  - **A throwing disposer could keep the app alive.** `before-quit` ran thirteen
+    `dispose()` calls with no error containment; one throw aborted the rest and
+    was swallowed by the global `uncaughtException` handler, leaving the process
+    up with an installer waiting on it. Each disposer is now isolated, and a
+    watchdog forces the exit if the process is still running four seconds after
+    the handoff.
+  - Windows now installs silently (`--updated /S --force-run`). Without `/S` the
+    assisted NSIS wizard re-ran from the first page, which reads as "nothing
+    happened".
+- **macOS auto-update was impossible, and the "Intel" downloads were arm64
+  builds.** `scripts/dist.mjs` passed the Forge output *directory* to
+  `electron-builder --prepackaged`, but electron-builder treats that value as the
+  `.app` bundle path on macOS. The published update zips were rooted at
+  `Limboo-darwin-arm64/` instead of `Limboo.app/`, which Squirrel.Mac cannot
+  install — they downloaded and checksummed perfectly and then failed, every
+  time. The same misconfiguration made electron-builder wrap that one
+  single-architecture directory once per architecture listed in
+  `electron-builder.yml`, so `Limboo-1.5.1-mac.zip` ("Intel") and
+  `Limboo-1.5.1-arm64-mac.zip` were byte-identical. Fixed by pointing
+  `--prepackaged` at the bundle on darwin and removing every explicit `arch:`
+  list, so the architecture comes only from the CI matrix.
+  **Users on v1.5.1 or earlier must download the new `.dmg` once, manually** —
+  those builds cannot auto-update to this release.
+- **Linux `.deb` / `.rpm` installs never received updates.** Self-update was
+  disabled unless `APPIMAGE` was set, though electron-updater has supported
+  installing deb, rpm and pacman packages through the system package manager for
+  some time. The app now selects its updater explicitly — `APPIMAGE` first, then
+  the `package-type` marker — which also fixes AppImages that shipped a stale
+  `deb`/`rpm` marker from electron-builder's shared staging directory and so
+  routed AppImage users to the wrong updater.
+
 ### Added
 
+- **Code signing.** macOS builds are signed with a Developer ID certificate and
+  notarized (hardened runtime + entitlements), which is also what makes macOS
+  auto-update possible at all — Squirrel.Mac refuses to update an app it cannot
+  verify. Windows installers are signed with a self-signed certificate; this does
+  **not** remove the SmartScreen warning, and is documented as such. Azure Trusted
+  Signing is wired and dormant. All of it is opt-in via environment secrets
+  (`scripts/signing.cjs`), so unsigned dev and PR builds are unchanged.
+  Because signing runs in Forge rather than electron-builder — `--prepackaged`
+  skips the pack step where electron-builder would sign — the split is documented
+  in [code signing](docs/ci/code-signing.md).
+- **A Microsoft Store (MSIX) channel**, the only warning-free Windows route that
+  does not require buying a certificate. Store builds disable self-update, since
+  the Store owns updates there. See
+  [microsoft-store.md](docs/operations/microsoft-store.md).
+- **Wider platform coverage.** Linux gains `pacman` (Arch/Manjaro) and `tar.gz`
+  targets, and every platform now publishes both x64 and arm64. The
+  architectures GitLab's SaaS runners cannot build — macOS Intel, arm64 Linux,
+  arm64 Windows — are produced by a new tag-triggered
+  `release-supplement.yml` workflow that uploads into the same release.
+- **Release gates for the failures above.**
+  `ci/scripts/verify-artifacts.mjs` asserts the macOS zip root, that no two
+  artifacts in an update feed share a hash, that every file a feed references
+  exists, and that debug output stays out of the publish set.
+  `ci/scripts/verify-signing.mjs` gained a Gatekeeper assessment and enforces the
+  Windows `publisherName` invariant.
+  `ci/scripts/merge-update-metadata.mjs` merges the per-runner update feeds, so a
+  supplementary upload adds an architecture instead of deleting one.
+- [auto-update.md](docs/operations/auto-update.md) — the per-platform update
+  mechanism and the invariants that must not be broken.
 - Documentation subsystem: landing `README`, a structured `docs/` site (getting
   started, concepts, guides, reference, architecture, operations), community-health
   files (`LICENSE`, `CONTRIBUTING`, `CODE_OF_CONDUCT`, `SECURITY`, `ROADMAP`,
   `SUPPORT`, `GOVERNANCE`, `AUTHORS`, `CITATION.cff`), and `.github/` automation
   (CI, CodeQL, Dependabot, issue/PR templates).
+
+### Security
+
+- Windows update-signature verification is pinned off
+  (`win.verifyUpdateCodeSignature: false`) while the self-signed route is in use,
+  and enforced in CI. Left at its default, electron-builder derives
+  `publisherName` from the certificate CN and writes it into `app-update.yml`;
+  electron-updater would then demand a trusted Authenticode chain that a
+  self-signed certificate can never satisfy, breaking every Windows update with
+  no recovery short of a manual reinstall.
 
 ### Changed
 
@@ -146,5 +231,7 @@ operational.
 - **Unified streaming timeline** — the conversation rendered as one continuous,
   turn-grouped event stream of messages, tool calls, and status markers.
 
-[Unreleased]: https://github.com/BotCoder254/limboo/compare/v1.0.0...HEAD
-[1.0.0]: https://github.com/BotCoder254/limboo/releases/tag/v1.0.0
+[Unreleased]: https://github.com/limboo-ai/limboo/compare/v1.5.1...HEAD
+[1.5.1]: https://github.com/limboo-ai/limboo/compare/v1.5.0...v1.5.1
+[1.5.0]: https://github.com/limboo-ai/limboo/compare/v1.0.0...v1.5.0
+[1.0.0]: https://github.com/limboo-ai/limboo/releases/tag/v1.0.0

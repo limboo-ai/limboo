@@ -20,7 +20,7 @@
 #
 # Secrets MUST be provided as MASKED + PROTECTED CI/CD variables (never in this
 # file): GH_TOKEN (fine-grained GitHub PAT, Contents: read+write on
-# BotCoder254/limboo) for the GitHub Release; optional signing vars
+# limboo-ai/limboo) for the GitHub Release; optional signing vars
 # APPLE_*/CSC_LINK (macOS) and WINDOWS_CERTIFICATE (Windows). Protect the `v*` tag
 # (Settings -> Repository -> Protected tags) so protected variables reach the
 # release jobs. GitLab Releases use the built-in CI_JOB_TOKEN — no stored secret.
@@ -157,10 +157,16 @@ package:linux:
     # OSes, so one SBOM (generated here) covers the whole release.
     - npx --yes @cyclonedx/cyclonedx-npm --omit dev --output-file dist/limboo-sbom.cdx.json
     - node ci/scripts/verify-signing.mjs dist
+    - node ci/scripts/verify-artifacts.mjs dist
     - |
       mkdir -p artifacts/linux
       cp dist/*.AppImage dist/*.deb dist/*.rpm dist/latest-linux.yml artifacts/linux/
       cp dist/limboo-sbom.cdx.json artifacts/linux/
+      # pacman (Arch/Manjaro) and tar.gz (distro-agnostic fallback) are newer
+      # targets — stage them when present without making them release-blocking.
+      for opt in "dist/*.pacman" "dist/*.tar.gz"; do
+        if ls $opt >/dev/null 2>&1; then cp $opt artifacts/linux/; else echo "[stage] no $opt"; fi
+      done
       # *.blockmap is optional (electron-updater delta metadata) — copy if present,
       # but never mask a real error on the required files above.
       if ls dist/*.blockmap >/dev/null 2>&1; then cp dist/*.blockmap artifacts/linux/; else echo "[stage] no *.blockmap (delta updates disabled?)"; fi
@@ -193,8 +199,12 @@ package:windows:
     - node ci/scripts/apply-tag-version.mjs
     - npm run dist -- --publish never
     - node ci/scripts/verify-signing.mjs dist
+    - node ci/scripts/verify-artifacts.mjs dist
     - New-Item -ItemType Directory -Force artifacts/windows | Out-Null
     - Copy-Item dist/*.exe, dist/latest.yml artifacts/windows/
+    # The Microsoft Store package is only produced when Partner Center identity
+    # values are configured (see scripts/dist.mjs) — stage it opportunistically.
+    - if (Test-Path dist/*.appx) { Copy-Item dist/*.appx artifacts/windows/ } else { Write-Host "[stage] no *.appx (Store identity not configured)" }
     - if (Test-Path dist/*.blockmap) { Copy-Item dist/*.blockmap artifacts/windows/ } else { Write-Host "[stage] no *.blockmap" }
     - if (-not (Test-Path artifacts/windows/*.exe)) { Write-Error "[stage] MISSING *.exe"; exit 1 }
     - if (-not (Test-Path artifacts/windows/latest.yml)) { Write-Error "[stage] MISSING latest.yml"; exit 1 }
@@ -215,11 +225,19 @@ package:macos:
     - if: $CI_COMMIT_TAG
   cache: {}
   before_script: []
-  variables:
-    # No signing cert on the runner by default; stops electron-builder probing the
-    # keychain. When CSC_LINK / CSC_KEY_PASSWORD are added, drop this override.
-    CSC_IDENTITY_AUTO_DISCOVERY: "false"
   script:
+    # Keychain discovery is disabled ONLY when no certificate was supplied.
+    # Previously this was an unconditional job variable, which meant adding
+    # CSC_LINK later would silently still produce unsigned builds — and on macOS
+    # an unsigned build cannot auto-update at all (Squirrel.Mac requires a valid
+    # signature), so the failure mode was invisible until users reported it.
+    - |
+      if [ -z "$CSC_LINK" ]; then
+        echo "[macos] no CSC_LINK — building unsigned, disabling keychain discovery"
+        export CSC_IDENTITY_AUTO_DISCOVERY=false
+      else
+        echo "[macos] CSC_LINK present — signing enabled"
+      fi
     # Bootstrap Node 22 via the preinstalled Homebrew if the VM image lacks it.
     - command -v node >/dev/null 2>&1 || (brew install node@22 && brew link --overwrite node@22)
     - node --version
@@ -227,6 +245,9 @@ package:macos:
     - node ci/scripts/apply-tag-version.mjs
     - npm run dist -- --publish never
     - node ci/scripts/verify-signing.mjs dist
+    # Catches the Squirrel.Mac zip-layout regression that made every macOS
+    # auto-update in v1.5.x impossible.
+    - node ci/scripts/verify-artifacts.mjs dist
     - |
       mkdir -p artifacts/macos
       cp dist/*.dmg dist/*.zip dist/latest-mac.yml artifacts/macos/
@@ -260,6 +281,13 @@ secure:
       mkdir -p dist
       cp -r artifacts/*/* dist/ 2>/dev/null || true
       ls -la dist
+    # electron-builder's debug dump leaked into the v1.5.1 release through the
+    # `dist/*` upload glob. Drop it here, at the one place that assembles the
+    # publish set, rather than in each per-OS job's copy list.
+    - rm -f dist/builder-debug.yml dist/builder-effective-config.yaml
+    # Structural gate BEFORE checksums: a checksum over a broken artifact is a
+    # correct hash of something that cannot be installed.
+    - node ci/scripts/verify-artifacts.mjs dist --publish-set
     - node ci/scripts/make-checksums.mjs dist dist/SHA256SUMS
     - node ci/scripts/verify-signing.mjs dist
   artifacts:
@@ -368,13 +396,13 @@ release:github:
         echo "ERROR: GH_TOKEN is not visible to this job." >&2
         echo "Fix: GitLab -> Settings -> CI/CD -> Variables -> add Key=GH_TOKEN," >&2
         echo "     Value=<GitHub fine-grained PAT with Contents: read+write on" >&2
-        echo "     BotCoder254/limboo>, check [Masked] + [Protected]." >&2
+        echo "     limboo-ai/limboo>, check [Masked] + [Protected]." >&2
         echo "     A Protected variable is INVISIBLE to pipelines on unprotected" >&2
         echo "     tags — also protect 'v*' under Settings -> Repository ->" >&2
         echo "     Protected tags, then re-run this job." >&2
         exit 1
       fi
-      export GH_REPO=BotCoder254/limboo
+      export GH_REPO=limboo-ai/limboo
       # Verify the token actually reaches the repo before publishing, so an
       # expired/underscoped PAT produces a clear message instead of a gh stack.
       gh api "repos/$GH_REPO" --jq .full_name >/dev/null 2>&1 || {

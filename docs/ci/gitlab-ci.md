@@ -62,7 +62,7 @@ Set under **Settings -> CI/CD -> Variables**, always **Masked** and **Protected*
 
 | Variable | Use |
 | -------- | --- |
-| `GH_TOKEN` | **Required** for the GitHub Release. Fine-grained GitHub PAT, **Contents: read+write** on `BotCoder254/limboo`. `release:github` pre-flights it: unset -> exact setup instructions (a Protected variable is invisible on unprotected tags — protect `v*` too); set -> a `gh api repos/…` validity probe fails fast on an expired/underscoped token. |
+| `GH_TOKEN` | **Required** for the GitHub Release. Fine-grained GitHub PAT, **Contents: read+write** on `limboo-ai/limboo`. `release:github` pre-flights it: unset -> exact setup instructions (a Protected variable is invisible on unprotected tags — protect `v*` too); set -> a `gh api repos/…` validity probe fails fast on an expired/underscoped token. |
 | `CSC_LINK`, `CSC_KEY_PASSWORD`, `APPLE_ID`, `APPLE_APP_SPECIFIC_PASSWORD`, `APPLE_TEAM_ID` | macOS signing / notarization (optional) |
 | `WINDOWS_CERTIFICATE`, `WINDOWS_CERTIFICATE_PASSWORD` | Windows signing (optional) |
 
@@ -95,7 +95,7 @@ git push gitlab HEAD
 
 ### 2. GitHub fine-grained PAT
 
-Create a fine-grained Personal Access Token scoped to `BotCoder254/limboo` with
+Create a fine-grained Personal Access Token scoped to `limboo-ai/limboo` with
 **Contents: Read and write** (add **Workflows: Read and write** only if you mirror
 `.github/workflows/**`). This one token is used for both mirroring and the GitHub
 Release.
@@ -104,7 +104,7 @@ Release.
 
 **Settings -> Repository -> Mirroring repositories -> Add**:
 
-- URL: `https://<github-username>@github.com/BotCoder254/limboo.git`
+- URL: `https://<github-username>@github.com/limboo-ai/limboo.git`
 - Direction: **Push**
 - Password: the PAT from step 2
 - Optionally enable *Mirror only protected branches*.
@@ -116,7 +116,7 @@ manual conflict resolution on the mirror).
 For belt-and-suspenders, also make a local `git push` fan out to both hosts:
 
 ```bash
-git remote set-url --add --push origin https://github.com/BotCoder254/limboo.git
+git remote set-url --add --push origin https://github.com/limboo-ai/limboo.git
 git remote set-url --add --push origin https://gitlab.com/BotCoder254/limboo.git
 git remote -v   # origin should list two push URLs
 ```

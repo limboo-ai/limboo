@@ -13,7 +13,10 @@ Given `MAJOR.MINOR.PATCH`:
 - **MINOR** — new capability added in a backward-compatible way.
 - **PATCH** — backward-compatible bug fixes.
 
-The current version is `1.0.0`. Tags are `vX.Y.Z`.
+Tags are `vX.Y.Z`, and **the tag is the version**: CI stamps it into
+`package.json` at build time via `ci/scripts/apply-tag-version.mjs`. The version
+committed in `package.json` is only a dev placeholder — never hand-bump it. See
+[release process](release-process.md).
 
 ## Internal schema versions
 

@@ -19,6 +19,15 @@ on:
         type: boolean
         required: false
         default: false
+      runners:
+        # A JSON array of runner labels. Defaults to the primary matrix; the
+        # tag-triggered supplement (release-supplement.yml) passes the labels
+        # GitLab's SaaS runners cannot provide — Intel macOS and arm64 Linux /
+        # Windows — so one reusable build definition serves both paths.
+        description: JSON array of runner labels to build on
+        type: string
+        required: false
+        default: '["ubuntu-latest", "macos-latest", "windows-latest"]'
 
 permissions:
   contents: read
@@ -30,7 +39,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        os: ${{ fromJSON(inputs.runners) }}
     permissions:
       contents: read
       id-token: write        # OIDC for attestations
@@ -81,6 +90,13 @@ jobs:
       - name: Verify code signing (skips when unsigned)
         run: node ci/scripts/verify-signing.mjs dist
 
+      - name: Verify artifact structure
+        # Catches the two defects that shipped in v1.5.1 and that checksums and
+        # signatures cannot detect: a macOS update zip not rooted at the .app
+        # (Squirrel.Mac can never install it) and two architectures published
+        # under different names from the same build.
+        run: node ci/scripts/verify-artifacts.mjs dist
+
       - name: Attest build provenance
         if: ${{ inputs.attest }}
         uses: actions/attest-build-provenance@v1
@@ -91,6 +107,9 @@ jobs:
             dist/**/*.AppImage
             dist/**/*.deb
             dist/**/*.rpm
+            dist/**/*.pacman
+            dist/**/*.tar.gz
+            dist/**/*.appx
             dist/**/*.zip
 
       - name: Attest SBOM
@@ -103,7 +122,9 @@ jobs:
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: limboo-${{ runner.os }}
+          # Keyed on the runner LABEL, not runner.os: macos-latest (arm64) and
+          # macos-15-intel (x64) are both "macOS" and would overwrite each other.
+          name: limboo-${{ matrix.os }}
           # Includes the installers AND the latest*.yml update metadata + .blockmap
           # files electron-updater needs — they must reach the GitHub Release.
           path: dist/**/*

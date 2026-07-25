@@ -332,6 +332,7 @@ npm run package        # package the app (no installers)
 npm run dist           # package + electron-builder → branded installers in dist/
 npm run gen:icons      # regenerate runtime PNG icons from assets/icon.svg
 npm run gen:installer  # regenerate Windows installer art (.ico + NSIS BMPs)
+npm run gen:appx       # regenerate Microsoft Store (MSIX) tile art
 npm run make           # alias for `npm run dist` (Forge has no makers; builds the current-OS installer)
 npm run publish        # alias for `npm run dist:publish` (build + upload to the GitHub release feed)
 ```
@@ -348,6 +349,25 @@ on the Bitbucket repo via the same `ci/scripts/*.mjs`: CI on every push/PR, and 
 `v*` tags a Linux packaging pass that co-publishes the GitHub Release (see
 `docs/ci/bitbucket-pipelines.md`). See `docs/ci/release-process.md` and
 `docs/ci/gitlab-ci.md`.
+
+One exception to "GitLab builds everything": its SaaS runner fleet has no Intel
+macOS, arm64 Linux or arm64 Windows machine, and native modules rule out
+cross-compiling. `.github/workflows/release-supplement.yml` fires on the same `v*`
+tag, waits for GitLab's release to exist, builds exactly those three, **merges** the
+update feeds (`ci/scripts/merge-update-metadata.mjs`) and uploads with `--clobber`.
+Merging is not optional — each runner's `latest*.yml` lists only its own artifacts,
+so a plain upload would delete an architecture from the feed rather than add one.
+
+**Packaging invariants** (all asserted by `ci/scripts/verify-artifacts.mjs`, all
+learned from shipped bugs — see `docs/operations/auto-update.md`):
+`--prepackaged` is the **`.app` bundle** on darwin and the **directory** elsewhere;
+no target may declare an explicit `arch:` (it overrides the CLI flag and re-wraps
+one build under several arch names); the macOS update zip must be rooted at
+`Limboo.app/`; and `win.publisherName` must stay unset with
+`win.verifyUpdateCodeSignature: false` while Windows signing is self-signed, or
+every Windows auto-update fails. Signing lives in Forge, not electron-builder —
+`--prepackaged` skips the pack step where electron-builder would sign
+(`scripts/signing.cjs`, `docs/ci/code-signing.md`).
 
 **Versioning is TAG-DRIVEN — never hand-bump `package.json` before tagging.** Every CI
 job that reads the version first runs `ci/scripts/apply-tag-version.mjs`, which stamps the

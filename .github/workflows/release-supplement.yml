@@ -1,0 +1,171 @@
+name: Release supplement (extra architectures)
+
+# Publishes the architectures GitLab CANNOT build, into the release GitLab
+# creates.
+#
+# GitLab remains the primary publisher (.gitlab-ci.yml, `release` stage) — this
+# workflow does not create releases and never competes with it. It exists because
+# GitLab's SaaS runner fleet has no Intel macOS, no arm64 Linux and no arm64
+# Windows machine, so those three artifact sets can only come from GitHub's
+# hosted runners:
+#
+#   macos-15-intel    -> macOS x64  (macos-13 was retired in December 2025)
+#   ubuntu-24.04-arm  -> Linux arm64 (deb/rpm cannot be cross-compiled from x64;
+#                        electron-builder shells out to fpm, which produces x64
+#                        binaries inside an arm64-labelled package)
+#   windows-11-arm    -> Windows arm64
+#
+# Flow: wait for GitLab's release to exist -> build the extra arches -> MERGE the
+# update feeds with the ones already on the release -> upload with --clobber.
+#
+# The feed merge is the load-bearing step. Each runner writes a `latest*.yml`
+# describing only its own artifacts, so uploading this workflow's
+# `latest-mac.yml` over GitLab's would not ADD Intel support — it would DELETE
+# arm64 from the feed and break updates for every Apple-silicon user.
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing v* tag to supplement (e.g. v1.6.0)
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  wait-for-release:
+    name: Wait for the primary release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      tag: ${{ steps.resolve.outputs.tag }}
+    steps:
+      - name: Resolve tag
+        id: resolve
+        run: echo "tag=${{ inputs.tag || github.ref_name }}" >> "$GITHUB_OUTPUT"
+
+      - name: Wait for GitLab to publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.resolve.outputs.tag }}
+        # GitLab's pipeline packages three OSes before it creates the release, so
+        # give it a generous window. Uploading into a release that does not exist
+        # yet would fail, and creating one here would race GitLab into publishing
+        # a release with no notes.
+        run: |
+          set -euo pipefail
+          for attempt in $(seq 1 60); do
+            if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+              echo "Release $TAG exists — proceeding."
+              exit 0
+            fi
+            echo "Attempt $attempt/60: $TAG not published yet; waiting 60s."
+            sleep 60
+          done
+          echo "::error::Release $TAG was not published within 60 minutes. Re-run this workflow manually once it exists."
+          exit 1
+
+  package:
+    name: Package extra architectures
+    needs: [wait-for-release]
+    uses: ./.github/workflows/_package.yml
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    with:
+      ref: ${{ needs.wait-for-release.outputs.tag }}
+      attest: true
+      runners: '["macos-15-intel", "ubuntu-24.04-arm", "windows-11-arm"]'
+
+  upload:
+    name: Merge feeds and upload
+    needs: [wait-for-release, package]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write   # upload assets onto the existing release
+    env:
+      GH_TOKEN: ${{ github.token }}
+      TAG: ${{ needs.wait-for-release.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.wait-for-release.outputs.tag }}
+
+      - name: Download packaged artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          # One directory per runner label — see the merge step for why these are
+          # not flattened.
+          merge-multiple: false
+
+      - name: Fetch the feeds already on the release
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/_published
+          # Missing feeds are not an error: a release built by a partial pipeline
+          # (Linux only, say) legitimately has no latest-mac.yml to merge with.
+          for feed in latest.yml latest-mac.yml latest-linux.yml; do
+            if gh release download "$TAG" --repo "$GITHUB_REPOSITORY" \
+                 --pattern "$feed" --dir artifacts/_published 2>/dev/null; then
+              echo "Fetched existing $feed"
+            else
+              echo "No existing $feed on the release (nothing to merge for it)"
+            fi
+          done
+
+      - name: Merge update feeds
+        run: |
+          set -euo pipefail
+          mkdir -p upload
+          # `_published` FIRST so the primary pipeline's build stays the feed's
+          # fallback `path:`/`sha512:` — merge-update-metadata takes those from
+          # the first input.
+          node ci/scripts/merge-update-metadata.mjs upload artifacts/_published artifacts/*/
+
+      - name: Assemble the upload set
+        run: |
+          set -euo pipefail
+          for file in artifacts/*/*; do
+            [ -f "$file" ] || continue
+            case "$(basename "$file")" in
+              # Feeds come from the merge step above.
+              latest*.yml) continue ;;
+              # Debug output and per-runner checksum manifests never ship: the
+              # release-wide SHA256SUMS is regenerated below.
+              builder-debug.yml|builder-effective-config.yaml|SHA256SUMS) continue ;;
+              # The SBOM is identical across runners (one lockfile) and the
+              # primary release already carries it.
+              *.cdx.json) continue ;;
+            esac
+            cp -n "$file" upload/
+          done
+          ls -la upload
+
+      - name: Verify artifact structure
+        run: node ci/scripts/verify-artifacts.mjs upload --publish-set
+
+      - name: Upload to the release
+        # --clobber replaces the existing feeds with the merged ones and adds the
+        # new architectures. The same create-or-clobber idiom the GitLab and
+        # Bitbucket release jobs use.
+        run: gh release upload "$TAG" upload/* --repo "$GITHUB_REPOSITORY" --clobber
+
+      - name: Refresh the release-wide checksum manifest
+        # SHA256SUMS must cover the artifacts that are ACTUALLY on the release,
+        # including the ones just added — so rebuild it from the full asset list
+        # rather than from this job's subset.
+        run: |
+          set -euo pipefail
+          mkdir -p published
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --dir published \
+            --pattern '*' --clobber
+          rm -f published/SHA256SUMS
+          node ci/scripts/make-checksums.mjs published SHA256SUMS
+          gh release upload "$TAG" SHA256SUMS --repo "$GITHUB_REPOSITORY" --clobber

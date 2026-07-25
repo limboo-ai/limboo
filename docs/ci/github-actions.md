@@ -73,7 +73,7 @@ Require these checks on `main`: `Validate`, `Build`, `Test (ubuntu-latest)`,
 with:
 
 ```bash
-gh attestation verify <installer> --repo BotCoder254/limboo
+gh attestation verify <installer> --repo limboo-ai/limboo
 ```
 
 Start attestation **consumption** in audit mode; enforce once the pipeline is proven.

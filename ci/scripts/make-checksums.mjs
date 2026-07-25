@@ -8,14 +8,14 @@
  * the standard `<hex>␠␠<relative-path>` format consumable by `sha256sum -c`.
  *
  * Usage:
- *   node ci/scripts/make-checksums.mjs [artifactDir=out/make] [outFile=<dir>/SHA256SUMS]
+ *   node ci/scripts/make-checksums.mjs [artifactDir=dist] [outFile=<dir>/SHA256SUMS]
  */
 import { createHash } from 'node:crypto';
 import { createReadStream } from 'node:fs';
 import { readdir, stat, writeFile } from 'node:fs/promises';
 import { join, relative, sep } from 'node:path';
 
-const artifactDir = process.argv[2] ?? 'out/make';
+const artifactDir = process.argv[2] ?? 'dist';
 const outFile = process.argv[3] ?? join(artifactDir, 'SHA256SUMS');
 
 async function* walk(dir) {

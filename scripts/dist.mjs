@@ -16,8 +16,15 @@
  */
 import { spawnSync } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { createRequire } from 'node:module';
+import { join, resolve } from 'node:path';
 import { writeAppUpdateYml } from './write-app-update-yml.mjs';
+
+// signing.cjs is CommonJS so forge.config.ts (transpiled to CJS) can require it
+// synchronously; pull it in the same way from this ESM script.
+const { electronBuilderSigningArgs, describeSigning } = createRequire(import.meta.url)(
+  './signing.cjs',
+);
 
 /**
  * Load `.env` (gitignored) from the repo root into `process.env` so a local
@@ -49,17 +56,37 @@ function loadDotEnv() {
 
 loadDotEnv();
 
-// Forge names the packaged dir from packagerConfig.name ('Limboo') + platform/arch.
-const prepackaged = resolve(
-  process.cwd(),
-  'out',
-  `Limboo-${process.platform}-${process.arch}`,
-);
+// Which architecture's Forge output are we wrapping? Defaults to this machine's,
+// but a runner that cross-packaged (e.g. `electron-forge package --arch=x64`)
+// can point at that output explicitly.
+const archArg = process.argv.find((a) => a.startsWith('--arch='));
+const targetArch = archArg ? archArg.slice('--arch='.length) : process.arch;
+const forwardedArgs = process.argv.slice(2).filter((a) => !a.startsWith('--arch='));
 
-if (!existsSync(prepackaged)) {
+// Forge names the packaged dir from packagerConfig.name ('Limboo') + platform/arch.
+const forgeOutDir = resolve(process.cwd(), 'out', `Limboo-${process.platform}-${targetArch}`);
+
+if (!existsSync(forgeOutDir)) {
   console.error(
-    `[dist] Expected Forge package output at "${prepackaged}" but it does not exist.\n` +
+    `[dist] Expected Forge package output at "${forgeOutDir}" but it does not exist.\n` +
       `       Run "electron-forge package" first (npm run dist does this for you).`,
+  );
+  process.exit(1);
+}
+
+// `--prepackaged` means different things per platform, and getting this wrong is
+// silent: `macPackager.packMacTargets` treats the value AS the `.app` bundle
+// path, so handing it the containing directory produced a dmg/zip whose root
+// entry was `Limboo-darwin-arm64/` instead of `Limboo.app/`. Squirrel.Mac only
+// accepts a zip rooted at the .app, so every macOS auto-update failed — and the
+// dmg wrapped a folder. Windows and Linux DO want the directory.
+const prepackaged =
+  process.platform === 'darwin' ? join(forgeOutDir, 'Limboo.app') : forgeOutDir;
+
+if (process.platform === 'darwin' && !existsSync(prepackaged)) {
+  console.error(
+    `[dist] Expected the app bundle at "${prepackaged}" but it does not exist.\n` +
+      `       Forge should have produced Limboo.app inside ${forgeOutDir}.`,
   );
   process.exit(1);
 }
@@ -71,7 +98,9 @@ if (!existsSync(prepackaged)) {
 // dir still gets a valid feed file before electron-builder wraps it. Shared content
 // lives in write-app-update-yml.mjs.
 try {
-  const appUpdatePath = writeAppUpdateYml(prepackaged, process.platform);
+  // Takes the Forge OUTPUT DIR (not the .app) — resourcesDirFor() steps into the
+  // bundle itself on darwin.
+  const appUpdatePath = writeAppUpdateYml(forgeOutDir, process.platform);
   console.log(`[dist] wrote ${appUpdatePath}`);
 } catch (err) {
   console.error(`[dist] failed to write app-update.yml: ${err?.message ?? err}`);
@@ -90,28 +119,67 @@ if (!platformFlag) {
   process.exit(1);
 }
 
-// Pin the arch to the one Forge just packaged: electron-builder.yml lists both
-// mac arches, but a --prepackaged dir contains exactly one, and the CLI arch
-// flag overrides the config so electron-builder never attempts the other. Map
-// explicitly and fail on anything unexpected — silently defaulting to --x64 would
-// mis-package (e.g. an ia32 dir built as x64) and break electron-builder.
-const ARCH_FLAGS = { arm64: '--arm64', x64: '--x64', ia32: '--ia32' };
-const archFlag = ARCH_FLAGS[process.arch];
+/**
+ * Windows only: request the Microsoft Store (appx) target alongside NSIS when
+ * Partner Center identity values are present. The identity is account-specific,
+ * so it arrives as environment rather than living in electron-builder.yml, and
+ * without it the target is not requested at all — a maintainer with no Store
+ * account still gets a normal Windows build. The appx target also needs the
+ * Windows SDK's makeappx.exe, which is why CI runs it as a separate,
+ * non-blocking job.
+ */
+function appxArgs() {
+  if (process.platform !== 'win32') return { targets: [], config: [] };
+  const identityName = process.env.APPX_IDENTITY_NAME?.trim();
+  const publisher = process.env.APPX_PUBLISHER?.trim();
+  const publisherDisplayName = process.env.APPX_PUBLISHER_DISPLAY_NAME?.trim();
+  if (!identityName || !publisher || !publisherDisplayName) {
+    return { targets: [], config: [] };
+  }
+  console.log('[dist] Microsoft Store (appx) target enabled');
+  return {
+    targets: ['appx'],
+    config: [
+      `--config.appx.identityName=${identityName}`,
+      `--config.appx.publisher=${publisher}`,
+      `--config.appx.publisherDisplayName=${publisherDisplayName}`,
+    ],
+  };
+}
+
+const appx = appxArgs();
+
+// Pin the arch to the one Forge just packaged. A `--prepackaged` input holds
+// exactly ONE architecture, so the config must not name any others: an explicit
+// `arch:` list in electron-builder.yml OVERRIDES this CLI flag, and
+// `packageInDistributableFormat` then wraps the same directory once per listed
+// arch. That is how v1.5.1 shipped an "Intel" dmg/zip that was byte-for-byte the
+// arm64 build. The target lists in electron-builder.yml are deliberately
+// arch-free so this flag is the only thing that decides.
+const ARCH_FLAGS = { arm64: '--arm64', x64: '--x64', ia32: '--ia32', armv7l: '--armv7l' };
+const archFlag = ARCH_FLAGS[targetArch];
 if (!archFlag) {
   console.error(
-    `[dist] Unsupported architecture "${process.arch}". Expected one of: ` +
+    `[dist] Unsupported architecture "${targetArch}". Expected one of: ` +
       `${Object.keys(ARCH_FLAGS).join(', ')}.`,
   );
   process.exit(1);
 }
 
+console.log(`[dist] ${describeSigning()}`);
+
+// `--win nsis appx` style: targets listed after the platform flag ADD to the
+// config's list rather than replacing it, so NSIS is always built.
 const args = [
   'electron-builder',
   platformFlag,
+  ...appx.targets,
   archFlag,
   '--prepackaged',
   prepackaged,
-  ...process.argv.slice(2),
+  ...appx.config,
+  ...electronBuilderSigningArgs(),
+  ...forwardedArgs,
 ];
 
 console.log(`[dist] electron-builder ${args.slice(1).join(' ')}`);

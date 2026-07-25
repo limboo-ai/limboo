@@ -6,6 +6,29 @@ import { FusesPlugin } from '@electron-forge/plugin-fuses';
 import { AutoUnpackNativesPlugin } from '@electron-forge/plugin-auto-unpack-natives';
 import { FuseV1Options, FuseVersion } from '@electron/fuses';
 
+// scripts/signing.cjs is CommonJS on purpose: this config is transpiled to CJS
+// and `packagerConfig` must be resolved synchronously, so the ESM `import()`
+// trick used by the postPackage hook below is not available here.
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+const signing = require('./scripts/signing.cjs');
+
+/**
+ * `osxSign` / `osxNotarize` / `windowsSign` for `packagerConfig`, omitting each
+ * key entirely when its credentials are absent — Forge treats a present-but-
+ * falsy value differently from an absent one.
+ */
+function signingConfig(): Record<string, unknown> {
+  const config: Record<string, unknown> = {};
+  const osxSign = signing.macSignOptions();
+  const osxNotarize = signing.macNotarizeOptions();
+  const windowsSign = signing.windowsSignOptions();
+  if (osxSign) config.osxSign = osxSign;
+  if (osxNotarize) config.osxNotarize = osxNotarize;
+  if (windowsSign) config.windowsSign = windowsSign;
+  if (Object.keys(config).length > 0) console.log(`[forge] ${signing.describeSigning()}`);
+  return config;
+}
+
 const config: ForgeConfig = {
   packagerConfig: {
     // Unpack the Claude Agent SDK from the asar: it is ESM-only, is loaded via a
@@ -73,6 +96,20 @@ const config: ForgeConfig = {
         /^\/node_modules($|\/)/.test(file);
       return !keep;
     },
+    // Code signing happens HERE, not in electron-builder.
+    //
+    // electron-builder runs with `--prepackaged` (scripts/dist.mjs), and
+    // `platformPackager.doPack()` returns early in that mode — `signApp` never
+    // executes, so electron-builder physically cannot sign the app bundle. It
+    // still signs the installers it generates (NsisTarget calls
+    // `packager.signIf`), which is why signing is split across the two tools.
+    //
+    // These are populated from the environment by scripts/signing.mjs and are
+    // `undefined` when no certificate is configured, so unsigned dev and PR
+    // builds behave exactly as before. The fuses plugin runs on
+    // `packageAfterCopy`, which is before packager's signing step, so fuse
+    // injection can never invalidate the signature we apply.
+    ...signingConfig(),
   },
   // `node-pty` (pinned to the 1.2.0-beta Node-API line) ships its own
   // ABI-stable per-platform prebuilt and resolves it at runtime without ever

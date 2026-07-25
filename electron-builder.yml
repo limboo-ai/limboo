@@ -40,13 +40,41 @@ publish:
 # ---------------------------------------------------------------------------
 # Windows — the branded, multi-page NSIS wizard (the "first screen of the app").
 # ---------------------------------------------------------------------------
+# NOTE ON `arch:` — deliberately omitted from EVERY target list below.
+#
+# electron-builder runs here with `--prepackaged`, and a prepackaged input holds
+# exactly one architecture. An explicit `arch:` list OVERRIDES the CLI arch flag
+# scripts/dist.mjs passes, and electron-builder then wraps that single directory
+# once per listed arch — which is how v1.5.1 published an "Intel" dmg and zip
+# that were byte-identical to the arm64 build. The arch comes from dist.mjs and
+# nowhere else; the CI matrix supplies one runner per architecture.
 win:
   target:
-    - target: nsis
-      arch: [x64]
+    - nsis
   icon: assets/installer/icon.ico
   # Match the running app's identity so taskbar / notifications / installer agree.
   legalTrademarks: Limboo
+  # `publisherName` is INTENTIONALLY ABSENT, and `verifyUpdateCodeSignature` is
+  # INTENTIONALLY false. Both guard the same failure.
+  #
+  # electron-updater runs its Authenticode check on a downloaded installer only
+  # when app-update.yml carries a publisherName, and that check demands
+  # `Get-AuthenticodeSignature ... Status == Valid`. The current signing route is
+  # a self-signed certificate, which is in no user's trust store and so can never
+  # be Valid — publishing a publisherName would make every Windows auto-update
+  # fail with "New version is not signed by the application owner", and the only
+  # remedy for an affected user is a manual reinstall.
+  #
+  # Omitting the key is not enough on its own: with verifyUpdateCodeSignature at
+  # its default `true`, PublishManager DERIVES publisherName from the signing
+  # certificate's CN (see windowsSignToolManager `computedPublisherName`) and
+  # writes it into app-update.yml for us. Setting it false is what actually stops
+  # that.
+  #
+  # scripts/signing.cjs flips this back to true on the Azure Trusted Signing
+  # route, where the chain IS trusted and verification is worth having.
+  # ci/scripts/verify-signing.mjs enforces the invariant.
+  verifyUpdateCodeSignature: false
 
 nsis:
   oneClick: false                         # full assisted multi-page wizard
@@ -79,6 +107,12 @@ nsis:
 # ---------------------------------------------------------------------------
 # macOS — dmg + zip (zip is required for electron-updater to self-update).
 # electron-builder converts the 512px PNG to .icns automatically on the runner.
+#
+# Signing and notarization do NOT happen here. Under `--prepackaged`,
+# `platformPackager.doPack()` returns early and `signApp` never runs, so
+# electron-builder cannot sign the bundle whatever this file says. Forge signs
+# the app instead (forge.config.ts + scripts/signing.cjs); the keys below are
+# kept because electron-builder still records them into the artifacts' metadata.
 # ---------------------------------------------------------------------------
 mac:
   category: public.app-category.developer-tools
@@ -86,17 +120,20 @@ mac:
   hardenedRuntime: true
   gatekeeperAssess: false
   target:
-    - target: dmg
-      arch: [x64, arm64]
-    - target: zip
-      arch: [x64, arm64]
+    - dmg
+    - zip
+  artifactName: ${productName}-${version}-${arch}.${ext}
 dmg:
   title: Limboo ${version}
-  # Signing + notarization run on the macOS runner when the maintainer supplies
-  # CSC_LINK / CSC_KEY_PASSWORD + APPLE_ID / APPLE_APP_SPECIFIC_PASSWORD secrets.
 
 # ---------------------------------------------------------------------------
-# Linux — AppImage (required for electron-updater self-update) + deb + rpm.
+# Linux — AppImage (required for electron-updater self-update) + deb + rpm +
+# pacman (Arch / Manjaro) + tar.gz (the distro-agnostic fallback).
+#
+# electron-updater 6.8 can install every one of these: AppImage replaces itself
+# in place, and deb/rpm/pacman shell out to the system package manager through
+# pkexec/sudo. Which implementation runs is decided by AutoUpdateManager, not by
+# electron-updater's own dispatch — see that file for why.
 # ---------------------------------------------------------------------------
 linux:
   category: Development
@@ -114,3 +151,33 @@ linux:
     - AppImage
     - deb
     - rpm
+    - pacman
+    - tar.gz
+  # Include the arch in every Linux filename so the arm64 artifacts published by
+  # the GitHub Actions supplement cannot collide with the x64 ones GitLab builds.
+  artifactName: ${name}-${version}-${arch}.${ext}
+
+# ---------------------------------------------------------------------------
+# Microsoft Store (MSIX/AppX) — the warning-free Windows channel.
+#
+# The Store re-signs submitted packages with a Microsoft-trusted certificate, so
+# a Store install shows no SmartScreen prompt without us owning a certificate at
+# all. In exchange, the Store owns updates: AutoUpdateManager detects
+# `process.windowsStore` and disables self-update in these builds.
+#
+# The identity values come from Partner Center (Product management → Product
+# identity) and are injected as `--config.appx.*` at build time by CI, so no
+# account-specific data lives in the repo. Without them the appx target is not
+# requested at all.
+#
+# This is a Desktop Bridge package: MSIX-packaged Win32 apps declare
+# `runFullTrust`, which is not an AppContainer sandbox — spawning cursor-agent,
+# git and node-pty PTYs works as it does outside the package.
+# ---------------------------------------------------------------------------
+appx:
+  applicationId: Limboo
+  displayName: Limboo
+  backgroundColor: "#000000"
+  showNameOnTiles: true
+  languages: [en-US]
+  artifactName: ${productName}-${version}-${arch}.${ext}

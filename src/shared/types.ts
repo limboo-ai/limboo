@@ -812,6 +812,22 @@ export interface UpdateStatus {
   error?: string;
   /** Epoch ms of the last check. */
   checkedAt?: number;
+  /**
+   * Why self-update is unavailable (`disabled` stage only) — a dev build, a
+   * Microsoft Store install, an unsigned macOS app, a Linux packaging format
+   * the app cannot replace, and so on. Written for the user, shown verbatim.
+   */
+  disabledReason?: string;
+}
+
+/**
+ * Outcome of a `Restart & install` request. The install path has several ways to
+ * refuse (nothing staged, updates disabled, the installer failed to launch), and
+ * every one of them used to be silent — the renderer surfaces this instead.
+ */
+export interface UpdateInstallResult {
+  ok: boolean;
+  error?: string;
 }
 
 /* ------------------------------------------------------------------ */

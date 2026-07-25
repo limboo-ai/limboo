@@ -40,9 +40,14 @@ export function UpdatesPanel() {
         hint={
           status.stage === 'error' && status.error
             ? status.error
-            : status.version && (status.stage === 'available' || status.stage === 'downloaded')
-              ? `Limboo ${status.version} ${status.stage === 'downloaded' ? 'downloaded' : 'available'}`
-              : `Current version ${status.currentVersion || '—'}`
+            : // Say WHY self-update is off (dev build, Microsoft Store install,
+              // unsigned macOS app, unsupported Linux packaging) rather than
+              // leave a greyed-out panel with no explanation.
+              status.stage === 'disabled' && status.disabledReason
+              ? status.disabledReason
+              : status.version && (status.stage === 'available' || status.stage === 'downloaded')
+                ? `Limboo ${status.version} ${status.stage === 'downloaded' ? 'downloaded' : 'available'}`
+                : `Current version ${status.currentVersion || '—'}`
         }
       >
         <div className="flex items-center gap-2">
