@@ -20,7 +20,7 @@ import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 const APP_UPDATE_YML =
-  'owner: BotCoder254\n' +
+  'owner: limboo-ai\n' +
   'provider: github\n' +
   'repo: limboo\n' +
   'updaterCacheDirName: limboo-updater\n';
