@@ -116,7 +116,8 @@ definitions:
         size: 2x   # Electron packaging needs the larger memory allowance
         caches: [npm]
         script:
-          - apt-get update && apt-get install -y build-essential python3 rpm fakeroot dpkg
+          # libarchive-tools provides bsdtar, required by fpm for the pacman target.
+          - apt-get update && apt-get install -y build-essential python3 rpm fakeroot dpkg libarchive-tools
           - npm ci --cache .npm --prefer-offline
           # Stamp the tag version into package.json before building the installers.
           - node ci/scripts/apply-tag-version.mjs

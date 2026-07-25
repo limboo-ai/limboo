@@ -80,23 +80,35 @@ package manager and will ask for your password.
 > `dlopen(): error loading libfuse.so.2`. It installs alongside FUSE 3 without
 > replacing it.
 
-### What your OS will say about these builds
+### These builds are unsigned — here's what you'll see
 
-Signing status differs per platform, and the differences are worth knowing before
-you assume a download is broken.
+The signing pipeline is implemented (Developer ID + notarization for macOS,
+Authenticode for Windows, plus a Microsoft Store channel), but it is opt-in from
+credentials that are not yet configured — so published builds are currently
+unsigned and your OS will warn you. This is expected, not a broken download:
 
-- **macOS — signed and notarized.** Builds are signed with a Developer ID
-  certificate and notarized by Apple, so Gatekeeper opens them normally. (If you
-  are on a build from **v1.5.1 or earlier**, those were unsigned; see the note
-  below.)
-- **Windows — SmartScreen still warns.** The installer carries a signature, but
-  from a self-signed certificate that is not in Windows' trust store, so
-  SmartScreen still shows "Windows protected your PC." Choose **More info → Run
-  anyway**. A chain-trusted certificate is the only thing that removes this
-  prompt, and the Microsoft Store listing is the warning-free route once it is
-  live.
-- **Linux — no code signing exists** for these formats. Integrity comes from the
-  checksum manifest and build provenance below.
+- **Windows** — SmartScreen says "Windows protected your PC." Choose
+  **More info → Run anyway**.
+- **macOS** — Gatekeeper refuses an app from an unidentified developer.
+  Right-click the app → **Open**, or clear the quarantine flag:
+
+  ```bash
+  xattr -dr com.apple.quarantine /Applications/Limboo.app
+  ```
+
+  Being unsigned also means **macOS cannot auto-update**: Squirrel.Mac refuses to
+  update an app whose signature it cannot verify. Limboo detects this and says so
+  in Settings → Updates rather than offering a button that fails. Windows and
+  Linux self-update normally.
+- **Linux** — no code-signing mechanism exists for these formats. Integrity comes
+  from the checksum manifest and build provenance below.
+
+What each route buys once enabled, so the trade-offs are clear up front: a macOS
+Developer ID removes the Gatekeeper prompt *and* switches macOS auto-update on; a
+self-signed Windows certificate does **not** remove the SmartScreen warning (it
+chains to no trusted root) and only provides a stable publisher identity; the
+Microsoft Store is the warning-free Windows route that needs no certificate at
+all. See [code signing](docs/ci/code-signing.md).
 
 Rather than ask you to take any of that on trust, every artifact ships with a
 checksum manifest and a build-provenance attestation recorded in a public
@@ -411,10 +423,10 @@ SQLite.
 
 Being honest about the rough edges, because you will meet them:
 
-- **Windows installers trip SmartScreen.** They are signed, but with a
-  self-signed certificate that Windows does not trust, so the warning stays until
-  a chain-trusted certificate (or the Microsoft Store listing) lands. macOS is
-  signed and notarized; Linux formats have no signing mechanism to use. See
+- **Published builds are unsigned.** The signing pipeline exists but its
+  credentials are not yet configured, so expect SmartScreen and Gatekeeper
+  warnings — and note that macOS cannot auto-update while unsigned, because
+  Squirrel.Mac refuses to update an app it cannot verify. See
   [Download](#download).
 - **Cursor's default mode is propose-only.** Until the interactive hooks bridge is
   verified for your exact CLI build, proposed edits surface as a reviewable plan you
