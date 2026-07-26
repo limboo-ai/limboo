@@ -62,9 +62,12 @@ every artifact (`app.getVersion()`, installers, `latest*.yml`) is `1.2.0` with n
    runners (Windows: all tiers; macOS: Premium/Ultimate) and are optional — a
    release without them still proceeds. See
    [installer and updates](../operations/installer-and-updates.md).
-2. `secure` flattens every platform's artifacts into `dist/`, consolidates a
-   top-level `SHA256SUMS`, and verifies signatures.
-3. `release-notes` generates `RELEASE_NOTES.md` from commits since the previous tag.
+2. `secure` flattens every platform's artifacts into `dist/`, writes
+   `release-manifest.json`, consolidates a top-level `SHA256SUMS`, verifies the
+   manifest against it, and verifies signatures. The ordering is load-bearing —
+   see [§4b](#4b-the-release-manifest).
+3. `release-notes` generates `RELEASE_NOTES.md` from the `CHANGELOG.md` section for
+   the tag, falling back to commit subjects only when there is no such section.
 4. `upload:packages` pushes each installer into the GitLab Generic Package Registry
    (so the GitLab Release can link permanent downloads).
 5. `release:gitlab` creates the GitLab Release with the notes + linked assets;
@@ -77,14 +80,65 @@ every artifact (`app.getVersion()`, installers, `latest*.yml`) is `1.2.0` with n
 
 ## 4. Release notes
 
-[`generate-release-notes.mjs`](../../ci/scripts/generate-release-notes.mjs) groups
-Conventional-Commit subjects into Features / Performance / Bug Fixes / Security /
-Refactoring / Documentation / Build & CI / Dependencies / Maintenance, surfaces
-`BREAKING CHANGE`, and credits contributors. To preview locally:
+`CHANGELOG.md` is the **single source of the release notes**. The same text becomes
+the GitHub/GitLab release body, the release document inside the app, and the
+changelog itself.
+
+[`generate-release-notes.mjs`](../../ci/scripts/generate-release-notes.mjs) reads
+the changelog section for the tag being released. Only when a tag has no section
+does it fall back to its original behaviour — grouping Conventional-Commit subjects
+into Features / Performance / Bug Fixes / Security / Refactoring / Documentation /
+Build & CI / Dependencies / Maintenance, surfacing `BREAKING CHANGE`, and crediting
+contributors. It reports which source it used **on stderr**, so a release that
+silently fell back is visible before it is published rather than after.
+
+To preview locally (the tag does not need to exist yet):
 
 ```bash
 node ci/scripts/generate-release-notes.mjs v1.2.0
 ```
+
+### 4b. The release manifest
+
+Every release also publishes `release-manifest.json` — the machine-readable
+description of the release, consumed by the app's release document and available
+to anyone else who wants structured release data instead of Markdown.
+
+It is produced in **three passes**, because the facts it carries become knowable at
+three different times:
+
+| Pass | When | Script | Adds |
+| ---- | ---- | ------ | ---- |
+| Embed (changelog) | Release prep, committed | [`scripts/gen-release-notes.mjs`](../../scripts/gen-release-notes.mjs) | Version, date, channel, summary, structured sections, compare links |
+| Embed (git) | Package job, ephemeral | [`ci/scripts/embed-release-manifest.mjs`](../../ci/scripts/embed-release-manifest.mjs) | Commit, build number, contributors, pull requests, merged branches, stats |
+| Publish | `secure` stage | [`ci/scripts/generate-release-manifest.mjs`](../../ci/scripts/generate-release-manifest.mjs) | Every asset with its size and SHA-256, signing posture |
+
+The second pass rewrites the committed `src/shared/releaseManifest.generated.ts` in
+place at build time, exactly as `apply-tag-version.mjs` rewrites `package.json`, and
+for the same reason: a laptop has no tag to read those facts from. Neither edit is
+committed.
+
+**Asset digests are never compiled into the app.** A build cannot contain the hash
+of an installer that does not exist until after the build finishes. The bundled
+manifest therefore carries empty `assets`/`signing`, and the release document says
+where the real digests are (`SHA256SUMS`) rather than printing something it cannot
+stand behind.
+
+Two gates protect it:
+
+- [`check-release-manifest.mjs`](../../ci/scripts/check-release-manifest.mjs) runs
+  after `make-checksums.mjs` and asserts the manifest parses, its version matches the
+  tag, every asset it names exists, every digest it states matches `SHA256SUMS`, and
+  the manifest itself is listed in `SHA256SUMS`. Two files that claim to describe the
+  same download must not disagree.
+- `npm run gen:notes -- --check` runs in the `validate` stage and fails when the
+  committed generated modules have drifted from `CHANGELOG.md`.
+
+`verify-artifacts.mjs` deliberately does **not** check for the manifest: it runs
+*before* the manifest is generated (a checksum — or a manifest — over a broken
+artifact is a correct description of something that cannot be installed), so
+requiring it there would fail every release. `check-release-manifest.mjs` is the
+gate that requires the file to exist.
 
 ## 5. Verifying a published release
 

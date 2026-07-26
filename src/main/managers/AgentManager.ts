@@ -1743,6 +1743,16 @@ export class AgentManager {
       // Engine's ranked retrieval + the one-shot repository delta for this
       // prompt. All are appended to the Claude Code preset via a single
       // systemPrompt.append (blank-line separated).
+      //
+      // THREE PRODUCERS, AND RELEASE NOTES ARE DELIBERATELY NOT A FOURTH. Each
+      // of these is selected FOR this turn: memory ranked against this prompt,
+      // search retrieved for it, the delta computed since this session last
+      // ran. Release notes are a fixed document that matters only when someone
+      // asks about it, so they are exposed as a TOOL the agent pulls
+      // (`list_releases` / `release_notes` on the `limboo_search` server) rather
+      // than a block pushed into every request. Claude Code shipped a fix for
+      // exactly the other choice, where its release-notes view leaked the whole
+      // changelog into every subsequent request.
       const memoryContext = this.memoryContextFor(sessionId, prompt);
       const searchContext = this.searchContextFor(sessionId, prompt);
       const resumeContext = this.resumeContextFor(sessionId);

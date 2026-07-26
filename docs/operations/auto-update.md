@@ -144,6 +144,58 @@ defers `app.quit()` to the next tick. Two things used to go wrong there:
   and a watchdog forces `app.exit(0)` if the process is still up four seconds
   after the handoff.
 
+## After the update: the release document
+
+An update that installs silently and says nothing is a maintenance task. Limboo
+turns it into a workspace document instead.
+
+**The rule.** On launch, once settings have hydrated, the renderer compares
+`app.getVersion()` against `settings.updates.lastSeenVersion`. When they differ and
+this build carries notes for the running version, the release document opens once as
+a workspace tab. Closing it acknowledges the version. Nothing else opens it
+automatically; the command palette (`What's New in this version`) is the way back.
+
+Three details that are easy to get wrong, and are handled:
+
+- **Dismissal is detected as an open→closed transition**, not wired to the close
+  button — so the X, middle-click, "close others", "close all" and the palette all
+  count as acknowledgement. A close button that only worked when clicked directly
+  would silently reopen the tab forever.
+- **Auto-open is latched per app run** (module scope, not component state):
+  `CenterWorkspace` remounts on layout changes, and the version is not marked seen
+  until the tab is closed, so without the latch closing it would immediately reopen
+  it.
+- **The tab is never persisted.** `useDocumentStore.persist()` skips
+  `release-notes` refs explicitly, and `PersistedDocumentKind` cannot represent them
+  — reopening it every launch is exactly what "dismiss until the next update" exists
+  to prevent.
+
+**Why the notes are compiled in rather than downloaded.** `UpdateInfo.releaseNotes`
+describes the version being *offered*, is HTML-stripped and capped on its way
+through the updater, and lives only in memory — so it is gone by the time the new
+version boots and can never answer "what did I just get?". The bundled data always
+matches the running build, needs no network, and works in development. The
+production CSP (`connect-src 'self'`) means there is no other option that would
+work anyway.
+
+**What it shows, and what it refuses to show.** The document renders the release
+manifest (see [release-process §4b](../ci/release-process.md#4b-the-release-manifest)):
+version, channel, tag, commit, build number, the structured changelog sections,
+contributors, pull requests and merged branches. Per-asset SHA-256 digests are NOT
+in the bundled manifest — a build cannot contain the hash of an installer produced
+from it — so the Verification section shows the `sha256sum -c SHA256SUMS` and
+`gh attestation verify` commands and links to the release page instead of printing a
+digest it cannot stand behind. Facts about the *running process* (platform, arch,
+Electron/Chromium versions, packaged state, macOS signing authority) come from
+`update:getBuildInfo` and are shown in their own group, because a claim about a
+download and a measurement of what is executing are different kinds of statement.
+
+**The document is display-only.** It is never added to an agent context provider.
+Claude Code shipped a fix for exactly that bug, where its release-notes view
+injected the whole changelog into every subsequent request. The agent can still
+answer "what changed in 1.7.0?" — by calling the read-only `list_releases` /
+`release_notes` tools on the `limboo_search` MCP server when it is actually asked.
+
 ## Related
 
 - [`docs/ci/code-signing.md`](../ci/code-signing.md) — signing secrets per platform

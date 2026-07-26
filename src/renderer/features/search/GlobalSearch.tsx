@@ -24,6 +24,7 @@ import {
   GitBranch,
   GitCommit,
   MessagesSquare,
+  Rocket,
   Search,
   Tag,
   TerminalSquare,
@@ -39,6 +40,8 @@ import { useSettingsStore } from '@/renderer/stores/useSettingsStore';
 import { useWorkspaceStore } from '@/renderer/stores/useWorkspaceStore';
 import { useSessionStore } from '@/renderer/stores/useSessionStore';
 import { useLayoutStore } from '@/renderer/stores/useLayoutStore';
+import { useDocumentStore } from '@/renderer/stores/useDocumentStore';
+import { releaseNotesRef } from '@/renderer/features/updates/useReleaseNotes';
 import { useTypewriter } from '@/renderer/hooks/useTypewriter';
 import { paletteCommands, type Command } from '@/renderer/lib/commands';
 
@@ -63,6 +66,7 @@ const KIND_ICON: Record<SearchKind, LucideIcon> = {
   command: CornerDownLeft,
   setting: Search,
   saved: Bookmark,
+  release: Rocket,
   terminal: TerminalSquare,
   diagnostic: Search,
 };
@@ -76,6 +80,7 @@ const KINDS: { id: SearchKind; label: string }[] = [
   { id: 'commit', label: 'Commits' },
   { id: 'branch', label: 'Branches' },
   { id: 'session', label: 'Sessions' },
+  { id: 'release', label: 'Releases' },
 ];
 
 /** Real-time as-you-type debounce, in ms, keyed by the settings preset. */
@@ -421,6 +426,15 @@ export function openHit(hit: SearchHit): void {
     case 'session':
       void useSessionStore.getState().selectSession(hit.ref);
       break;
+    case 'release': {
+      // `ref` is the version. Promoting is a no-op without a session to host
+      // the tab, which is the same condition the palette command checks.
+      const sessionId = useSessionStore.getState().selectedId;
+      if (sessionId) {
+        useDocumentStore.getState().promote(sessionId, releaseNotesRef(hit.ref));
+      }
+      break;
+    }
     default:
       // settings / diagnostics / other kinds have no dedicated destination — the
       // modal simply closes (handled by the caller).

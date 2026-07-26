@@ -944,6 +944,42 @@ export interface UpdateInstallResult {
   error?: string;
 }
 
+/**
+ * Locally observable facts about the running build, read from the process by
+ * main.
+ *
+ * These exist because the release manifest cannot answer them. A manifest
+ * describes the artifact that was PUBLISHED; this describes the process that is
+ * RUNNING, and the two can legitimately differ — an unpackaged development
+ * build, a self-built binary, a macOS copy whose signature was stripped by the
+ * way it was moved. The release document renders them in a separate group for
+ * exactly that reason: one is a claim about a download, the other is a
+ * measurement of what is executing.
+ */
+export interface BuildInfo {
+  /** `app.getVersion()` — the tag-stamped version in packaged builds. */
+  appVersion: string;
+  /** False in development, and in any build run from source. */
+  packaged: boolean;
+  platform: NodeJS.Platform;
+  arch: string;
+  electron: string;
+  chrome: string;
+  node: string;
+  /**
+   * macOS code-signing authority when it could be read, else null. Null is not
+   * "unsigned" — it is also every non-macOS platform and every case where
+   * `codesign` could not be run. The UI must not render it as a failure.
+   */
+  macSignature: string | null;
+}
+
+/** Outcome of writing a release document to a user-chosen path. */
+export interface ReleaseExportResult {
+  saved: boolean;
+  path?: string;
+}
+
 /* ------------------------------------------------------------------ */
 /* App info                                                            */
 /* ------------------------------------------------------------------ */
@@ -1547,7 +1583,13 @@ export type SearchKind =
   | 'diagnostic'
   | 'command'
   | 'setting'
-  | 'saved';
+  | 'saved'
+  /**
+   * Release notes. Federated from the manifest compiled into the build, not
+   * indexed: the corpus is a handful of documents that cannot change while the
+   * process runs, so an index would only add something able to go stale.
+   */
+  | 'release';
 
 /** A language-aware symbol classification (best-effort, from the regex extractor). */
 export type SymbolKind =
@@ -3154,6 +3196,9 @@ export type CommandId =
   | 'document.next'
   | 'document.prev'
   | 'updates.releaseNotes'
+  | 'updates.releaseHistory'
+  | 'updates.copyRelease'
+  | 'updates.exportRelease'
   | 'diff.toggleSplit'
   | 'drawer.toggleFiles'
   | 'drawer.toggleChanges'

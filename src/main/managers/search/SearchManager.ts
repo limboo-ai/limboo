@@ -48,6 +48,7 @@ import { readWorkspaceFile } from '../fs/reader';
 import { buildIgnoreMatcher } from '../fs/ignore';
 import { isInsideRoot } from '../workspace/validate';
 import { extractSymbols } from './symbols';
+import { searchReleases } from './releaseTools';
 import { extractRefs, resolveRelativeRef } from './refs';
 import { isDocPath, langForPath, toFtsQuery, toLikePattern, toPrefixPattern, toTrigramQuery } from './query';
 
@@ -67,6 +68,7 @@ const GROUP_ORDER: SearchKind[] = [
   'command',
   'setting',
   'saved',
+  'release',
   'terminal',
   'diagnostic',
 ];
@@ -83,6 +85,7 @@ const GROUP_LABEL: Record<SearchKind, string> = {
   command: 'Commands',
   setting: 'Settings',
   saved: 'Saved searches',
+  release: 'Release notes',
   terminal: 'Terminal',
   diagnostic: 'Diagnostics',
 };
@@ -641,6 +644,16 @@ export class SearchManager {
     }
     if (want('session') && opts.workspaceId && this.sessions) {
       add(this.querySessions(q, opts.workspaceId));
+    }
+    // Release notes are workspace-independent — they describe the app, not the
+    // repository — so unlike every other federated source this one runs whether
+    // or not a workspace is active.
+    if (want('release')) {
+      try {
+        add(searchReleases(q, perGroup));
+      } catch (err) {
+        logger.warn('search: release federation failed', err);
+      }
     }
 
     // Assemble groups in display order, capped per group.

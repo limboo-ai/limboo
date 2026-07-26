@@ -33,11 +33,29 @@ Forge; releases are driven from the `main` branch.
 
    It prints which source it used to stderr, so a release that silently fell back
    to commit subjects is visible rather than discovered on the release page.
-3. **Regenerate the bundled notes.** `npm run gen:notes` rewrites
-   `src/shared/releaseNotes.generated.ts` from the changelog so the build ships
-   its own release notes. Commit it with the changelog — it is generated but
-   committed, so the notes are reviewable in the diff and a build never depends
-   on the script having been run.
+3. **Regenerate the bundled release data.** `npm run gen:notes` rewrites BOTH
+   `src/shared/releaseNotes.generated.ts` (the changelog section as Markdown) and
+   `src/shared/releaseManifest.generated.ts` (the same releases parsed into the
+   structure the in-app release document renders, plus an index of every released
+   version). Commit both with the changelog — they are generated but committed, so
+   the notes are reviewable in the diff and a build never depends on the script
+   having been run.
+
+   CI enforces this with `npm run gen:notes -- --check`, which writes nothing and
+   fails when either file has drifted from `CHANGELOG.md`. It used to be a
+   checklist item with nothing behind it.
+
+   The git-derived half of the manifest (commit, build number, contributors, pull
+   requests, merged branches, stats) is **not** filled in here — a laptop has no
+   tag to read it from. `ci/scripts/embed-release-manifest.mjs` stamps it into the
+   same file at package time, the way `apply-tag-version.mjs` stamps the version.
+   To preview what it will produce:
+
+   ```bash
+   node ci/scripts/embed-release-manifest.mjs vX.Y.Z
+   git diff src/shared/releaseManifest.generated.ts   # inspect
+   git checkout src/shared/releaseManifest.generated.ts   # then discard
+   ```
 4. **Commit and tag.** Commit the changelog, then tag `vX.Y.Z` and
    `git push origin vX.Y.Z` (fans out to GitLab — the source of truth — and the
    GitHub mirror). The tag triggers the GitLab release pipeline, and separately
@@ -68,12 +86,17 @@ Forge; releases are driven from the `main` branch.
 - [ ] `main` is green (CI passed).
 - [ ] `package.json` version left ALONE (the tag supplies it).
 - [ ] `CHANGELOG.md` updated with date and compare links.
-- [ ] `npm run gen:notes` re-run and `src/shared/releaseNotes.generated.ts` committed.
+- [ ] `npm run gen:notes` re-run and BOTH generated modules committed
+      (`releaseNotes.generated.ts`, `releaseManifest.generated.ts`); confirm with
+      `npm run gen:notes -- --check`.
 - [ ] `node ci/scripts/generate-release-notes.mjs vX.Y.Z` reports it used the
       CHANGELOG section, not the git-history fallback.
 - [ ] Tag `vX.Y.Z` created on a commit that carries no other `v*` tag.
 - [ ] Artifacts built (`npm run dist`) and smoke-tested.
 - [ ] `ci/scripts/verify-artifacts.mjs` passed on the assembled publish set.
+- [ ] `release-manifest.json` published alongside the installers and
+      `ci/scripts/check-release-manifest.mjs` passed (its digests agree with
+      `SHA256SUMS`).
 - [ ] GitLab + GitHub releases published with notes and artifacts.
 - [ ] The extra architectures from `release-supplement.yml` landed on the release.
 - [ ] An in-app update from the PREVIOUS release actually installs and relaunches.

@@ -9,9 +9,16 @@
  *
  * Renders null while the conversation is the only document, so a workspace that
  * never opens a diff keeps exactly the layout it had before this existed.
+ *
+ * The active tab is marked by its SEAT and its TYPOGRAPHY — `bg-surface-2` plus a
+ * `font-semibold` label — never by an accent underline. A 2px accent bar under a
+ * tab that already sits on a raised plate says the same thing twice, and on pure
+ * black it reads as a second element rather than an emphasis of the first. This
+ * matches the activity rail and the settings navigation, which dropped their own
+ * filled/accented state plates for the same reason.
  */
 import { useState } from 'react';
-import { MessageSquare, Pin, Sparkles, X } from 'lucide-react';
+import { MessageSquare, Pin, X } from 'lucide-react';
 import { cn } from '@/renderer/lib/cn';
 import { getFileIcon } from '@/renderer/lib/fileIcons';
 import {
@@ -89,10 +96,13 @@ function DocumentTab({
   const isConversation = entry.ref.kind === 'conversation';
   const isReleaseNotes = entry.ref.kind === 'release-notes';
   // The file's own icon, not a generic diff glyph — a diff tab should read as
-  // the same kind of object as every other editor tab. Release notes are not a
-  // file, so they carry their own mark rather than a guess from the title.
+  // the same kind of object as every other editor tab.
   const spec = isConversation || isReleaseNotes ? null : getFileIcon(entry.title);
-  const Icon = isReleaseNotes ? Sparkles : (spec?.icon ?? MessageSquare);
+  // A release is not a file and not a conversation, and there is no glyph that
+  // says "release" without inventing one — so the tab is its label. Everything
+  // else in the strip names an object you could point at on disk; this one
+  // names a version, and the version IS the identity.
+  const Icon = isReleaseNotes ? null : (spec?.icon ?? MessageSquare);
   const path =
     entry.ref.kind === 'conversation' || entry.ref.kind === 'release-notes'
       ? undefined
@@ -143,10 +153,14 @@ function DocumentTab({
         dragging && 'opacity-50',
       )}
     >
-      <Icon size={12} className={cn('shrink-0', spec?.className ?? 'text-faint')} />
+      {Icon && <Icon size={12} className={cn('shrink-0', spec?.className ?? 'text-faint')} />}
       {/* A pinned tab keeps its label — these are file names, and an icon-only
-          pinned tab would be ambiguous across same-language files. */}
-      <span className={cn('truncate', entry.pinned && 'font-medium')}>{entry.title}</span>
+          pinned tab would be ambiguous across same-language files.
+          Two weight steps, two meanings: `font-medium` is pinned, `font-semibold`
+          is active. They stack, and neither is the other's signal. */}
+      <span className={cn('truncate', entry.pinned && 'font-medium', active && 'font-semibold')}>
+        {entry.title}
+      </span>
       {staged && (
         <span className="shrink-0 text-[10px] text-faint" title="Staged side">
           S
@@ -187,7 +201,6 @@ function DocumentTab({
           <X size={12} />
         </button>
       )}
-      {active && <span className="absolute inset-x-0 bottom-0 h-0.5 bg-accent" />}
     </div>
   );
 }

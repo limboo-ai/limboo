@@ -15,6 +15,7 @@ import type { McpSdkServerConfigWithInstance } from '@anthropic-ai/claude-agent-
 import type { SearchHit } from '@shared/types';
 import { intArg, strArg, type PlainTool } from '../cursor/bridge/plainTool';
 import { observePlainTools } from '../graph/instrument';
+import { releasePlainTools } from './releaseTools';
 import type { SearchManager } from './SearchManager';
 import type { WorkspaceManager } from '../WorkspaceManager';
 
@@ -51,6 +52,13 @@ function querySchema(queryHint: string, limitHint: string): Record<string, unkno
  */
 export function searchPlainTools(search: SearchManager, workspace: WorkspaceManager): PlainTool[] {
   const wsId = (): string | null => workspace.getActive()?.id ?? null;
+  // Release notes join this server rather than getting one of their own: they
+  // are retrieval, `limboo_search` is the retrieval server, and a third server
+  // would need its own permission rule, its own generated Cursor `mcp.json`
+  // entry and its own auto-allow branch — three places to forget.
+  //
+  // They are appended OUTSIDE `observePlainTools` because they wrap themselves
+  // (see `releaseTools.ts`); double-wrapping would report each call twice.
   // Wrapped once HERE so all three consumers — the two SDK in-process servers
   // (Claude) and the Cursor bridge dispatcher — are observed by one edit.
   return observePlainTools([
@@ -113,8 +121,27 @@ export function searchPlainTools(search: SearchManager, workspace: WorkspaceMana
         return hits.map(fmt).join('\n');
       },
     },
-  ], 'limboo_search');
+  ], 'limboo_search').concat(releasePlainTools());
 }
+
+/**
+ * Zod args per tool.
+ *
+ * The retrieval tools all take `{ query, limit }`; the release tools do not —
+ * `list_releases` takes nothing at all. Handing every tool the same schema
+ * would make `query` mandatory on a tool that has no query, so the SDK would
+ * reject the model's perfectly correct call. The plain-tool `inputSchema` is
+ * already per-tool; this is the zod mirror of it.
+ */
+const QUERY_ARGS = {
+  query: z.string().min(1),
+  limit: z.number().int().min(1).max(50).optional(),
+};
+
+const ZOD_ARGS: Record<string, z.ZodRawShape> = {
+  release_notes: { version: z.string().min(1) },
+  list_releases: {},
+};
 
 /**
  * Build the `limboo_search` MCP server exposing read-only retrieval tools to the
@@ -126,16 +153,14 @@ export function createSearchMcpServer(
   workspace: WorkspaceManager,
 ): McpSdkServerConfigWithInstance {
   const { createSdkMcpServer, tool } = sdk;
-  const zodArgs = {
-    query: z.string().min(1),
-    limit: z.number().int().min(1).max(50).optional(),
-  };
 
   return createSdkMcpServer({
     name: 'limboo_search',
     version: '1.0.0',
     tools: searchPlainTools(search, workspace).map((t) =>
-      tool(t.name, t.description, zodArgs, async (args) => text(t.run(args))),
+      tool(t.name, t.description, ZOD_ARGS[t.name] ?? QUERY_ARGS, async (args) =>
+        text(t.run(args)),
+      ),
     ),
   });
 }

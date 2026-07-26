@@ -358,6 +358,29 @@ export const DOCUMENT_LIMITS = {
 } as const;
 
 /**
+ * Bounds for the release manifest. The generator clamps to these, so a
+ * malformed or runaway `CHANGELOG.md` can never balloon the app bundle: the
+ * changelog grows without bound by design, and the payload compiled from it
+ * must not. The renderer re-reads these only to render "+N more" affordances.
+ */
+export const RELEASE_LIMITS = {
+  /** Full manifests compiled into the build. History indexes every version. */
+  keepManifests: 5,
+  /** `### …` blocks kept per release. */
+  maxSections: 16,
+  /** Bullets kept per section. */
+  maxItemsPerSection: 200,
+  maxContributors: 200,
+  maxPullRequests: 300,
+  maxMergedBranches: 200,
+  maxAssets: 120,
+  /** Cap for any single short field (lead-in, title, summary, name). */
+  textMax: 4096,
+  /** Cap for a section's raw Markdown, and for a whole release's Markdown. */
+  markdownMax: 262144,
+} as const;
+
+/**
  * Bounds + caps for the Git worktree + Scripts & Services subsystem (main +
  * renderer both clamp). Slugs stay short so the default worktree root under
  * userData leaves Windows MAX_PATH headroom for deep node_modules trees.

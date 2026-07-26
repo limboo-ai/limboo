@@ -39,6 +39,7 @@ import { registerSearchHandlers } from './searchHandlers';
 import { registerResumeHandlers } from './resumeHandlers';
 import { registerHookHandlers } from './hookHandlers';
 import { registerUpdateHandlers } from './updateHandlers';
+import { registerReleaseHandlers } from './releaseHandlers';
 import { registerVoiceHandlers } from './voiceHandlers';
 import { registerCursorHandlers } from './cursorHandlers';
 import { registerMcpHandlers } from './mcpHandlers';
@@ -110,6 +111,9 @@ export function registerAllIpc(deps: IpcDeps): void {
   registerResumeHandlers(deps.resume, deps.session);
   registerHookHandlers(deps.hooks);
   registerUpdateHandlers(deps.updates);
+  // Takes no dependency: the release manifest is compiled into the bundle, so
+  // the only thing main owns here is the save dialog.
+  registerReleaseHandlers();
   registerVoiceHandlers(deps.voice, deps.voiceModels, deps.settings);
   registerCursorHandlers(deps.cursorAuth, () => deps.agent.hasActiveRuns());
   registerMcpHandlers(deps.mcp);

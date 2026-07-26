@@ -146,7 +146,25 @@ export function CenterWorkspace() {
               // Freshly updated with no session selected: the notes would
               // otherwise be unreachable, because the document strip that hosts
               // them is session-scoped.
-              <ReleaseNotesDocument version={releaseNotes.version} />
+              //
+              // This path needs its OWN dismissal. Acknowledgement is normally
+              // an open→closed transition of the tab, and there is no tab here —
+              // so without this button the version is never marked seen and the
+              // notes reappear on every launch until a session exists.
+              <div className="flex min-h-0 flex-1 flex-col">
+                <div className="min-h-0 flex-1">
+                  <ReleaseNotesDocument version={releaseNotes.version} />
+                </div>
+                <div className="flex shrink-0 justify-end border-t border-line px-3 py-2">
+                  <button
+                    type="button"
+                    onClick={releaseNotes.markSeen}
+                    className="rounded border border-line px-3 py-1 text-[12px] text-muted transition-colors hover:bg-surface-2 hover:text-fg focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+                  >
+                    Got it
+                  </button>
+                </div>
+              </div>
             ) : (
               <div className="m-auto flex flex-col items-center gap-4 text-center">
                 <Logo size={40} />

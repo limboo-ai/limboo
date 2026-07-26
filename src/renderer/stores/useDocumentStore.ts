@@ -152,7 +152,10 @@ function titleFor(ref: DocumentRef): string {
   if (ref.kind === 'conversation') return 'Conversation';
   // Must precede the `basename` call: this ref has no path, and reading one
   // would hand `basename` an undefined and throw while opening the tab.
-  if (ref.kind === 'release-notes') return "What's New";
+  // Titled by version, not "What's New": the document is the whole release —
+  // notes, contributors, assets, integrity — and its tab carries no icon, so the
+  // label is the only identity it has. Two open releases must not read alike.
+  if (ref.kind === 'release-notes') return `Release ${ref.version}`;
   return basename(ref.path);
 }
 

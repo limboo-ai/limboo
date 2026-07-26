@@ -435,10 +435,15 @@ function readPackageType(): string | null {
 }
 
 /**
- * True when the running macOS app carries a real Developer ID signature (not
- * ad-hoc, not unsigned). One cheap `codesign` call at construction time.
+ * The signing authority `codesign` reports for the running macOS app, or null
+ * on any other platform and whenever the probe cannot be run.
+ *
+ * Null is deliberately NOT the same as "unsigned": it also covers every
+ * non-darwin platform and a `codesign` that failed to execute. Callers must not
+ * render it as a failure — see `BuildInfo.macSignature`.
  */
-function isMacSignedForUpdates(): boolean {
+export function macSigningAuthority(): string | null {
+  if (process.platform !== 'darwin') return null;
   try {
     const result = spawnSync('codesign', ['-dv', '--verbose=2', app.getPath('exe')], {
       encoding: 'utf8',
@@ -446,11 +451,19 @@ function isMacSignedForUpdates(): boolean {
     });
     // codesign writes its report to stderr.
     const report = `${result.stderr ?? ''}${result.stdout ?? ''}`;
-    return /Authority=Developer ID Application/.test(report);
+    return /^Authority=(.+)$/m.exec(report)?.[1]?.trim() ?? null;
   } catch (err) {
     logger.warn('[updater] codesign probe failed:', err);
-    return false;
+    return null;
   }
+}
+
+/**
+ * True when the running macOS app carries a real Developer ID signature (not
+ * ad-hoc, not unsigned). One cheap `codesign` call at construction time.
+ */
+function isMacSignedForUpdates(): boolean {
+  return /^Developer ID Application/.test(macSigningAuthority() ?? '');
 }
 
 /** electron-updater release notes can be a string or a list of per-version notes. */

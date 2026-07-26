@@ -43,6 +43,11 @@ jobs:
         run: node ci/scripts/check-electron-security.mjs
       - name: Manifest + docs integrity
         run: node ci/scripts/check-manifest.mjs
+      - name: Bundled release notes in sync with CHANGELOG.md
+        # The generated modules are committed so they are reviewable in a diff,
+        # which means they can also drift. Nothing enforced the regeneration
+        # step until this gate.
+        run: npm run gen:notes -- --check
       - name: Dependency audit (high+)
         run: npm audit --audit-level=high || echo "::warning::npm audit reported advisories"
 

@@ -190,15 +190,24 @@ jobs:
         # Bitbucket release jobs use.
         run: gh release upload "$TAG" upload/* --repo "$GITHUB_REPOSITORY" --clobber
 
-      - name: Refresh the release-wide checksum manifest
-        # SHA256SUMS must cover the artifacts that are ACTUALLY on the release,
-        # including the ones just added — so rebuild it from the full asset list
-        # rather than from this job's subset.
+      - name: Refresh the release-wide manifest and checksums
+        # BOTH files must describe the artifacts that are ACTUALLY on the release,
+        # including the ones just added — so they are rebuilt from the full asset
+        # list rather than from this job's subset.
+        #
+        # This is the same class of bug as the update feeds above: the primary
+        # pipeline generated `release-manifest.json` from its own `dist/`, which
+        # never contained the architectures its runners cannot build. Leaving it
+        # alone would publish a manifest that under-reports the release — and the
+        # app renders that manifest as the canonical asset list.
         run: |
           set -euo pipefail
           mkdir -p published
           gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --dir published \
             --pattern '*' --clobber
-          rm -f published/SHA256SUMS
+          rm -f published/SHA256SUMS published/release-manifest.json
+          node ci/scripts/generate-release-manifest.mjs published "$TAG"
           node ci/scripts/make-checksums.mjs published SHA256SUMS
-          gh release upload "$TAG" SHA256SUMS --repo "$GITHUB_REPOSITORY" --clobber
+          node ci/scripts/check-release-manifest.mjs published "$TAG"
+          gh release upload "$TAG" SHA256SUMS published/release-manifest.json \
+            --repo "$GITHUB_REPOSITORY" --clobber

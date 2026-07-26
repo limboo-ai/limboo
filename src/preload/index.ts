@@ -88,6 +88,8 @@ import type {
   TerminalCreateOptions,
   TerminalExit,
   TerminalSession,
+  BuildInfo,
+  ReleaseExportResult,
   UpdateInstallResult,
   UpdateStatus,
   VoiceModelState,
@@ -715,6 +717,22 @@ const updatesApi = {
   install: (): Promise<UpdateInstallResult> => ipcRenderer.invoke(IpcChannels.updateInstall),
   onStatus: (cb: (status: UpdateStatus) => void): (() => void) =>
     subscribe<UpdateStatus>(IpcEvents.updateStatus, cb),
+  /**
+   * Locally observable facts about the running build. Separate from
+   * `getState()` because it describes the PROCESS, not the update feed, and the
+   * release document is careful to present those as different kinds of claim.
+   */
+  getBuildInfo: (): Promise<BuildInfo> => ipcRenderer.invoke(IpcChannels.updateGetBuildInfo),
+};
+
+const releaseApi = {
+  /**
+   * Write a release document to a file the USER picks. The renderer supplies
+   * only the version (for the default filename) and the Markdown; main owns the
+   * save dialog and the path — the `graph:save` contract.
+   */
+  export: (version: string, markdown: string): Promise<ReleaseExportResult> =>
+    ipcRenderer.invoke(IpcChannels.releaseExport, version, markdown),
 };
 
 const voiceApi = {
@@ -808,6 +826,7 @@ const limbooApi = {
   resume: resumeApi,
   hooks: hooksApi,
   updates: updatesApi,
+  release: releaseApi,
   voice: voiceApi,
   attachment: attachmentApi,
   mcp: mcpApi,

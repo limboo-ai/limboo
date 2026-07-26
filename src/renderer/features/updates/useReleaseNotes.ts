@@ -19,7 +19,7 @@
  */
 import { useEffect, useRef } from 'react';
 import { releaseNotesFor } from '@shared/releaseNotes.generated';
-import { useDocumentStore, type DocumentRef } from '@/renderer/stores/useDocumentStore';
+import { documentId, useDocumentStore, type DocumentRef } from '@/renderer/stores/useDocumentStore';
 import { useSettingsStore } from '@/renderer/stores/useSettingsStore';
 import { useUpdateStore } from '@/renderer/stores/useUpdateStore';
 
@@ -78,8 +78,12 @@ export function useReleaseNotes(): ReleaseNotesState {
 export function useReleaseNotesTab(sessionId: string | null): void {
   const { version, unseen, markSeen } = useReleaseNotes();
   const promote = useDocumentStore((s) => s.promote);
+  // Derived through `documentId` rather than re-spelling the id here: that
+  // function exists precisely so the format cannot drift, and a hand-built id
+  // that stopped matching would leave the tab looking permanently closed —
+  // which silently reopens it on every launch.
   const isOpen = useDocumentStore((s) =>
-    sessionId ? !!s.bySession[sessionId]?.docs[`release-notes:${version}`] : false,
+    sessionId ? !!s.bySession[sessionId]?.docs[documentId(releaseNotesRef(version))] : false,
   );
   const wasOpen = useRef(false);
 

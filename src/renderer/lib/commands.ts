@@ -17,7 +17,37 @@ import { useTerminalStore } from '@/renderer/stores/useTerminalStore';
 import { useVoiceStore } from '@/renderer/stores/useVoiceStore';
 import { useDocumentStore } from '@/renderer/stores/useDocumentStore';
 import { useUpdateStore } from '@/renderer/stores/useUpdateStore';
+import { useReleaseStore } from '@/renderer/stores/useReleaseStore';
 import { releaseNotesRef } from '@/renderer/features/updates/useReleaseNotes';
+import { releaseToMarkdown } from '@/renderer/features/updates/release/toMarkdown';
+import { releaseManifestFor } from '@shared/releaseManifest.generated';
+import { releaseNotesFor } from '@shared/releaseNotes.generated';
+
+/**
+ * Promote the release document for a version. Returns false when there is
+ * nothing to open — no session to host the tab, or no version yet (the update
+ * store re-stamps `currentVersion` on every status emit, but it is `''` until
+ * the first one arrives).
+ */
+function openRelease(version: string | undefined): boolean {
+  const sessionId = useSessionStore.getState().selectedId;
+  if (!sessionId || !version) return false;
+  useDocumentStore.getState().promote(sessionId, releaseNotesRef(version));
+  return true;
+}
+
+/**
+ * The running version's release as Markdown, preferring the structured manifest
+ * (which carries contributors and assets) and falling back to the raw changelog
+ * section for a release that predates it.
+ */
+function currentReleaseMarkdown(): string | null {
+  const version = useUpdateStore.getState().status.currentVersion;
+  if (!version) return null;
+  const manifest = releaseManifestFor(version);
+  if (manifest) return releaseToMarkdown(manifest);
+  return releaseNotesFor(version)?.markdown ?? null;
+}
 
 /** Set the composer's default permission mode (Plan / Ask before edits / Accept edits). */
 function setDefaultMode(defaultMode: SessionPermissionMode): void {
@@ -160,11 +190,46 @@ export const COMMANDS: Command[] = [
     title: "What's New in this version",
     section: 'Workspace',
     inPalette: true,
+    run: () => openRelease(useUpdateStore.getState().status.currentVersion),
+  },
+  {
+    // The same document, opened straight onto its History section. Separate
+    // command rather than an argument because the palette has no argument
+    // surface, and "browse past releases" is a different intent from "what did I
+    // just get" even though both land on the same tab.
+    id: 'updates.releaseHistory',
+    title: 'Browse release history',
+    section: 'Workspace',
+    inPalette: true,
     run: () => {
-      const sessionId = useSessionStore.getState().selectedId;
       const version = useUpdateStore.getState().status.currentVersion;
-      if (!sessionId || !version) return;
-      useDocumentStore.getState().promote(sessionId, releaseNotesRef(version));
+      if (!openRelease(version)) return;
+      const release = useReleaseStore.getState();
+      release.setHistoryOpen(version.replace(/^v/, ''), true);
+    },
+  },
+  {
+    id: 'updates.copyRelease',
+    title: 'Copy release notes as Markdown',
+    section: 'Workspace',
+    inPalette: true,
+    run: () => {
+      const markdown = currentReleaseMarkdown();
+      if (markdown) void window.limboo?.system?.clipboardWrite(markdown);
+    },
+  },
+  {
+    id: 'updates.exportRelease',
+    title: 'Export release notes…',
+    section: 'Workspace',
+    inPalette: true,
+    run: () => {
+      const version = useUpdateStore.getState().status.currentVersion?.replace(/^v/, '') ?? '';
+      const markdown = currentReleaseMarkdown();
+      if (!version || !markdown) return;
+      // Main owns the save dialog and the path — the renderer supplies content
+      // only (the `graph:save` contract).
+      void window.limboo?.release?.export(version, markdown);
     },
   },
   {

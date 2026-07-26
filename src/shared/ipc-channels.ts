@@ -167,6 +167,19 @@ export const IpcChannels = {
   updateCheck: 'update:check',
   updateDownload: 'update:download',
   updateInstall: 'update:install',
+  /**
+   * Locally observable facts about the running build (platform, arch, Electron
+   * versions, packaged state, macOS signature authority). The release document
+   * shows these next to — and clearly apart from — the manifest's claims about
+   * the artifact, because only the main process can see them and only it should.
+   */
+  updateGetBuildInfo: 'update:getBuildInfo',
+
+  /**
+   * Write a release document to disk. Main owns the save dialog and the write;
+   * the renderer never supplies a path (the `graph:save` contract).
+   */
+  releaseExport: 'release:export',
 
   // Local Memory System — provider-independent project knowledge, all local.
   memoryList: 'memory:list',

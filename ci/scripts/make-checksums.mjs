@@ -10,10 +10,9 @@
  * Usage:
  *   node ci/scripts/make-checksums.mjs [artifactDir=dist] [outFile=<dir>/SHA256SUMS]
  */
-import { createHash } from 'node:crypto';
-import { createReadStream } from 'node:fs';
 import { readdir, stat, writeFile } from 'node:fs/promises';
 import { join, relative, sep } from 'node:path';
+import { sha256 } from './lib/hash.mjs';
 
 const artifactDir = process.argv[2] ?? 'dist';
 const outFile = process.argv[3] ?? join(artifactDir, 'SHA256SUMS');
@@ -24,16 +23,6 @@ async function* walk(dir) {
     if (entry.isDirectory()) yield* walk(full);
     else if (entry.isFile()) yield full;
   }
-}
-
-function sha256(path) {
-  return new Promise((resolve, reject) => {
-    const hash = createHash('sha256');
-    createReadStream(path)
-      .on('error', reject)
-      .on('data', (chunk) => hash.update(chunk))
-      .on('end', () => resolve(hash.digest('hex')));
-  });
 }
 
 async function main() {

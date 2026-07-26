@@ -115,9 +115,21 @@ jobs:
       - name: Verify artifact structure
         run: node ci/scripts/verify-artifacts.mjs dist --publish-set
 
+      - name: Generate release manifest
+        # The machine-readable description of this release: the same structured
+        # notes the app carries, plus every artifact's size and SHA-256. Written
+        # BEFORE the checksums so SHA256SUMS covers it.
+        run: node ci/scripts/generate-release-manifest.mjs dist "${{ inputs.tag }}"
+
       - name: Consolidate checksums
         # Each OS produced its own SHA256SUMS; combine into one top-level manifest.
         run: node ci/scripts/make-checksums.mjs dist SHA256SUMS
+
+      - name: Verify release manifest
+        # Proves the manifest and SHA256SUMS describe the same download. Two
+        # files that disagree would give a false result to whichever one a user
+        # happened to verify against.
+        run: node ci/scripts/check-release-manifest.mjs dist "${{ inputs.tag }}"
 
       - name: Generate release notes
         run: node ci/scripts/generate-release-notes.mjs "${{ inputs.tag }}" RELEASE_NOTES.md

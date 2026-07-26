@@ -8,7 +8,11 @@
  *
  * Visible only when at least one worktree-backed session exists, so plain
  * workspaces keep today's exact layout. Styling mirrors the h-9 header rows:
- * border-line, text-[12px], bg-surface-2 active state, accent underline.
+ * border-line, text-[12px], and — like `DocumentTabs` — an active state carried
+ * by the `bg-surface-2` seat plus a `font-semibold` label rather than an accent
+ * underline. The `GitBranch` glyph keeps its own meaning here (accent = this
+ * session has a worktree), which is exactly why selection must not also be
+ * spelled in accent.
  */
 import { AlertTriangle, GitBranch, X } from 'lucide-react';
 import type { Session } from '@shared/types';
@@ -89,6 +93,7 @@ function WorktreeTab({
       }
       className={cn(
         'group relative flex max-w-56 shrink-0 cursor-pointer items-center gap-1.5 border-r border-line px-3 text-[12px] transition-colors',
+        'focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-accent',
         active ? 'bg-surface-2 text-fg' : 'text-muted hover:bg-surface-2 hover:text-fg',
       )}
     >
@@ -102,7 +107,7 @@ function WorktreeTab({
           className={cn('shrink-0', session.worktreePath ? 'text-accent' : 'text-faint')}
         />
       )}
-      <span className="truncate font-medium">{session.title}</span>
+      <span className={cn('truncate', active ? 'font-semibold' : 'font-medium')}>{session.title}</span>
       <span className="shrink-0 truncate text-[10px] text-faint">{label}</span>
       {session.unread > 0 && (
         <Badge tone="accent" className="shrink-0">
@@ -122,8 +127,6 @@ function WorktreeTab({
           <X size={12} />
         </button>
       )}
-      {/* Accent underline marks the active tab (mirrors the row accent bar). */}
-      {active && <span className="absolute inset-x-0 bottom-0 h-0.5 bg-accent" />}
     </div>
   );
 }

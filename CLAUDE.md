@@ -330,6 +330,8 @@ npm start              # run the app in dev (Electron + Vite HMR). Renderer on :
 npm run lint           # eslint over .ts/.tsx
 npm run package        # package the app (no installers)
 npm run dist           # package + electron-builder → branded installers in dist/
+npm run gen:notes      # regenerate the bundled release notes + manifest from CHANGELOG.md
+npm run gen:notes -- --check   # CI gate: fail if either generated module has drifted
 npm run gen:icons      # regenerate runtime PNG icons from assets/icon.svg
 npm run gen:installer  # regenerate Windows installer art (.ico + NSIS BMPs)
 npm run gen:appx       # regenerate Microsoft Store (MSIX) tile art
@@ -368,6 +370,15 @@ one build under several arch names); the macOS update zip must be rooted at
 every Windows auto-update fails. Signing lives in Forge, not electron-builder —
 `--prepackaged` skips the pack step where electron-builder would sign
 (`scripts/signing.cjs`, `docs/ci/code-signing.md`).
+
+Every release also publishes **`release-manifest.json`** — the structured
+description of the release the in-app release document renders. Its ordering in
+the `secure` stage is load-bearing: `verify-artifacts` → `generate-release-manifest`
+→ `make-checksums` → `check-release-manifest`. Generated after the structural gate
+(a manifest describing a broken build is a correct description of something that
+cannot be installed), before the checksums (so `SHA256SUMS` covers it), and gated
+after (so the two are proved to agree). `verify-artifacts.mjs` deliberately does
+NOT require it — it runs first. See `docs/ci/release-process.md` §4b.
 
 **Versioning is TAG-DRIVEN — never hand-bump `package.json` before tagging.** Every CI
 job that reads the version first runs `ci/scripts/apply-tag-version.mjs`, which stamps the
@@ -772,6 +783,49 @@ tab carrying the **file's own icon** (`renderer/lib/fileIcons.tsx`).
   the `diff --git`/`index`/`---`/rename/mode preamble, so a reconstructed patch
   would not apply. `git:patchText` / `git:patchSave` re-read it (main owns the
   save dialog; the renderer never supplies a path — the `graph:save` contract).
+
+### The Release document
+
+The third document kind (beside the conversation and diff reviews) is a
+**release** — `{ kind: 'release-notes', version }`, rendered by
+`features/updates/ReleaseNotesDocument.tsx` over `features/updates/release/`.
+It opens once when the running version differs from
+`settings.updates.lastSeenVersion`, and closing the tab is the acknowledgement
+(detected as an open→closed transition, so every route to closing it counts).
+Full lifecycle: `docs/operations/auto-update.md`.
+
+- **`CHANGELOG.md` is the single source.** `npm run gen:notes`
+  (`scripts/gen-release-notes.mjs`) writes two COMMITTED modules from it —
+  `releaseNotes.generated.ts` (Markdown, the fallback and the export source) and
+  `releaseManifest.generated.ts` (structured, typed by hand-written
+  `src/shared/release.ts`). CI's `embed-release-manifest.mjs` stamps the
+  git-derived half in at package time, the way `apply-tag-version.mjs` stamps the
+  version; `generate-release-manifest.mjs` publishes the superset as
+  `dist/release-manifest.json`, before `make-checksums.mjs` so `SHA256SUMS`
+  covers it. `check-release-manifest.mjs` then proves the two agree, and
+  `gen:notes --check` gates drift.
+- **Compiled in, never fetched.** Production CSP is `connect-src 'self';
+  img-src 'self' data:` — there is no network path, and contributor avatars are
+  therefore drawn locally as monograms rather than loaded. Manifest URLs are
+  screened by `isForgeUrl` before becoming links, then opened via
+  `system.openExternal`.
+- **A build cannot contain its own installer hash**, so `assets`/`signing` are
+  empty in the bundled manifest and present only in the published one. The
+  document shows the verification commands instead of a digest it cannot stand
+  behind, and keeps release-side claims visually apart from `update:getBuildInfo`
+  measurements of the running process. **Do not "fill in" those fields.**
+- **Display-only, but agent-reachable.** The document never feeds a context
+  provider (`AgentManager.buildOptions` still has exactly three producers). The
+  agent answers version questions through `list_releases` / `release_notes`,
+  read-only plain tools on the existing `limboo_search` server — so both
+  providers get them, and nothing is pushed into a system prompt. Release notes
+  also federate into `SearchManager.globalSearch` as the `release` kind (no
+  index: the corpus cannot change while the process runs).
+- **Tab convention.** A release tab renders its LABEL ONLY — no icon. Active
+  state across `DocumentTabs` and `WorktreeTabs` is the `bg-surface-2` seat plus
+  a `font-semibold` label; the accent underline is gone from both. `font-medium`
+  still means *pinned* in `DocumentTabs`, and `text-accent` on `WorktreeTabs`'
+  `GitBranch` still means *has a worktree* — neither may be reused for selection.
 
 **Ref naming** lives in `src/shared/refName.ts` — one rule table, enforced in main
 (`managers/git/refs.ts`: `sanitizeRef` for any ref, `sanitizeBranchName` for ones

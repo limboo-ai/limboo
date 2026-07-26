@@ -65,6 +65,9 @@ definitions:
           - node ci/scripts/check-licenses.mjs
           - node ci/scripts/check-electron-security.mjs
           - node ci/scripts/check-manifest.mjs
+          # The in-app release notes are generated from CHANGELOG.md and
+          # committed; nothing enforced that they stayed in sync until this gate.
+          - npm run gen:notes -- --check
 
     - step: &audit
         name: "validate: audit (non-blocking)"
@@ -89,6 +92,9 @@ definitions:
           - apt-get update && apt-get install -y build-essential python3
           - npm ci --cache .npm --prefer-offline
           - node ci/scripts/apply-tag-version.mjs
+          # Stamp the git-derived release facts into the committed manifest
+          # module BEFORE the bundle is built. No-op off a tag.
+          - node ci/scripts/embed-release-manifest.mjs
           - npx vite build --config vite.renderer.config.mts
           - npm run package
 
@@ -121,6 +127,7 @@ definitions:
           - npm ci --cache .npm --prefer-offline
           # Stamp the tag version into package.json before building the installers.
           - node ci/scripts/apply-tag-version.mjs
+          - node ci/scripts/embed-release-manifest.mjs
           - npm run dist -- --publish never
           # Pure-npm SBOM from the lockfile — the dependency set is identical on all
           # OSes, so this one SBOM covers the release (same as GitLab's linux job).
@@ -150,7 +157,13 @@ definitions:
             mkdir -p dist
             cp -r artifacts/*/* dist/ 2>/dev/null || true
             ls -la dist
+          # The published release manifest — the same structured notes the app
+          # carries, plus every artifact's size and SHA-256. Written BEFORE the
+          # checksums so SHA256SUMS covers it, and gated after so the two are
+          # proved to agree (mirror of GitLab's secure job).
+          - node ci/scripts/generate-release-manifest.mjs dist "$BITBUCKET_TAG"
           - node ci/scripts/make-checksums.mjs dist dist/SHA256SUMS
+          - node ci/scripts/check-release-manifest.mjs dist "$BITBUCKET_TAG"
           - node ci/scripts/verify-signing.mjs dist
         artifacts:
           - dist/**
@@ -259,6 +272,7 @@ definitions:
           - node --version
           - npm ci
           - node ci/scripts/apply-tag-version.mjs
+          - node ci/scripts/embed-release-manifest.mjs
           - npm run dist -- --publish never
           - node ci/scripts/verify-signing.mjs dist
           - New-Item -ItemType Directory -Force artifacts/windows | Out-Null
@@ -294,6 +308,7 @@ definitions:
             node --version
             npm ci
             node ci/scripts/apply-tag-version.mjs
+            node ci/scripts/embed-release-manifest.mjs
             npm run dist -- --publish never
             node ci/scripts/verify-signing.mjs dist
             mkdir -p artifacts/macos

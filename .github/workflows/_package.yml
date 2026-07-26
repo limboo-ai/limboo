@@ -72,6 +72,13 @@ jobs:
         # the tag on the release.yml path; a non-tag ref (cd.yml dry-run) is a no-op.
         run: node ci/scripts/apply-tag-version.mjs "${{ inputs.ref }}"
 
+      - name: Embed release manifest facts
+        # Stamps the git-derived half of src/shared/releaseManifest.generated.ts
+        # (commit, build number, contributors, PRs, branches, stats) BEFORE the
+        # bundle is built, so the app carries them. Ephemeral like the version
+        # stamp above, and a no-op off a tag.
+        run: node ci/scripts/embed-release-manifest.mjs "${{ inputs.ref }}"
+
       - name: Build branded installers (Forge package + electron-builder)
         # Forge packages the app (Vite build + security fuses + asar layout); then
         # electron-builder wraps that prepackaged dir into the branded NSIS / dmg /
