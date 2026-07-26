@@ -887,6 +887,9 @@ export const DEFAULT_SETTINGS: AppSettings = {
   updates: {
     autoCheck: true,
     autoDownload: true,
+    // Empty on a fresh install: the very first launch shows the notes for the
+    // version it shipped with, which is the correct introduction to the app.
+    lastSeenVersion: '',
   },
   voice: {
     enabled: true,

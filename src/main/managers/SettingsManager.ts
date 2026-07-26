@@ -438,6 +438,12 @@ export class SettingsManager {
 
     merged.updates.autoCheck = !!merged.updates.autoCheck;
     merged.updates.autoDownload = !!merged.updates.autoDownload;
+    // Persisted user data, so never trusted verbatim: it is compared against
+    // `app.getVersion()` and rendered, and a hand-edited settings.json must not
+    // be able to put an unbounded string into either path.
+    merged.updates.lastSeenVersion = String(merged.updates.lastSeenVersion ?? '')
+      .trim()
+      .slice(0, 64);
 
     // Voice — clamp the numeric tuning knobs, whitelist the enums, and coerce
     // the boolean toggles (renderer-supplied strings must never reach the

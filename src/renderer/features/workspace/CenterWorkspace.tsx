@@ -33,6 +33,8 @@ import { useResumeStore } from '@/renderer/stores/useResumeStore';
 import { useDocumentStore } from '@/renderer/stores/useDocumentStore';
 import { ResumeBanner } from '@/renderer/features/resume/ResumeBanner';
 import { DiffWorkspace } from '@/renderer/features/git/diff/DiffWorkspace';
+import { ReleaseNotesDocument } from '@/renderer/features/updates/ReleaseNotesDocument';
+import { useReleaseNotes, useReleaseNotesTab } from '@/renderer/features/updates/useReleaseNotes';
 import { DocumentTabs } from './DocumentTabs';
 
 export function CenterWorkspace() {
@@ -70,6 +72,13 @@ export function CenterWorkspace() {
   // A promoted diff takes over the column: the conversation chrome below
   // (session header, services, banners, composer) belongs to the conversation
   // document, and re-rendering it above a diff would waste three rows.
+  const releaseNotes = useReleaseNotes();
+
+  // Opens the What's New tab once on a new version, and treats closing it as
+  // the dismissal. Mounted before any early return so its effects run on every
+  // render path, including the document-takeover one below.
+  useReleaseNotesTab(session?.id ?? null);
+
   if (session && activeDoc && activeDoc.ref.kind !== 'conversation') {
     return (
       <main className="flex h-full min-h-0 flex-col bg-surface">
@@ -84,6 +93,8 @@ export function CenterWorkspace() {
             staged={activeDoc.ref.staged}
             baseRef={activeDoc.ref.baseRef}
           />
+        ) : activeDoc.ref.kind === 'release-notes' ? (
+          <ReleaseNotesDocument key={activeDoc.id} version={activeDoc.ref.version} />
         ) : (
           <div className="flex min-h-0 flex-1 items-center justify-center text-[12px] text-faint">
             {activeDoc.ref.path}
@@ -131,6 +142,11 @@ export function CenterWorkspace() {
                   </div>
                 </div>
               )
+            ) : releaseNotes.unseen ? (
+              // Freshly updated with no session selected: the notes would
+              // otherwise be unreachable, because the document strip that hosts
+              // them is session-scoped.
+              <ReleaseNotesDocument version={releaseNotes.version} />
             ) : (
               <div className="m-auto flex flex-col items-center gap-4 text-center">
                 <Logo size={40} />

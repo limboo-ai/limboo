@@ -1,7 +1,13 @@
 /**
- * Fixed far-right icon rail. Each tab toggles its drawer panel open/closed; the
- * active tab shows an accent indicator. Backed by the layout store so the open
- * tab persists across launches.
+ * Fixed far-right icon rail. Each tab toggles its drawer panel open/closed.
+ *
+ * The active tab is marked by the ICON'S OWN COLOR — no background plate. On a
+ * pure-black canvas a filled `bg-surface-2` block reads as a second UI element
+ * competing with the glyph it sits behind; the accent glyph alone is the
+ * quieter and more legible signal. The plate is kept for hover, where it is
+ * transient feedback rather than persistent state.
+ *
+ * Backed by the layout store so the open tab persists across launches.
  */
 import { RAIL_TABS } from './tabs';
 import { useLayoutStore } from '@/renderer/stores/useLayoutStore';
@@ -29,7 +35,7 @@ export function ActivityRail() {
             className={cn(
               'relative flex h-9 w-9 items-center justify-center rounded-md transition-colors',
               'focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent',
-              isActive ? 'bg-surface-2 text-accent' : 'text-muted hover:bg-surface-2 hover:text-fg',
+              isActive ? 'text-accent' : 'text-muted hover:bg-surface-2 hover:text-fg',
             )}
           >
             <tab.icon size={17} />

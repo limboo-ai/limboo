@@ -7,8 +7,77 @@ All notable changes to Limboo are documented here. The format is based on
 
 ## [Unreleased]
 
+## [1.7.0] - 2026-07-26
+
+Adds the **Work Graph** — a typed, queryable graph of what a session actually
+did, built from both coding agents' event streams and owned entirely by Limboo —
+along with a document-oriented workspace where diffs open as first-class tabs,
+and an in-app **What's New** tab so an update can finally tell you what changed.
+
+### Added
+
+- **The Work Graph (DAWG).** Every session's execution is recorded as a Directed
+  Acyclic Work Graph — objectives, plans, tasks, subagents, investigations,
+  searches, memory lookups, MCP calls, commands, files, commits, approvals and
+  results — connected by nine typed relationships (`follows`, `contains`,
+  `generated`, `depends-on`, `implemented-in`, `verified-by`, `blocked-by`,
+  `reviewed-by`, `produced-artifact`). Neither Claude nor Cursor exposes a work
+  graph; both are conversation-driven. This is Limboo's own layer, derived from
+  the structured events they *do* emit, so it records both agents identically and
+  every future adapter contributes nodes for free. It is deliberately shaped like
+  a git history — vertical execution lanes, one node per row, commits in a
+  right-hand gutter — rather than a free-floating node diagram, because that is
+  the mental model developers already have. Layout runs in a Web Worker and rows
+  virtualize, so a long session stays responsive.
+- **Structural search over the graph.** Queries traverse *shape*, not just text:
+  an FTS5 seed set (free text, node kinds, statuses, time range) expanded by a
+  bounded closure over the edge table. "Every task blocked by X" is a traversal,
+  not a transcript scroll.
+- **Eight export formats.** JSON, Markdown, Mermaid, Graphviz DOT, CSV and a
+  self-contained HTML report are rendered from the stored graph; SVG and PNG are
+  rendered from the layout. Exports go to the clipboard or to a file you pick.
+- **A document-oriented workspace.** Diffs promote out of the Changes panel into
+  first-class tabs with their own icons, pinning, reordering, close/reopen and
+  per-document view state. `ChangesNavigator` unifies file browsing across the Git
+  panel and Changes; `DiffEditor` adds syntax highlighting and word-level diffs.
+- **A "What's New" tab.** When Limboo starts on a version it has not shown you
+  before, the release notes for *that* version open as a workspace tab. Closing it
+  is remembered until the next update. It is available any time from the command
+  palette, and — like Claude Code's own `/release-notes` — it is display-only and
+  never enters the agent's context.
+
 ### Fixed
 
+- **The work graph silently discarded whole batches of its own data.** A node
+  whose payload exceeded the size cap was skipped, but the edges pointing at it
+  were still written. `INSERT OR IGNORE` does not suppress a FOREIGN KEY
+  violation, so the failing edge aborted the entire transaction and took every
+  other node and edge in that flush with it — behind a single `logger.warn`.
+  Oversized nodes are now shrunk rather than dropped, every edge's endpoints are
+  proven to exist before insert, and persistent failures surface as a banner in
+  the panel instead of an innocent-looking empty graph.
+- **Orphan cleanup deleted real work.** It removed any node with no edge, which is
+  the normal state of a terminal opened outside a run, a commit made with no agent
+  active, or a service started before the first prompt. Those kinds are now exempt.
+- **Commits could be attributed to the wrong session, or lost entirely.** An
+  unattributable commit was still recorded as "seen", so it was dropped
+  permanently at the exact moment its session next became active. It is now only
+  marked seen once it has been attributed. Separately, a `git pull` bringing in
+  upstream commits claimed the current run had implemented its files in every one
+  of them; that fan-out is now limited to commits made after the run started.
+- **Subagent work was spliced into the main timeline.** The `contains`
+  relationship was defined, drawn by the layouter and listed in the legend, but
+  nothing ever emitted it. Subagent nesting now rides the Agent SDK's
+  `parent_tool_use_id`, so a subagent's steps sit inside the node that spawned
+  them. (Cursor's print mode has no subagents, so the branch simply never forks
+  there.)
+- **Permission decisions were never recorded.** Approval nodes were inferred by
+  string-matching a log line's `"Blocked…"` prefix, which could not see the answer
+  the user actually gave. They now come from the one decision gate both providers
+  call, carrying the real decision, tool and risk.
+- **Nodes were labelled with the wrong agent.** Provider and mode were read from
+  current settings at write time rather than captured per run, so switching models
+  mid-session silently relabelled a run's history.
 - **Two release gates were not actually verifying anything.** Both were found by
   checking the published v1.6.0 artifacts by hand rather than trusting a green
   pipeline:
@@ -26,6 +95,40 @@ All notable changes to Limboo are documented here. The format is based on
     from the publish set, and a new check fails the build if the manifest names
     anything that is not being published. (The v1.6.0 manifest was corrected in
     place; its remaining hashes were always valid.)
+
+### Changed
+
+- **Release notes now come from this file.** The GitHub release body was
+  generated from commit subjects while the changelog was written by hand, so the
+  two said different things about the same release and nothing connected them.
+  The notes generator now reads the section for the tag being released and falls
+  back to the previous commit-subject behaviour only when there isn't one — which
+  also means the notes shown inside the app, the notes on the release page, and
+  this file are the same text by construction.
+- **An active icon is marked by its own color, not a filled block behind it.** In
+  the activity rail, the title-bar tab strip and the settings navigation, the
+  background plate is gone and the glyph takes the accent color. On a pure-black
+  canvas the plate read as a second element competing with the icon it sat
+  behind. Hover still shows it, where it is feedback rather than state.
+
+### Security
+
+- **The graph's secret redactor missed the case its own guide calls out.** It is
+  shared with the Hook Engine, so a gap in it was a gap in two subsystems. It now
+  covers credential-bearing URLs (`https://user:token@host` — a remote typed into
+  a terminal became a node title verbatim), GitHub, AWS and Slack tokens, PEM
+  private-key blocks, JWTs, and generic `secret=`-shaped assignments. Redaction
+  also runs recursively over a node's whole metadata on the single path into the
+  database, rather than only over its title and detail, so a future field is
+  covered without having to opt in.
+- **Export writes to disk without the renderer ever naming a path.** Saving a
+  graph sends only a session id and a format; the main process opens the save
+  dialog and writes wherever you chose. There is no renderer-supplied path, and
+  therefore no traversal surface to defend.
+- **Query inputs are bounded before they are examined.** Array arguments are
+  capped before filtering (an oversized array was previously walked in full),
+  export results are byte-capped, and edge reads are limited instead of unbounded
+  table scans.
 
 ## [1.6.0] - 2026-07-25
 
@@ -259,7 +362,8 @@ operational.
 - **Unified streaming timeline** — the conversation rendered as one continuous,
   turn-grouped event stream of messages, tool calls, and status markers.
 
-[Unreleased]: https://github.com/limboo-ai/limboo/compare/v1.6.0...HEAD
+[Unreleased]: https://github.com/limboo-ai/limboo/compare/v1.7.0...HEAD
+[1.7.0]: https://github.com/limboo-ai/limboo/compare/v1.6.0...v1.7.0
 [1.6.0]: https://github.com/limboo-ai/limboo/compare/v1.5.1...v1.6.0
 [1.5.1]: https://github.com/limboo-ai/limboo/compare/v1.5.0...v1.5.1
 [1.5.0]: https://github.com/limboo-ai/limboo/compare/v1.0.0...v1.5.0

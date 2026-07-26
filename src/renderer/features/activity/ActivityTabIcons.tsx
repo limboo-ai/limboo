@@ -3,6 +3,11 @@
  * Hooks tabs, rendered next to the Settings gear. Each button toggles its drawer
  * open/closed on the right, exactly like the vertical `ActivityRail`; only the
  * placement differs. Styled to match the TitleBar's Settings `IconButton`.
+ *
+ * Active state is the icon's own accent color, with no background plate — see
+ * the note in `ActivityRail`. The two must stay identical: they are the same
+ * control in two placements, and a user switching between them would read any
+ * difference as a bug.
  */
 import { TOP_TABS } from './tabs';
 import { useLayoutStore } from '@/renderer/stores/useLayoutStore';
@@ -30,7 +35,7 @@ export function ActivityTabIcons() {
             className={cn(
               'relative flex h-7 w-7 items-center justify-center rounded-md transition-colors',
               'focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent',
-              isActive ? 'bg-surface-2 text-accent' : 'text-muted hover:bg-surface-2 hover:text-fg',
+              isActive ? 'text-accent' : 'text-muted hover:bg-surface-2 hover:text-fg',
             )}
           >
             <tab.icon size={15} />

@@ -11,7 +11,7 @@
  * never opens a diff keeps exactly the layout it had before this existed.
  */
 import { useState } from 'react';
-import { MessageSquare, Pin, X } from 'lucide-react';
+import { MessageSquare, Pin, Sparkles, X } from 'lucide-react';
 import { cn } from '@/renderer/lib/cn';
 import { getFileIcon } from '@/renderer/lib/fileIcons';
 import {
@@ -87,16 +87,21 @@ function DocumentTab({
   onDropBefore: (after: boolean) => void;
 }) {
   const isConversation = entry.ref.kind === 'conversation';
+  const isReleaseNotes = entry.ref.kind === 'release-notes';
   // The file's own icon, not a generic diff glyph — a diff tab should read as
-  // the same kind of object as every other editor tab.
-  const spec = isConversation ? null : getFileIcon(entry.title);
-  const Icon = spec?.icon ?? MessageSquare;
-  const path = entry.ref.kind === 'conversation' ? undefined : entry.ref.path;
+  // the same kind of object as every other editor tab. Release notes are not a
+  // file, so they carry their own mark rather than a guess from the title.
+  const spec = isConversation || isReleaseNotes ? null : getFileIcon(entry.title);
+  const Icon = isReleaseNotes ? Sparkles : (spec?.icon ?? MessageSquare);
+  const path =
+    entry.ref.kind === 'conversation' || entry.ref.kind === 'release-notes'
+      ? undefined
+      : entry.ref.path;
   const staged = entry.ref.kind === 'diff' && entry.ref.staged;
   const baseRef = entry.ref.kind === 'diff' ? entry.ref.baseRef : undefined;
 
   const title = [
-    path ?? 'Conversation',
+    path ?? (isReleaseNotes ? entry.title : 'Conversation'),
     staged ? 'staged' : undefined,
     baseRef ? `vs ${baseRef}` : undefined,
   ]
