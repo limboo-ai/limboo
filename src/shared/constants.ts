@@ -374,6 +374,21 @@ export const RELEASE_LIMITS = {
   maxPullRequests: 300,
   maxMergedBranches: 200,
   maxAssets: 120,
+  /**
+   * Contributors whose forge account CI will resolve (real name + avatar). Far
+   * below `maxContributors` on purpose: each one costs a network round trip at
+   * build time and adds an embedded image to the bundle, so the long tail keeps
+   * its git-derived name and a monogram.
+   */
+  maxAvatars: 24,
+  /** Edge length requested from the forge — matches the 28px render at 2×. */
+  avatarPx: 48,
+  /**
+   * Raw bytes accepted for one avatar before base64. A 48px avatar is 1–4 KB;
+   * this is generous headroom, not a target. Anything larger is dropped rather
+   * than compiled into every copy of the app.
+   */
+  avatarBytesMax: 24576,
   /** Cap for any single short field (lead-in, title, summary, name). */
   textMax: 4096,
   /** Cap for a section's raw Markdown, and for a whole release's Markdown. */

@@ -29,6 +29,7 @@ import path from 'node:path';
 import { REPO_ROOT } from './lib/changelog.mjs';
 import { git, previousTag, revExists } from './lib/git.mjs';
 import { LIMITS, RELEASE_REPO } from './lib/releaseManifest.mjs';
+import { resolveForgeProfiles } from './lib/forgeProfiles.mjs';
 
 const MANIFEST = path.join(REPO_ROOT, 'src', 'shared', 'releaseManifest.generated.ts');
 
@@ -61,12 +62,12 @@ function buildNumber() {
 /**
  * Contributors in `prev..tag`, deduped by email and commit-counted.
  *
- * The tagger is marked `maintainer` — that is a fact git records, unlike
- * "reviewer" or "release manager", which nothing in this repository's history
- * distinguishes. Those roles exist in the schema for a forge that can supply
- * them; inventing them from commit data would be a guess presented as a credit.
+ * This is the OFFLINE truth, and deliberately still complete on its own: the
+ * forge enrichment below improves these entries but is never required by them.
+ * The email rides along as a join key for that step and is stripped before the
+ * manifest is written — it must not end up compiled into every copy of the app.
  */
-function contributorsFor(range) {
+function gitContributors(range) {
   const raw = git(['log', '--no-merges', '--format=%an%x00%ae', ...range], { allowFailure: true });
   if (!raw) return [];
 
@@ -83,18 +84,38 @@ function contributorsFor(range) {
 
   return [...byEmail.values()]
     .sort((a, b) => b.commits - a.commits || a.name.localeCompare(b.name))
-    .slice(0, LIMITS.maxContributors)
-    .map((c, i) => {
-      const handle = NOREPLY_RE.exec(c.email)?.[1] ?? null;
-      return {
-        name: c.name.slice(0, 200),
-        handle,
-        commits: c.commits,
-        // The top committer in a release range is this project's maintainer.
-        role: i === 0 ? 'maintainer' : 'contributor',
-        profileUrl: handle ? `https://github.com/${handle}` : null,
-      };
-    });
+    .slice(0, LIMITS.maxContributors);
+}
+
+/**
+ * Turn git contributors into manifest entries, preferring the forge account when
+ * one was resolved.
+ *
+ * The tagger is marked `maintainer` — that is a fact git records, unlike
+ * "reviewer" or "release manager", which nothing in this repository's history
+ * distinguishes. Those roles exist in the schema for a forge that can supply
+ * them; inventing them from commit data would be a guess presented as a credit.
+ *
+ * `profiles` is empty whenever the network half did not happen (no token, rate
+ * limit, offline runner, a non-GitHub forge), and every field then falls back to
+ * what git knows. The document degrades to initials; it never degrades to blank.
+ */
+function toReleasePersons(people, profiles) {
+  return people.map((c, i) => {
+    const profile = profiles.get(c.email.toLowerCase()) ?? null;
+    // Offline fallback: GitHub's noreply commit emails encode the handle, and
+    // nothing else does.
+    const handle = profile?.login ?? NOREPLY_RE.exec(c.email)?.[1] ?? null;
+    return {
+      name: (profile?.name || c.name).slice(0, 200),
+      handle,
+      commits: c.commits,
+      // The top committer in a release range is this project's maintainer.
+      role: i === 0 ? 'maintainer' : 'contributor',
+      profileUrl: profile?.profileUrl ?? (handle ? `https://github.com/${handle}` : null),
+      avatar: profile?.avatar ?? null,
+    };
+  });
 }
 
 /**
@@ -160,7 +181,7 @@ function statsFor(range) {
   };
 }
 
-function main() {
+async function main() {
   const tag = resolveTag();
   if (!tag) {
     // Not an error: every non-tag build takes this path, and the committed
@@ -186,11 +207,32 @@ function main() {
   // the range is explicit rather than implied.
   const range = prev ? [`${prev}..${tag}`] : [tag];
 
+  const people = gitContributors(range);
+
+  // Ask the forge who these commit emails actually belong to, and bring back
+  // each account's profile name and picture. Best-effort by contract: any
+  // failure yields an empty map and the git-derived identity stands.
+  let profiles = new Map();
+  try {
+    profiles = await resolveForgeProfiles(people, {
+      repo: RELEASE_REPO,
+      base: prev,
+      head: tag,
+      log: (msg) => console.error(`embed-release-manifest: forge: ${msg}`),
+    });
+  } catch (err) {
+    console.error(
+      `embed-release-manifest: forge lookup failed, keeping git identities — ${
+        err instanceof Error ? err.message : String(err)
+      }`,
+    );
+  }
+
   const source = readFileSync(MANIFEST, 'utf8');
   const stamped = {
     commit: git(['rev-parse', `${tag}^{commit}`]),
     buildNumber: buildNumber(),
-    contributors: contributorsFor(range),
+    contributors: toReleasePersons(people, profiles),
     pullRequests: pullRequestsFor(range),
     mergedBranches: mergedBranchesFor(range),
     stats: statsFor(range),
@@ -206,10 +248,11 @@ function main() {
   }
 
   writeFileSync(MANIFEST, updated, 'utf8');
+  const withAvatars = stamped.contributors.filter((c) => c.avatar).length;
   console.error(
     `embed-release-manifest: stamped ${version} — commit ${stamped.commit.slice(0, 12)}, ` +
-      `${stamped.contributors.length} contributor(s), ${stamped.pullRequests.length} PR(s), ` +
-      `build ${stamped.buildNumber ?? 'n/a'}`,
+      `${stamped.contributors.length} contributor(s) (${withAvatars} with avatars), ` +
+      `${stamped.pullRequests.length} PR(s), build ${stamped.buildNumber ?? 'n/a'}`,
   );
 }
 
@@ -281,4 +324,11 @@ function matchBracket(text, start) {
   return -1;
 }
 
-main();
+// `main` is async now (the forge lookup). Without this, a rejection would print
+// an UnhandledPromiseRejection warning and, depending on Node's mode, still exit
+// 0 — a release that silently skipped stamping is exactly the failure this
+// script exists to prevent.
+main().catch((err) => {
+  console.error('embed-release-manifest:', err instanceof Error ? err.stack : String(err));
+  process.exit(1);
+});

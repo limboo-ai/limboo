@@ -77,6 +77,14 @@ jobs:
         # (commit, build number, contributors, PRs, branches, stats) BEFORE the
         # bundle is built, so the app carries them. Ephemeral like the version
         # stamp above, and a no-op off a tag.
+        #
+        # The token is what turns a commit email into a real account: it lets the
+        # step resolve contributors through the GitHub API and embed their
+        # profile picture as a data: URI. Read-only and entirely optional — the
+        # step falls back to git-derived names and monograms without it, and
+        # never fails the build over a profile lookup.
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: node ci/scripts/embed-release-manifest.mjs "${{ inputs.ref }}"
 
       - name: Build branded installers (Forge package + electron-builder)

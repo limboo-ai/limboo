@@ -13,7 +13,7 @@
  * actually has — rather than attempting a textual diff of two Markdown blobs,
  * which would report every rewording as a change.
  */
-import { ArrowLeftRight, History, X } from 'lucide-react';
+import { ArrowLeftRight, X } from 'lucide-react';
 import {
   RELEASE_CATEGORY_LABEL,
   type ReleaseCategory,
@@ -23,7 +23,7 @@ import {
 import { RELEASE_INDEX, releaseManifestFor } from '@shared/releaseManifest.generated';
 import { cn } from '@/renderer/lib/cn';
 import { ReleaseSectionCard } from './ReleaseSectionCard';
-import { ExternalLink, Pill, formatReleaseDate } from './parts';
+import { CHANNEL_LABEL, ExternalLink, formatReleaseDate } from './parts';
 import { orderSections } from './ReleaseHighlights';
 
 /** Fold key for this section. See the note in `ReleaseCredits`. */
@@ -50,7 +50,6 @@ export function ReleaseHistory({
   return (
     <ReleaseSectionCard
       title="Release history"
-      icon={History}
       count={RELEASE_INDEX.length}
       collapsed={!!collapsed[HISTORY_KEY]}
       onToggle={() => onToggle(HISTORY_KEY)}
@@ -118,7 +117,12 @@ function HistoryRow({
       <span className="min-w-0 flex-1 truncate text-[12px] text-muted">
         {entry.summary.replace(/\*\*/g, '') || '—'}
       </span>
-      {entry.channel !== 'stable' && <Pill tone="warning">{entry.channel}</Pill>}
+      {/* Only prereleases are called out — "Stable" on every other row would be
+          noise. Uses the shared label table, so this no longer prints a raw
+          lowercase `beta` while the header prints `Beta`. */}
+      {entry.channel !== 'stable' && (
+        <span className="shrink-0 text-[11px] text-faint">{CHANNEL_LABEL[entry.channel]}</span>
+      )}
       {entry.detailed && !isCurrent && (
         <button
           type="button"
@@ -170,7 +174,7 @@ function ComparisonTable({
           <span className="font-mono">{a.version}</span> →{' '}
           <span className="font-mono font-semibold">{b.version}</span>
         </span>
-        <ExternalLink href={b.links.compare} showIcon className="text-[11px]">
+        <ExternalLink href={b.links.compare} className="text-[11px]">
           Compare on the forge
         </ExternalLink>
         <button

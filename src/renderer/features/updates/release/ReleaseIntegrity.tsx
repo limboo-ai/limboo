@@ -11,16 +11,14 @@
  * document that displayed an unverifiable hash would be worse than one that
  * displayed none, because it would look like verification.
  */
-import { FileArchive, ShieldCheck, TerminalSquare } from 'lucide-react';
 import type {
   ReleaseAsset,
   ReleaseCategory,
   ReleaseManifestEntry,
   ReleasePlatform,
-  ReleaseSigning,
 } from '@shared/release';
 import { ReleaseSectionCard } from './ReleaseSectionCard';
-import { CopyButton, ExternalLink, Pill, formatBytes, type PillTone } from './parts';
+import { CopyButton, ExternalLink, formatBytes } from './parts';
 
 /** Fold keys for these two sections. See the note in `ReleaseCredits`. */
 export const INTEGRITY_KEYS = {
@@ -33,13 +31,6 @@ const PLATFORM_LABEL: Record<ReleasePlatform, string> = {
   macos: 'macOS',
   linux: 'Linux',
   any: 'All platforms',
-};
-
-const SIGNING_TONE: Record<ReleaseSigning['status'], PillTone> = {
-  signed: 'success',
-  'self-signed': 'warning',
-  unsigned: 'danger',
-  unknown: 'neutral',
 };
 
 export function ReleaseIntegrity({
@@ -62,7 +53,6 @@ export function ReleaseIntegrity({
       {manifest.assets.length > 0 && (
         <ReleaseSectionCard
           title="Release assets"
-          icon={FileArchive}
           count={manifest.assets.length}
           collapsed={!!collapsed[INTEGRITY_KEYS.assets]}
           onToggle={() => onToggle(INTEGRITY_KEYS.assets)}
@@ -114,26 +104,22 @@ export function ReleaseIntegrity({
 
       <ReleaseSectionCard
         title="Verification"
-        icon={ShieldCheck}
         collapsed={!!collapsed[INTEGRITY_KEYS.verification]}
         onToggle={() => onToggle(INTEGRITY_KEYS.verification)}
       >
         <div className="flex flex-col gap-3">
+          {/* Signing posture as sentences. "Windows: self-signed (…)" already
+              reads as a caveat; an amber capsule around it is emphasis, and
+              emphasis is not what tells you whether to trust the download. */}
           {manifest.signing.length > 0 && (
-            <div className="flex flex-wrap gap-1.5">
+            <ul className="flex flex-col gap-1">
               {manifest.signing.map((entry) => (
-                <Pill
-                  key={entry.platform}
-                  tone={SIGNING_TONE[entry.status]}
-                  icon={ShieldCheck}
-                  className="max-w-full"
-                >
-                  <span className="truncate">
-                    {PLATFORM_LABEL[entry.platform]}: {entry.detail || entry.status}
-                  </span>
-                </Pill>
+                <li key={entry.platform} className="truncate text-[11px] text-muted">
+                  <span className="text-fg">{PLATFORM_LABEL[entry.platform]}</span>:{' '}
+                  {entry.detail || entry.status}
+                </li>
               ))}
-            </div>
+            </ul>
           )}
 
           <p className="text-[12px] leading-relaxed text-muted">
@@ -142,9 +128,7 @@ export function ReleaseIntegrity({
               {manifest.checksumManifest ?? 'SHA256SUMS'}
             </span>{' '}
             on the{' '}
-            <ExternalLink href={manifest.links.release} showIcon>
-              release page
-            </ExternalLink>
+            <ExternalLink href={manifest.links.release}>release page</ExternalLink>
             . Download it alongside the installer and run:
           </p>
 
@@ -168,7 +152,6 @@ export function ReleaseIntegrity({
 function CommandRow({ command }: { command: string }) {
   return (
     <div className="flex items-center gap-2 rounded border border-line bg-surface-2 px-2 py-1.5">
-      <TerminalSquare size={12} className="shrink-0 text-faint" />
       <code className="min-w-0 flex-1 truncate font-mono text-[11px] text-fg">{command}</code>
       <CopyButton value={command} label="Copy command" />
     </div>

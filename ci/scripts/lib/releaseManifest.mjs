@@ -44,6 +44,9 @@ export const LIMITS = {
   maxPullRequests: 300,
   maxMergedBranches: 200,
   maxAssets: 120,
+  maxAvatars: 24,
+  avatarPx: 48,
+  avatarBytesMax: 24576,
   textMax: 4096,
   markdownMax: 262144,
 };

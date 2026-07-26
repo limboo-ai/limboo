@@ -11,16 +11,19 @@
  * section with matches must be readable, but flipping the user's stored fold
  * state to show it would silently rewrite what they see once the query clears.
  * So the open state is derived, and the stored state is left alone.
+ *
+ * There is no icon slot. Section titles are words — "Fixed", "Security",
+ * "Contributors" — and a glyph in front of a word that already says the same
+ * thing is decoration. The one glyph here is the chevron, which is not
+ * decoration: it is the fold state.
  */
-import { useId, type ComponentType, type ReactNode } from 'react';
+import { useId, type ReactNode } from 'react';
 import { ChevronRight } from 'lucide-react';
 import { cn } from '@/renderer/lib/cn';
 import { CopyButton } from './parts';
 
 export function ReleaseSectionCard({
   title,
-  icon: Icon,
-  iconClassName,
   count,
   collapsed,
   forceOpen = false,
@@ -30,8 +33,6 @@ export function ReleaseSectionCard({
   children,
 }: {
   title: string;
-  icon?: ComponentType<{ size?: number; className?: string }>;
-  iconClassName?: string;
   /** Item count shown beside the title. Hidden when undefined. */
   count?: number;
   collapsed: boolean;
@@ -68,7 +69,6 @@ export function ReleaseSectionCard({
               forceOpen && collapsed && 'opacity-50',
             )}
           />
-          {Icon && <Icon size={13} className={cn('shrink-0', iconClassName ?? 'text-faint')} />}
           <span className="truncate text-[12px] font-medium text-fg">{title}</span>
           {count !== undefined && (
             <span className="shrink-0 text-[11px] text-faint">{count}</span>

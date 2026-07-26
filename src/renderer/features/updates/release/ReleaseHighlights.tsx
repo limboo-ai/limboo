@@ -12,22 +12,14 @@
  * `rehype-raw` and with links routed to `system.openExternal`. Changelog bullets
  * contain inline code, links and emphasis, and re-implementing a subset of that
  * here would be a second, less-reviewed renderer for the same content.
+ *
+ * Categories are identified by their NAME and nothing else — no glyph, no tone.
+ * `RELEASE_CATEGORY_LABEL` already says "Breaking changes", "Security", "Fixed";
+ * a red triangle in front of the word "Breaking" is the word again, in a form
+ * that carries less. Consequence is expressed by ORDER (the most consequential
+ * card is the first one you read), which survives colour-blindness, a
+ * screenshot, and the Markdown export.
  */
-import {
-  AlertTriangle,
-  ArrowUpCircle,
-  Boxes,
-  Bug,
-  CircleSlash,
-  FileText,
-  Gauge,
-  Plus,
-  RefreshCw,
-  ShieldCheck,
-  Trash2,
-  Wrench,
-  type LucideIcon,
-} from 'lucide-react';
 import {
   RELEASE_CATEGORY_LABEL,
   RELEASE_CATEGORY_ORDER,
@@ -36,24 +28,6 @@ import {
 } from '@shared/release';
 import { Markdown } from '@/renderer/features/workspace/Markdown';
 import { ReleaseSectionCard } from './ReleaseSectionCard';
-
-/** Glyph + tone per category. Tones stay inside the token palette. */
-const CATEGORY_META: Record<ReleaseCategory, { icon: LucideIcon; cls: string }> = {
-  breaking: { icon: AlertTriangle, cls: 'text-danger' },
-  security: { icon: ShieldCheck, cls: 'text-warning' },
-  migration: { icon: ArrowUpCircle, cls: 'text-warning' },
-  added: { icon: Plus, cls: 'text-success' },
-  changed: { icon: RefreshCw, cls: 'text-accent' },
-  fixed: { icon: Bug, cls: 'text-accent' },
-  performance: { icon: Gauge, cls: 'text-success' },
-  deprecated: { icon: CircleSlash, cls: 'text-warning' },
-  removed: { icon: Trash2, cls: 'text-danger' },
-  dependencies: { icon: Boxes, cls: 'text-muted' },
-  tooling: { icon: Wrench, cls: 'text-muted' },
-  documentation: { icon: FileText, cls: 'text-muted' },
-  'known-issues': { icon: AlertTriangle, cls: 'text-warning' },
-  other: { icon: FileText, cls: 'text-faint' },
-};
 
 /** Sort sections by consequence, keeping any unknown category at the end. */
 export function orderSections(sections: ReleaseSection[]): ReleaseSection[] {
@@ -93,13 +67,10 @@ export function ReleaseHighlights({
         // different statement from "nothing here matched".
         if (filter && items.length === 0) return null;
 
-        const meta = CATEGORY_META[section.category] ?? CATEGORY_META.other;
         return (
           <ReleaseSectionCard
             key={`${section.category}:${section.title}`}
             title={RELEASE_CATEGORY_LABEL[section.category] ?? section.title}
-            icon={meta.icon}
-            iconClassName={meta.cls}
             count={items.length}
             collapsed={!!collapsed[section.category]}
             forceOpen={!!filter}

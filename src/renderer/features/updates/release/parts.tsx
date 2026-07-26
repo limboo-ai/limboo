@@ -8,18 +8,36 @@
  *    before it becomes clickable and opened through the preload bridge rather
  *    than navigated to. An unscreened URL renders as plain text, never as a
  *    dead or dangerous link.
- *  - `Monogram` — contributor avatars are drawn locally from initials. The
- *    production CSP is `img-src 'self' data:`, so a remote avatar would be a
- *    broken image on every row; this is not a placeholder for one.
+ *  - `Avatar` / `Monogram` — a contributor image is screened by
+ *    `isEmbeddedAvatar` and falls back to locally drawn initials. The avatar is
+ *    always an embedded `data:` URI resolved at build time, never a remote URL:
+ *    production CSP is `img-src 'self' data:`, so a github.com avatar would be a
+ *    broken image on every row and the document would stop working offline.
  *  - `CopyButton` — copying is the only "write" this read-only document does,
  *    and it goes through the clipboard bridge like everything else.
- *  - `Field` / `Pill` — the label/value and status vocabulary the header and the
- *    integrity section share, so two tables of facts never drift apart.
+ *  - `Field` — the label/value vocabulary the header and the integrity section
+ *    share, so two tables of facts never drift apart.
+ *
+ * There is deliberately NO badge/pill primitive here. Status reads as words:
+ * "Stable", "Running now", "Windows: self-signed" are sentences, and wrapping a
+ * sentence in a coloured capsule adds emphasis without adding information.
  */
 import { useEffect, useRef, useState, type ReactNode } from 'react';
-import { Check, Copy, ExternalLink as ExternalLinkIcon } from 'lucide-react';
-import { isForgeUrl } from '@shared/release';
+import { Check, Copy } from 'lucide-react';
+import { isEmbeddedAvatar, isForgeUrl, type ReleaseChannel } from '@shared/release';
 import { cn } from '@/renderer/lib/cn';
+
+/**
+ * Display name per channel. Lives here rather than in the header so the header
+ * and the history list cannot drift — the history row used to print the raw
+ * lowercase `beta` while the header printed `Beta`.
+ */
+export const CHANNEL_LABEL: Record<ReleaseChannel, string> = {
+  stable: 'Stable',
+  beta: 'Beta',
+  nightly: 'Nightly',
+  preview: 'Preview',
+};
 
 /**
  * A link to a forge page. Renders its children as plain text when the URL is
@@ -30,12 +48,10 @@ export function ExternalLink({
   href,
   children,
   className,
-  showIcon = false,
 }: {
   href: string | null | undefined;
   children: ReactNode;
   className?: string;
-  showIcon?: boolean;
 }) {
   if (!isForgeUrl(href)) return <span className={className}>{children}</span>;
   return (
@@ -53,7 +69,6 @@ export function ExternalLink({
       )}
     >
       {children}
-      {showIcon && <ExternalLinkIcon size={10} className="shrink-0 opacity-70" />}
     </a>
   );
 }
@@ -69,10 +84,20 @@ function initialsOf(name: string): string {
   return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
 }
 
+/** The ring that tells a maintainer apart from a contributor, shared by both avatars. */
+function avatarRing(emphasis: boolean): string {
+  return emphasis ? 'ring-1 ring-accent/40' : 'ring-1 ring-line';
+}
+
 /**
  * A locally drawn avatar. No network, by construction — see the module note.
  * Maintainers get an accent ring so the roster reads at a glance without adding
  * a colour outside the palette.
+ *
+ * Still reached often: it is {@link Avatar}'s fallback for a development
+ * checkout (where the manifest carries no contributors at all), for a
+ * contributor CI could not resolve to a forge account, and for anything that
+ * fails {@link isEmbeddedAvatar}.
  */
 export function Monogram({
   name,
@@ -88,14 +113,58 @@ export function Monogram({
       aria-hidden
       style={{ width: size, height: size, fontSize: Math.round(size * 0.36) }}
       className={cn(
-        'flex shrink-0 items-center justify-center rounded-full font-semibold uppercase',
-        emphasis
-          ? 'bg-surface-2 text-accent ring-1 ring-accent/40'
-          : 'bg-surface-2 text-muted ring-1 ring-line',
+        'flex shrink-0 items-center justify-center rounded-full bg-surface-2 font-semibold uppercase',
+        emphasis ? 'text-accent' : 'text-muted',
+        avatarRing(emphasis),
       )}
     >
       {initialsOf(name)}
     </span>
+  );
+}
+
+/**
+ * A contributor's real profile picture, embedded in the manifest at build time
+ * as a `data:` URI and screened before it reaches `src`.
+ *
+ * The screening is the point. A manifest is DATA — it is stamped in by CI from a
+ * network response — so `data:text/html,…` or a remote `https://` avatar must
+ * never become an `<img src>` on the strength of "we generated it ourselves".
+ * Anything that fails {@link isEmbeddedAvatar} degrades to {@link Monogram}, and
+ * so does a decode failure at runtime, so a corrupt image can never leave a
+ * broken-image glyph in the roster.
+ *
+ * `aria-hidden` + empty `alt` are deliberate: the person's name is the adjacent
+ * text, and announcing it twice is worse than not announcing the picture.
+ */
+export function Avatar({
+  src,
+  name,
+  emphasis = false,
+  size = 28,
+}: {
+  src: string | null | undefined;
+  name: string;
+  emphasis?: boolean;
+  size?: number;
+}) {
+  const [failed, setFailed] = useState(false);
+  if (failed || !isEmbeddedAvatar(src)) {
+    return <Monogram name={name} emphasis={emphasis} size={size} />;
+  }
+  return (
+    <img
+      src={src as string}
+      alt=""
+      aria-hidden
+      draggable={false}
+      loading="lazy"
+      width={size}
+      height={size}
+      style={{ width: size, height: size }}
+      onError={() => setFailed(true)}
+      className={cn('shrink-0 rounded-full bg-surface-2 object-cover', avatarRing(emphasis))}
+    />
   );
 }
 
@@ -166,45 +235,6 @@ export function Field({
         {copy && <CopyButton value={copy} label={`Copy ${label.toLowerCase()}`} />}
       </span>
     </div>
-  );
-}
-
-export type PillTone = 'neutral' | 'accent' | 'success' | 'warning' | 'danger';
-
-const PILL_TONE: Record<PillTone, string> = {
-  neutral: 'border-line text-muted',
-  accent: 'border-accent/50 text-accent',
-  success: 'border-success/50 text-success',
-  warning: 'border-warning/50 text-warning',
-  danger: 'border-danger/50 text-danger',
-};
-
-/**
- * A bordered status pill. Bordered rather than filled: a solid block of colour
- * on pure black reads as a button, and none of these are pressable.
- */
-export function Pill({
-  children,
-  tone = 'neutral',
-  icon: Icon,
-  className,
-}: {
-  children: ReactNode;
-  tone?: PillTone;
-  icon?: React.ComponentType<{ size?: number; className?: string }>;
-  className?: string;
-}) {
-  return (
-    <span
-      className={cn(
-        'inline-flex shrink-0 items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-medium',
-        PILL_TONE[tone],
-        className,
-      )}
-    >
-      {Icon && <Icon size={10} className="shrink-0" />}
-      {children}
-    </span>
   );
 }
 

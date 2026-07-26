@@ -10,24 +10,9 @@
  * table would make a claim about the artifact you downloaded and a claim about
  * the process you are running look like the same kind of statement.
  */
-import { CircleDot, GitCommitHorizontal, Hammer, Package, ShieldCheck, Tag } from 'lucide-react';
-import type { ReleaseChannel, ReleaseManifestEntry } from '@shared/release';
+import type { ReleaseManifestEntry } from '@shared/release';
 import type { BuildInfo } from '@shared/types';
-import { Field, Pill, formatReleaseDate, type PillTone } from './parts';
-
-const CHANNEL_TONE: Record<ReleaseChannel, PillTone> = {
-  stable: 'success',
-  beta: 'warning',
-  nightly: 'warning',
-  preview: 'accent',
-};
-
-const CHANNEL_LABEL: Record<ReleaseChannel, string> = {
-  stable: 'Stable',
-  beta: 'Beta',
-  nightly: 'Nightly',
-  preview: 'Preview',
-};
+import { CHANNEL_LABEL, Field, formatReleaseDate } from './parts';
 
 export function ReleaseHeader({
   manifest,
@@ -50,14 +35,10 @@ export function ReleaseHeader({
         {manifest.codename && (
           <span className="text-[13px] text-muted">&ldquo;{manifest.codename}&rdquo;</span>
         )}
-        <Pill tone={CHANNEL_TONE[manifest.channel]} icon={CircleDot}>
-          {CHANNEL_LABEL[manifest.channel]}
-        </Pill>
-        {running && (
-          <Pill tone="accent" icon={Package}>
-            Running now
-          </Pill>
-        )}
+        {/* Status reads as words. A capsule around "Stable" adds emphasis, not
+            information, and on pure black a filled one reads as a button. */}
+        <span className="text-[12px] text-muted">{CHANNEL_LABEL[manifest.channel]}</span>
+        {running && <span className="text-[12px] text-muted">Running now</span>}
         <span className="ml-auto text-[12px] text-muted">
           {formatReleaseDate(manifest.date)}
         </span>
@@ -74,18 +55,10 @@ export function ReleaseHeader({
 
       <div className="grid grid-cols-2 gap-x-6 gap-y-3 border-t border-line pt-3 sm:grid-cols-3 lg:grid-cols-4">
         <Field label="Git tag" mono copy={manifest.gitTag}>
-          <span className="inline-flex items-center gap-1">
-            <Tag size={11} className="shrink-0 text-faint" />
-            {manifest.gitTag}
-          </span>
+          {manifest.gitTag}
         </Field>
         <Field label="Commit" mono copy={manifest.commit}>
-          {shortCommit ? (
-            <span className="inline-flex items-center gap-1">
-              <GitCommitHorizontal size={11} className="shrink-0 text-faint" />
-              {shortCommit}
-            </span>
-          ) : (
+          {shortCommit ?? (
             // Honest rather than blank: a development build was never tagged,
             // so there is no commit to name.
             <span className="text-faint">not a tagged build</span>
@@ -108,10 +81,7 @@ export function ReleaseHeader({
         <Field label="Distribution">
           {build ? (
             build.packaged ? (
-              <span className="inline-flex items-center gap-1">
-                <Hammer size={11} className="shrink-0 text-faint" />
-                Packaged
-              </span>
+              'Packaged'
             ) : (
               <span className="text-faint">Development</span>
             )
@@ -122,8 +92,7 @@ export function ReleaseHeader({
       </div>
 
       {build?.macSignature && (
-        <div className="flex items-center gap-2 border-t border-line pt-3">
-          <ShieldCheck size={12} className="shrink-0 text-faint" />
+        <div className="border-t border-line pt-3">
           <span className="truncate text-[11px] text-muted">{build.macSignature}</span>
         </div>
       )}

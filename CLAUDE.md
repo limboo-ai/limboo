@@ -805,10 +805,33 @@ Full lifecycle: `docs/operations/auto-update.md`.
   covers it. `check-release-manifest.mjs` then proves the two agree, and
   `gen:notes --check` gates drift.
 - **Compiled in, never fetched.** Production CSP is `connect-src 'self';
-  img-src 'self' data:` — there is no network path, and contributor avatars are
-  therefore drawn locally as monograms rather than loaded. Manifest URLs are
+  img-src 'self' data:` — there is no runtime network path. Manifest URLs are
   screened by `isForgeUrl` before becoming links, then opened via
   `system.openExternal`.
+- **Contributor identity is resolved at BUILD time, never at runtime.**
+  `ci/scripts/lib/forgeProfiles.mjs` (called from `embed-release-manifest.mjs`)
+  asks the GitHub compare API who each commit email belongs to — git alone can
+  only recover a handle from a `noreply` address — then downloads the 48px
+  avatar and embeds it as a `data:` URI. `data:` is already inside `img-src`, so
+  **real avatars cost no CSP change**; do not widen `img-src` to load one live.
+  The module is https-only, host-allowlisted (`api.github.com`,
+  `avatars.githubusercontent.com`), follows redirects MANUALLY so every hop is
+  re-screened, caps the body, and sniffs magic bytes rather than trusting
+  `content-type`. **Every failure is swallowed** — no token, rate limit, offline
+  runner — and the entry keeps its git-derived name with `avatar: null`, which
+  the renderer draws as a `Monogram`. Commit emails stay lookup keys and never
+  reach the manifest. `isEmbeddedAvatar` in `src/shared/release.ts` re-screens
+  the value before it reaches an `<img src>`: manifest data is data, even when
+  the file it arrived in is ours.
+- **The release document has no badges and no decorative icons.** Status reads
+  as words ("Stable", "Running now", "Windows: self-signed"); category sections
+  are identified by their `RELEASE_CATEGORY_LABEL` name alone, with consequence
+  carried by `RELEASE_CATEGORY_ORDER` rather than by colour or glyph — order
+  survives a screenshot, colour-blindness, and the Markdown export. There is no
+  `Pill` primitive and `ReleaseSectionCard` has no icon slot. The only glyphs
+  left are the fold chevron and controls whose entire content is the icon
+  (`CopyButton`, the toolbar buttons, compare/clear). **Do not reintroduce a
+  pill or a leading glyph** for a label that already says the same thing.
 - **A build cannot contain its own installer hash**, so `assets`/`signing` are
   empty in the bundled manifest and present only in the published one. The
   document shows the verification commands instead of a digest it cannot stand

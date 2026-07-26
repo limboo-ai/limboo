@@ -27,6 +27,8 @@
  * rather than printing a digest it cannot stand behind.
  */
 
+import { RELEASE_LIMITS } from './constants';
+
 /** Distribution channel, derived from the tag's prerelease suffix. */
 export type ReleaseChannel = 'stable' | 'beta' | 'nightly' | 'preview';
 
@@ -77,15 +79,26 @@ export interface ReleaseSection {
 export type ReleaseRole = 'maintainer' | 'contributor' | 'reviewer' | 'release-manager';
 
 /**
- * A person credited on a release. There is no avatar URL by design: `img-src` is
- * `'self' data:`, so a remote avatar would be a broken image on every row. The
- * document renders a local monogram from `name` instead.
+ * A person credited on a release.
+ *
+ * There is never a remote avatar URL here — see the header note. `img-src` is
+ * `'self' data:` and `connect-src` is `'self'`, so a `https://avatars.…` field
+ * would be a broken image on every row and would make the credits section the
+ * one part of the document that stops working offline. {@link avatar} is the
+ * IMAGE ITSELF, resolved and embedded at package time by
+ * `ci/scripts/embed-release-manifest.mjs`, which already has the network and the
+ * tag range. `data:` is inside the existing policy, so nothing widens.
  */
 export interface ReleasePerson {
+  /**
+   * Display name. The forge profile name when CI could resolve the account,
+   * else the git author name — never invented.
+   */
   name: string;
   /**
-   * Forge handle when it can be derived offline (a GitHub noreply commit email
-   * encodes it), else null. Never guessed from a display name.
+   * Forge handle. Resolved by CI through the forge's own commit→account
+   * mapping, and offline from a GitHub noreply commit email, which encodes it.
+   * Null when neither applies. Never guessed from a display name.
    */
   handle: string | null;
   /** Commits attributed in the tag range. */
@@ -93,6 +106,13 @@ export interface ReleasePerson {
   role: ReleaseRole;
   /** Profile URL, always forge-hosted and screened by {@link isForgeUrl}. */
   profileUrl: string | null;
+  /**
+   * The profile picture as a self-contained `data:` URI, or null. Screened by
+   * {@link isEmbeddedAvatar} before it is allowed near an `<img src>`; null in
+   * a development checkout and for anyone CI could not resolve, where the
+   * document falls back to initials.
+   */
+  avatar: string | null;
 }
 
 /** A merged pull/merge request referenced by the release range. */
@@ -288,6 +308,34 @@ export function isForgeUrl(url: string | null | undefined): boolean {
   if (parsed.username || parsed.password) return false;
   const host = parsed.hostname.toLowerCase();
   return FORGE_HOSTS.some((h) => host === h || host.endsWith(`.${h}`));
+}
+
+/**
+ * Image types an embedded avatar may declare. Raster only — SVG is a document
+ * format that can carry script and external references, and there is no reason
+ * for a forge avatar to be one.
+ */
+const AVATAR_MIME_RE = /^data:image\/(png|jpeg|webp|gif);base64,[A-Za-z0-9+/]+={0,2}$/;
+
+/**
+ * Whether a manifest avatar may be used as an `<img src>`.
+ *
+ * The manifest is authored in this repository but the avatar bytes are NOT: CI
+ * fetches them from a forge and stamps them in, so by the time the renderer sees
+ * one it is third-party data that merely travelled inside a trusted file. It is
+ * therefore screened exactly like {@link isForgeUrl} screens a link — the
+ * provenance of the container is not a warrant for the contents.
+ *
+ * Fails closed on anything that is not a base64 raster `data:` URI, which rules
+ * out `data:text/html`, `data:image/svg+xml`, remote `https://` URLs, and
+ * `javascript:`. Also caps the length, so a runaway manifest cannot hand the
+ * renderer a multi-megabyte string to decode.
+ */
+export function isEmbeddedAvatar(value: string | null | undefined): boolean {
+  if (typeof value !== 'string') return false;
+  // base64 is 4 chars per 3 bytes; allow the prefix plus a little slack.
+  if (value.length > Math.ceil(RELEASE_LIMITS.avatarBytesMax * 1.4) + 64) return false;
+  return AVATAR_MIME_RE.test(value);
 }
 
 /** Derive the channel from a tag's prerelease suffix. `v1.7.0-beta.1` → beta. */

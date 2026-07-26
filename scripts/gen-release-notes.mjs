@@ -132,7 +132,10 @@ function manifestFile(manifests, index) {
  * mergedBranches, stats) are null/empty here and are stamped in at package time
  * by \`ci/scripts/embed-release-manifest.mjs\`, the same way
  * \`apply-tag-version.mjs\` stamps the version — a laptop has no tag to read them
- * from. Asset digests and signing status appear only in the PUBLISHED manifest
+ * from. That step also resolves each contributor to their forge account and
+ * embeds the profile picture as a \`data:\` URI, which is why the app can show
+ * real avatars under a CSP that forbids it from fetching one.
+ * Asset digests and signing status appear only in the PUBLISHED manifest
  * (\`dist/release-manifest.json\`): a build cannot contain the hash of an
  * installer that does not exist until after it is built.
  */
