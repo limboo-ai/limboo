@@ -1,7 +1,7 @@
 import type { AppSettings, WorkspaceConfig } from './types';
 
 /** Bumped whenever the {@link AppSettings} shape changes incompatibly. */
-export const SETTINGS_VERSION = 20;
+export const SETTINGS_VERSION = 21;
 
 /**
  * The agent providers Limboo can run (Claude Code = Anthropic via the Agent
@@ -301,6 +301,10 @@ export const GIT_LIMITS = {
   commitMessageMax: 20_000,
   /** Branch / tag / checkpoint label length cap. */
   refNameMax: 255,
+  /** Paths accepted in one patch export request. */
+  patchPathsMax: 200,
+  /** Path length accepted from the renderer for a patch request. */
+  patchPathMax: 4096,
   /** Timeout (ms) for network git ops (push / pull / fetch). */
   networkTimeoutMs: 120_000,
   /** Caps for AI commit-message generation context (main-side enforced). */
@@ -314,6 +318,43 @@ export const GIT_LIMITS = {
     /** Cap on the final proposed message (post-processed). */
     messageMax: 2_000,
   },
+} as const;
+
+/**
+ * Bounds for the diff review editor (renderer-local: the diff data itself is
+ * already capped main-side by `GIT_LIMITS.diffBytesMax`).
+ */
+export const DIFF_LIMITS = {
+  /** Row count above which the review editor windows its rows. */
+  virtualizeThreshold: 800,
+  /** Rows rendered above/below the viewport when windowing. */
+  overscanRows: 20,
+  /** Unchanged-context runs longer than this collapse to a single expander. */
+  contextFoldRun: 12,
+  /** Context lines kept visible on each side of a collapsed run. */
+  contextFoldEdge: 3,
+  /**
+   * Per-side token cap for the intra-line word diff. The LCS is O(n·m), so a
+   * minified line must fall back to a whole-line tint rather than block the
+   * main thread.
+   */
+  wordDiffMaxTokens: 400,
+  /** Tokenized diff sides cached in the renderer (LRU). */
+  tokenCacheMax: 50,
+  /** Chars of a single diff side we will hand to the highlighter. */
+  highlightCharsMax: 400_000,
+} as const;
+
+/** Bounds for the center-column workspace document tabs. */
+export const DOCUMENT_LIMITS = {
+  /** Open document tabs persisted into settings and restored on launch. */
+  maxPersisted: 12,
+  /** Depth of the reopen-closed-tab stack (per session, in memory). */
+  reopenMax: 10,
+  /** Open documents held per session before the oldest unpinned one is evicted. */
+  maxPerSession: 24,
+  /** Path length accepted for a persisted document entry. */
+  pathMax: 4096,
 } as const;
 
 /**
@@ -623,6 +664,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
     terminalWidth: LAYOUT_LIMITS.terminal.default,
     gitWidth: LAYOUT_LIMITS.git.default,
     graphWidth: LAYOUT_LIMITS.graph.default,
+    documents: [],
   },
   behavior: {
     minimizeToTray: false,

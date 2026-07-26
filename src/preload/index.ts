@@ -451,8 +451,24 @@ const gitApi = {
     ipcRenderer.invoke(IpcChannels.gitCommitMessageGenerate, workspaceId),
   cancelCommitMessage: (workspaceId: string): Promise<void> =>
     ipcRenderer.invoke(IpcChannels.gitCommitMessageCancel, workspaceId),
-  log: (workspaceId: string, opts?: { limit?: number; offset?: number }): Promise<GitCommit[]> =>
-    ipcRenderer.invoke(IpcChannels.gitLog, workspaceId, opts),
+  log: (
+    workspaceId: string,
+    opts?: { limit?: number; offset?: number; path?: string },
+  ): Promise<GitCommit[]> => ipcRenderer.invoke(IpcChannels.gitLog, workspaceId, opts),
+  /** Faithful patch text for one or more paths (main re-reads it from git). */
+  patchText: (
+    workspaceId: string,
+    paths: string[],
+    opts?: { staged?: boolean; baseRef?: string },
+  ): Promise<{ text: string; truncated: boolean }> =>
+    ipcRenderer.invoke(IpcChannels.gitPatchText, workspaceId, paths, opts),
+  /** Export a patch. Main owns the save dialog and the destination path. */
+  patchSave: (
+    workspaceId: string,
+    paths: string[],
+    opts?: { staged?: boolean; baseRef?: string },
+  ): Promise<{ saved: boolean; path?: string }> =>
+    ipcRenderer.invoke(IpcChannels.gitPatchSave, workspaceId, paths, opts),
   commitDetail: (workspaceId: string, hash: string): Promise<GitCommitDetail | null> =>
     ipcRenderer.invoke(IpcChannels.gitCommitDetail, workspaceId, hash),
   branches: (workspaceId: string): Promise<GitBranch[]> =>

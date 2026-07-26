@@ -727,6 +727,59 @@ nodes for free. Full doc: `docs/architecture/subsystems/work-graph.md`.
   `settings.graph.virtualizeThreshold`. Settings under the **Work Graph**
   category (`settings.graph`, bounds in `GRAPH_LIMITS`).
 
+### Workspace Documents + the Diff Review environment
+
+The center column is no longer a single view. It hosts **workspace documents**:
+the conversation plus any number of promoted diff reviews, each an editor-style
+tab carrying the **file's own icon** (`renderer/lib/fileIcons.tsx`).
+
+- **Store** — `renderer/stores/useDocumentStore.ts`, scoped `bySession` (switching
+  a worktree tab swaps the whole document strip). `viewCache` lives **outside**
+  `bySession`, keyed by `DocumentId`: `minimize()` drops the tab but never the
+  cached `DiffViewState`, and the compact preview in the navigator reads/writes
+  that **same record**. Folds, layout, scroll offset, and comparison mode survive
+  a maximize→minimize round-trip because both renderers share one object — not
+  because anything copies state between them. Don't "optimize" that apart.
+- **Tabs** — `features/workspace/DocumentTabs.tsx`, a SEPARATE strip stacked under
+  `WorktreeTabs` (a worktree tab means "which environment"; a document tab means
+  "what am I looking at inside it" — closing them means different things). Both
+  strips self-hide, so a workspace that never opens a diff renders exactly as
+  before. Pin / drag-reorder (native DnD) / middle-click-close / reopen stack.
+- **Persistence** — only the tab SET, in `settings.layout.documents`
+  (`DOCUMENT_LIMITS`, `SETTINGS_VERSION` 21), rebuilt field-by-field in
+  `SettingsManager.normalize` so a renderer-authored entry can't smuggle extra
+  keys. `DiffViewState` is deliberately NOT persisted: restoring a scroll offset
+  into a diff whose shape changed while the app was closed is worse than not.
+- **Renderer** — `features/git/diff/`: `rows.ts` (row model; split view is paired
+  from the SAME unified hunks — no second `git diff`), `DiffEditor.tsx` (CSS grid,
+  not `<table>`, because sticky hunk headers need it; O(1) windowing above
+  `DIFF_LIMITS.virtualizeThreshold`, which is why rows must stay uniform-height —
+  **do not add word wrap**), `useDiffTokens.ts` + `highlightLines()` in
+  `lib/highlight.ts` (Shiki `codeToTokensBase` on the SAME JS-engine singleton, so
+  the packaged-CSP constraint is inherited). Highlighting tokenizes **two
+  pseudo-documents** (old = context+del, new = context+add) rather than each line,
+  or multi-line strings and JSX mis-color. `lib/wordDiff.ts` bails to a whole-line
+  tint above `wordDiffMaxTokens` (the LCS is O(n·m); a minified line would freeze
+  the window). The compact `DiffView` passes `highlight={false}` — the navigator
+  keeps its synchronous cost profile.
+- **Navigator** — `features/git/ChangesNavigator.tsx`, shared by the Git workspace
+  and the Changes drawer panel. Grouping is limited to what the data supports
+  (directory / change type / stage / agent-origin); **group-by repo, worktree, or
+  branch is absent on purpose** — `GitStatus` is one resolved root at a time.
+  There is no "changed by me" filter, and no "origin: user" badge: nothing records
+  user authorship, and the agent having no record of a file is not evidence of it.
+- **Patches come from git, never from `GitFileDiff`** — `parseUnifiedDiff` drops
+  the `diff --git`/`index`/`---`/rename/mode preamble, so a reconstructed patch
+  would not apply. `git:patchText` / `git:patchSave` re-read it (main owns the
+  save dialog; the renderer never supplies a path — the `graph:save` contract).
+
+**Ref naming** lives in `src/shared/refName.ts` — one rule table, enforced in main
+(`managers/git/refs.ts`: `sanitizeRef` for any ref, `sanitizeBranchName` for ones
+being CREATED) and re-used by the renderer to validate before IPC. It matches
+`git check-ref-format` exactly (verified by fuzzing against the real binary): use
+an explicit ASCII class, **never JS `\s`** — `\s` matches NBSP/BOM/U+3000, which
+git accepts, and misses C0 controls and DEL, which it does not.
+
 ### Agent Adapter Architecture (multi-agent: Claude + Cursor) — IN PROGRESS
 
 **Build-order items (1) Authentication, (2) Runtime, (3) Permissions,

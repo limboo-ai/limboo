@@ -6,7 +6,7 @@
  * and broadcast to all renderers whenever they change.
  */
 import { BrowserWindow } from 'electron';
-import type { AppSettings, DeepPartial } from '@shared/types';
+import type { AppSettings, DeepPartial, PersistedDocument } from '@shared/types';
 import {
   AGENT_CONNECTION_LIMITS,
   AGENT_LIMITS,
@@ -15,6 +15,7 @@ import {
   CURSOR_LIMITS,
   CURSOR_MODEL_ID_RE,
   DEFAULT_SETTINGS,
+  DOCUMENT_LIMITS,
   FONT_SCALE_LIMITS,
   GIT_LIMITS,
   GRAPH_LIMITS,
@@ -125,6 +126,39 @@ export class SettingsManager {
       LAYOUT_LIMITS.graph.min,
       LAYOUT_LIMITS.graph.max,
     );
+    // Restored workspace document tabs. This list is authored by the renderer and
+    // replayed at launch, so every element is rebuilt field-by-field from
+    // primitives: an attacker-controlled object here must not smuggle extra keys
+    // (or a `__proto__`) into persisted settings. Paths are NOT resolved here —
+    // the git layer re-validates every path against the repo root on use.
+    merged.layout.documents = (
+      Array.isArray(merged.layout.documents) ? merged.layout.documents : []
+    )
+      .filter((d): d is PersistedDocument => {
+        if (!d || typeof d !== 'object' || Array.isArray(d)) return false;
+        const doc = d as Partial<PersistedDocument>;
+        return (
+          typeof doc.sessionId === 'string' &&
+          doc.sessionId.length > 0 &&
+          doc.sessionId.length <= 128 &&
+          (doc.kind === 'diff' || doc.kind === 'file') &&
+          typeof doc.path === 'string' &&
+          doc.path.length > 0 &&
+          doc.path.length <= DOCUMENT_LIMITS.pathMax &&
+          !doc.path.includes('\0') &&
+          (doc.baseRef === undefined ||
+            (typeof doc.baseRef === 'string' && doc.baseRef.length <= GIT_LIMITS.refNameMax))
+        );
+      })
+      .map((doc) => ({
+        sessionId: doc.sessionId,
+        kind: doc.kind,
+        path: doc.path,
+        staged: doc.staged === true,
+        ...(doc.baseRef ? { baseRef: doc.baseRef } : {}),
+        pinned: doc.pinned === true,
+      }))
+      .slice(0, DOCUMENT_LIMITS.maxPersisted);
     merged.agent.maxTurns = Math.round(
       clamp(merged.agent.maxTurns, AGENT_LIMITS.maxTurns.min, AGENT_LIMITS.maxTurns.max),
     );

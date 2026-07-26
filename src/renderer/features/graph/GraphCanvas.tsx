@@ -57,9 +57,24 @@ interface GraphCanvasProps {
    * every lane beneath and silently rearrange the history being read.
    */
   queryMatches: Set<string> | null;
+  /** How many nodes each stand-in node represents (subagent / completed / compact). */
+  groupCounts?: Map<string, number>;
+  /** Node-appear transitions; already gated on the reduced-motion preference. */
+  animate?: boolean;
   onSelect: (id: string) => void;
   onRevealed: () => void;
   onZoom: (zoom: number) => void;
+  onExpandGroup?: (id: string) => void;
+}
+
+/**
+ * Approximate rendered width of a label, so the fold badge can sit after it.
+ * SVG text has no layout box to measure without a reflow, and an 11px sans
+ * average of ~5.6px/char is close enough for a badge that only needs to not
+ * overlap — measuring exactly would cost a getBBox per node per frame.
+ */
+function measureLabel(text: string): number {
+  return Math.min(text.length, 60) * 5.6 + 6;
 }
 
 export function GraphCanvas({
@@ -77,9 +92,12 @@ export function GraphCanvas({
   maxDepth,
   virtualizeThreshold,
   queryMatches,
+  groupCounts,
+  animate,
   onSelect,
   onRevealed,
   onZoom,
+  onExpandGroup,
 }: GraphCanvasProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const svgRef = useRef<SVGSVGElement>(null);
@@ -297,7 +315,11 @@ export function GraphCanvas({
               const dimmed = queryMatches !== null && !queryMatches.has(placed.id);
 
               return (
-                <g key={placed.id} opacity={dimmed ? 0.25 : 1}>
+                <g
+                  key={placed.id}
+                  opacity={dimmed ? 0.25 : 1}
+                  className={animate ? 'graph-node-appear' : undefined}
+                >
                   <g
                     transform={`translate(${x}, ${y})`}
                     onClick={() => onSelect(placed.id)}
@@ -332,6 +354,23 @@ export function GraphCanvas({
                   >
                     {node.title}
                   </text>
+                  {/* Nodes folded into this one by the grouping / compact
+                      settings. Clicking expands, so a fold is never a dead end. */}
+                  {groupCounts?.get(placed.id) ? (
+                    <text
+                      x={labelX + measureLabel(node.title)}
+                      y={y + 3.5}
+                      fontSize={9}
+                      fill="var(--color-faint)"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onExpandGroup?.(placed.id);
+                      }}
+                      style={{ cursor: 'pointer' }}
+                    >
+                      {`+${groupCounts.get(placed.id)}`}
+                    </text>
+                  ) : null}
                 </g>
               );
             })}

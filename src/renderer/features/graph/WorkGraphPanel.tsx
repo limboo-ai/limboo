@@ -6,7 +6,17 @@
  * scroll container.
  */
 import { useMemo, useState } from 'react';
-import { AlertTriangle, Clipboard, Download, List, Network, Trash2, Workflow, X } from 'lucide-react';
+import {
+  AlertTriangle,
+  Clipboard,
+  Download,
+  List,
+  ListTree,
+  Network,
+  Trash2,
+  Workflow,
+  X,
+} from 'lucide-react';
 import { GRAPH_LIMITS, clamp } from '@shared/constants';
 import type { WorkGraphNodeKind } from '@shared/types';
 import { cn } from '@/renderer/lib/cn';
@@ -20,13 +30,15 @@ import { useUIStore } from '@/renderer/stores/useUIStore';
 import { GraphCanvas } from './GraphCanvas';
 import { GraphInspector } from './GraphInspector';
 import { GraphLegend } from './GraphLegend';
+import { GraphOutline } from './GraphOutline';
+import { buildGraphView, buildOutline } from './viewModel';
 import { GraphQueryBar } from './GraphQueryBar';
 import { GraphReplayBar } from './GraphReplayBar';
 import { useGraphLayout } from './useGraphLayout';
 import { renderLayoutSvg, renderPng } from './exportImage';
 import { ROW_H } from './layout/types';
 
-type SubTab = 'graph' | 'legend';
+type SubTab = 'graph' | 'outline' | 'legend';
 
 /**
  * `system.clipboardWrite` hard-slices at 1 MB in the main process. Anything
@@ -37,7 +49,8 @@ const CLIPBOARD_MAX = 1_000_000;
 
 const SUB_TABS: { id: SubTab; label: string; icon: typeof Network }[] = [
   { id: 'graph', label: 'Graph', icon: Network },
-  { id: 'legend', label: 'Legend', icon: List },
+  { id: 'outline', label: 'Outline', icon: List },
+  { id: 'legend', label: 'Legend', icon: ListTree },
 ];
 
 /** Kind chips offered as filters, in the order they typically appear in a run. */
@@ -85,18 +98,62 @@ export function WorkGraphPanel() {
   const addToast = useUIStore((s) => s.addToast);
   const cfg = useSettingsStore((s) => s.settings.graph);
   const density = useSettingsStore((s) => s.settings.appearance.density);
+  const reducedMotion = useSettingsStore((s) => s.settings.appearance.reducedMotion);
+  /** Groups the user expanded by hand, overriding the two auto-collapse rules. */
+  const [expandedGroups, setExpandedGroups] = useState<Set<string>>(() => new Set());
   const rowHeight = density === 'compact' ? ROW_H.compact : ROW_H.comfortable;
 
   // Filtering hides nodes from the canvas but never from the layout input:
   // dropping a node from the layout would re-flow every lane beneath it, so a
   // filter would silently rearrange the history the user is reading.
+  /**
+   * The shape settings (checkpoints, subagent grouping, completed-branch
+   * collapsing, compact merging) — applied BEFORE the layout, because unlike a
+   * filter they genuinely change which rows exist. Every rule only hides nodes
+   * behind a node that is still drawn, so the graph never gains a hole, and
+   * `groupCounts` is what turns a stand-in node into an expandable one.
+   */
+  const graphView = useMemo(
+    () =>
+      buildGraphView(nodes, edges, {
+        checkpointIntegration: cfg.checkpointIntegration,
+        groupSubagents: cfg.groupSubagents,
+        autoCollapseCompleted: cfg.autoCollapseCompleted,
+        layoutAlgorithm: cfg.layoutAlgorithm,
+        expandedGroups,
+      }),
+    [
+      nodes,
+      edges,
+      cfg.checkpointIntegration,
+      cfg.groupSubagents,
+      cfg.autoCollapseCompleted,
+      cfg.layoutAlgorithm,
+      expandedGroups,
+    ],
+  );
+  const shapedNodes = graphView.nodes;
+
+  // Filtering hides nodes from the canvas but never from the layout input:
+  // dropping a node from the layout would re-flow every lane beneath it, so a
+  // filter would silently rearrange the history the user is reading.
   const visibleNodes = useMemo(() => {
-    let out = kindFilter.length === 0 ? nodes : nodes.filter((n) => kindFilter.includes(n.kind));
+    let out =
+      kindFilter.length === 0 ? shapedNodes : shapedNodes.filter((n) => kindFilter.includes(n.kind));
     // Replay is just a timestamp filter — every node already carries a real one,
     // so nothing extra had to be recorded to make this work.
     if (replayAt !== null) out = out.filter((n) => n.startedAt <= replayAt);
     return out;
-  }, [nodes, kindFilter, replayAt]);
+  }, [shapedNodes, kindFilter, replayAt]);
+
+  const outline = useMemo(
+    () => buildOutline(shapedNodes, cfg.outlineGroupBy),
+    [shapedNodes, cfg.outlineGroupBy],
+  );
+
+  // Node-appear transitions, forced off under the global reduced-motion pref —
+  // an accessibility setting must win over a feature setting, not negotiate.
+  const animate = cfg.animate && !reducedMotion;
 
   /** Ascending node timestamps — the positions the replay scrubber stops at. */
   const stamps = useMemo(
@@ -108,7 +165,7 @@ export function WorkGraphPanel() {
   const maxDepth = clamp(cfg.maxDepth, GRAPH_LIMITS.maxDepth.min, GRAPH_LIMITS.maxDepth.max);
 
   const { layout, computing, tooLarge } = useGraphLayout({
-    nodes,
+    nodes: shapedNodes,
     edges,
     maxLanes,
     rowHeight,
@@ -303,6 +360,22 @@ export function WorkGraphPanel() {
 
       {tab === 'legend' ? (
         <GraphLegend coloring={cfg.nodeColoring} droppedEdges={layout.droppedEdges} />
+      ) : tab === 'outline' ? (
+        shapedNodes.length === 0 ? (
+          <EmptyState
+            compact
+            icon={Workflow}
+            title="No work recorded yet"
+            description="Send a prompt and this session's plans, tools, commands, files, and commits will appear here."
+          />
+        ) : (
+          <GraphOutline
+            groups={outline}
+            selectedId={selectedId}
+            groupCounts={graphView.groupCounts}
+            onSelect={select}
+          />
+        )
       ) : (
         <>
           {nodes.length > 0 && (
@@ -384,9 +457,12 @@ export function WorkGraphPanel() {
                 GRAPH_LIMITS.virtualizeThreshold.max,
               )}
               queryMatches={queryMatches}
+              groupCounts={graphView.groupCounts}
+              animate={animate}
               onSelect={select}
               onRevealed={() => reveal(null)}
               onZoom={setZoom}
+              onExpandGroup={(id) => setExpandedGroups((prev) => new Set(prev).add(id))}
             />
           )}
 

@@ -134,6 +134,13 @@ html[data-reduced-motion="true"] *::after {
   to { opacity: 1; transform: translateY(0) scale(1); }
 }
 
+/* Work Graph node entrance (settings.graph.animate). The rule above already
+   neutralizes it under data-reduced-motion; the panel ALSO gates the class off,
+   so the preference wins whether or not this stylesheet is reached first. */
+.graph-node-appear {
+  animation: limboo-fade-in 180ms ease-out;
+}
+
 /* Indeterminate progress bar used by the startup LoadingScreen. */
 @keyframes limboo-loading {
   0% { transform: translateX(-120%); }

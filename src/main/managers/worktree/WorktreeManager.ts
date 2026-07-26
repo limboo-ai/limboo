@@ -41,7 +41,7 @@ import type { SessionManager } from '../SessionManager';
 import type { WorkspaceManager } from '../WorkspaceManager';
 import type { SettingsManager } from '../SettingsManager';
 import { gitText, runGit } from '../git/exec';
-import { sanitizeRef } from '../git/refs';
+import { sanitizeBranchName, sanitizeRef } from '../git/refs';
 import { assertInsideWorktreeRoot, newSlug, repoBucket, worktreeRootDir } from './paths';
 import { hashRepoConfig, readRepoConfig } from './config';
 
@@ -185,7 +185,8 @@ export class WorktreeManager {
     fs.mkdirSync(bucket, { recursive: true });
 
     const prefix = settings.git.worktrees.branchPrefix;
-    const branch = sanitizeRef(opts.branch?.trim() || `${prefix}/${slug}`);
+    // A branch we are about to CREATE — full check-ref-format rules apply.
+    const branch = sanitizeBranchName(opts.branch?.trim() || `${prefix}/${slug}`);
     const baseRef = opts.baseRef?.trim() ? sanitizeRef(opts.baseRef.trim()) : null;
 
     this.sessions.setWorktree(sessionId, {

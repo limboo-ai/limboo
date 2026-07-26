@@ -44,7 +44,7 @@ import type { SettingsManager } from './SettingsManager';
 import type { MemoryManager } from './memory/MemoryManager';
 import type { GitOpDetail, GitOpKind } from './graph/builder';
 import { assertInsideRepo, gitText, runGit } from './git/exec';
-import { sanitizeRef } from './git/refs';
+import { sanitizeBranchName, sanitizeRef } from './git/refs';
 import {
   LOG_FORMAT,
   parseBlame,
@@ -267,6 +267,31 @@ export class GitManager {
     return { path: rel, binary, staged: !!opts.staged, hunks, language, truncated };
   }
 
+  /**
+   * Raw `git diff` output for one or more paths — a FAITHFUL patch, unlike
+   * anything reconstructed from `GitFileDiff`: `parseUnifiedDiff` deliberately
+   * drops the `diff --git` / `index` / `---` / `+++` / rename / mode preamble, so
+   * a renderer-built patch would not apply for renames, mode changes, or
+   * binaries. Anything that must round-trip through `git apply` comes from here.
+   */
+  async patchText(
+    workspaceId: string,
+    filePaths: string[],
+    opts: { staged?: boolean; baseRef?: string } = {},
+  ): Promise<{ text: string; truncated: boolean }> {
+    const root = await this.requireRoot(workspaceId);
+    const rels = filePaths.map((p) => assertInsideRepo(root, p));
+    const args = ['diff'];
+    if (opts.baseRef) args.push(sanitizeRef(opts.baseRef));
+    if (opts.staged) args.push('--cached');
+    args.push('--', ...rels);
+
+    const res = await runGit(root, args, { maxBuffer: GIT_LIMITS.diffBytesMax + 1024 });
+    const raw = res.stdout;
+    const truncated = raw.length > GIT_LIMITS.diffBytesMax;
+    return { text: truncated ? raw.slice(0, GIT_LIMITS.diffBytesMax) : raw, truncated };
+  }
+
   /* --------------------------------------------------------------- staging */
 
   async stage(workspaceId: string, filePath: string): Promise<void> {
@@ -412,7 +437,7 @@ export class GitManager {
 
   async log(
     workspaceId: string,
-    opts: { limit?: number; offset?: number } = {},
+    opts: { limit?: number; offset?: number; path?: string } = {},
   ): Promise<GitCommit[]> {
     const root = await this.requireRoot(workspaceId);
     const limit = Math.min(opts.limit ?? GIT_LIMITS.logPageSize, GIT_LIMITS.logPageSize);
@@ -423,6 +448,9 @@ export class GitManager {
       String(limit),
       `--skip=${Math.max(0, opts.offset ?? 0)}`,
     ];
+    // Optional path filter — powers "the last commit that touched this file".
+    // `--` terminates options, and the path is repo-root validated first.
+    if (opts.path) args.push('--', assertInsideRepo(root, opts.path));
     const res = await runGit(root, args);
     return res.ok ? parseLog(res.stdout) : [];
   }
@@ -495,7 +523,9 @@ export class GitManager {
 
   async createBranch(workspaceId: string, name: string, checkout = true): Promise<GitCheckoutResult> {
     const root = await this.requireRoot(workspaceId);
-    const ref = sanitizeRef(name);
+    // Creating a ref — apply the full check-ref-format rule set, not just the
+    // argv guard, so an illegal name fails with our reason instead of git's.
+    const ref = sanitizeBranchName(name.trim());
     const res = await runGit(root, checkout ? ['checkout', '-b', ref] : ['branch', ref]);
     this.notifyChanged(workspaceId);
     if (res.ok) this.graph?.onGitOp(workspaceId, 'branch', { branch: ref });
@@ -524,7 +554,7 @@ export class GitManager {
 
   async createTag(workspaceId: string, name: string, message?: string): Promise<void> {
     const root = await this.requireRoot(workspaceId);
-    const ref = sanitizeRef(name);
+    const ref = sanitizeBranchName(name.trim(), 'Tag name');
     const args = message ? ['tag', '-a', ref, '-m', message] : ['tag', ref];
     const res = await runGit(root, args);
     if (!res.ok) throw new Error(res.stderr || 'git tag failed');

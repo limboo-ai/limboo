@@ -148,6 +148,10 @@ export const IpcChannels = {
   gitTags: 'git:tags',
   gitCreateTag: 'git:createTag',
   gitBlame: 'git:blame',
+  /** Faithful `git diff` patch text for one or more paths (copy to clipboard). */
+  gitPatchText: 'git:patchText',
+  /** Same patch, written to a file the USER picks via a main-process dialog. */
+  gitPatchSave: 'git:patchSave',
   gitFetch: 'git:fetch',
   gitPush: 'git:push',
   gitPull: 'git:pull',

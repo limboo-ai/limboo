@@ -45,6 +45,25 @@ export type ActivityTab =
   | 'graph'
   | 'terminal';
 
+/** Kinds of center-column workspace document that survive a restart. */
+export type PersistedDocumentKind = 'diff' | 'file';
+
+/**
+ * One restorable center-column document. The `conversation` document is implicit
+ * (always present, never closable) and so is never persisted.
+ */
+export interface PersistedDocument {
+  sessionId: string;
+  kind: PersistedDocumentKind;
+  /** Repo-relative path of the reviewed file. */
+  path: string;
+  /** Whether the diff is the staged (index) side. */
+  staged: boolean;
+  /** Comparison base, when the document was opened against something other than HEAD. */
+  baseRef?: string;
+  pinned: boolean;
+}
+
 /**
  * Persistent, user-facing preferences. NOTE: there is intentionally NO light
  * theme — Limboo is pure-black, dark-only by product rule. "Appearance" here is
@@ -79,6 +98,14 @@ export interface AppSettings {
     gitWidth: number;
     /** Work Graph drawer width in px (widest default — it renders a canvas). */
     graphWidth: number;
+    /**
+     * Open center-column workspace documents, restored on launch. Only the tab
+     * SET is persisted — never the per-document view state (scroll offset, folds,
+     * selected hunk). Those describe a diff whose shape may have changed while
+     * the app was closed, and restoring a stale offset is worse than not
+     * restoring one. Bounded by `DOCUMENT_LIMITS.maxPersisted`.
+     */
+    documents: PersistedDocument[];
   };
   behavior: {
     /** Keep running in the tray when the last window closes. */
@@ -3115,6 +3142,11 @@ export type CommandId =
   | 'session.duplicate'
   | 'session.nextTab'
   | 'session.prevTab'
+  | 'document.close'
+  | 'document.reopenClosed'
+  | 'document.next'
+  | 'document.prev'
+  | 'diff.toggleSplit'
   | 'drawer.toggleFiles'
   | 'drawer.toggleChanges'
   | 'drawer.toggleTasks'

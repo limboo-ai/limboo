@@ -102,18 +102,19 @@ export function SettingsNav({
                   <button
                     type="button"
                     onClick={() => onSelectCategory(category.id)}
+                    aria-current={active ? 'page' : undefined}
                     className={cn(
                       'relative flex w-full items-center gap-2.5 rounded-md px-2.5 py-1.5 text-left text-[12px] transition-colors',
+                      'focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent',
                       active
                         ? 'bg-surface-2 text-fg'
                         : 'text-muted hover:bg-surface-2 hover:text-fg',
                     )}
                   >
-                    {active && (
-                      <span className="absolute inset-y-1 left-0 w-0.5 rounded-full bg-accent" />
-                    )}
                     <Icon size={15} className={active ? 'text-accent' : 'text-faint'} />
-                    <span className="truncate">{category.label}</span>
+                    <span className={cn('truncate', active && 'font-semibold')}>
+                      {category.label}
+                    </span>
                   </button>
                 </li>
               );

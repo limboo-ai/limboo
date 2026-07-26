@@ -15,6 +15,7 @@ import {
   registerCursorModels,
 } from '@shared/constants';
 import { useLayoutStore } from './useLayoutStore';
+import { useDocumentStore } from './useDocumentStore';
 
 interface SettingsState {
   settings: AppSettings;
@@ -83,6 +84,11 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
     applyAppearance(settings.appearance);
     if (!layoutSeeded) {
       useLayoutStore.getState().seed(settings.layout);
+      // Restore the open workspace document tabs. Seeded once, from the same
+      // payload as the rest of the layout — later `settings:changed` broadcasts
+      // must NOT re-seed, or the store would fight the user's own tab edits
+      // (which are what produced the broadcast in the first place).
+      useDocumentStore.getState().seed(settings.layout.documents ?? []);
       layoutSeeded = true;
     }
     // Persisted Cursor model ids feed this process's provider-routing registry

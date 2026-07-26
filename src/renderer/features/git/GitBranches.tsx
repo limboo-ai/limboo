@@ -6,6 +6,8 @@
 import { useEffect, useState } from 'react';
 import { Check, GitBranch, Plus } from 'lucide-react';
 import type { GitBranch as GitBranchModel } from '@shared/types';
+import { GIT_LIMITS } from '@shared/constants';
+import { validateBranchName } from '@shared/refName';
 import { EmptyState, IconButton } from '@/renderer/components/ui';
 import { cn } from '@/renderer/lib/cn';
 import { useGitStore } from '@/renderer/stores/useGitStore';
@@ -17,16 +19,36 @@ export function GitBranches() {
   const createBranch = useGitStore((s) => s.createBranch);
   const [creating, setCreating] = useState(false);
   const [name, setName] = useState('');
+  const [submitting, setSubmitting] = useState(false);
 
   useEffect(() => {
     void loadBranches();
   }, [loadBranches]);
 
-  const submit = async () => {
-    const trimmed = name.trim();
-    if (trimmed) await createBranch(trimmed);
+  const trimmed = name.trim();
+  // Validate with the SAME rule table the main process enforces, so an illegal
+  // name is explained here and never reaches IPC.
+  const check = trimmed ? validateBranchName(trimmed) : null;
+  const reason = check && !check.ok ? check.reason : null;
+  const canSubmit = !!trimmed && !reason && !submitting;
+
+  const close = () => {
     setName('');
     setCreating(false);
+  };
+
+  const submit = async () => {
+    // Guard re-entry: `onBlur` fires right after Enter, and an invalid name kept
+    // the field mounted — which used to re-submit the identical bad value.
+    if (!canSubmit) return;
+    setSubmitting(true);
+    try {
+      const ok = await createBranch(trimmed);
+      // Only dismiss on success; a rejected name stays put so it can be edited.
+      if (ok) close();
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   return (
@@ -41,19 +63,37 @@ export function GitBranches() {
       </div>
 
       {creating && (
-        <div className="px-1.5 pb-1">
+        <div className="flex flex-col gap-1 px-1.5 pb-1">
           <input
             autoFocus
             value={name}
+            disabled={submitting}
+            maxLength={GIT_LIMITS.refNameMax}
+            spellCheck={false}
+            aria-invalid={!!reason}
+            aria-describedby={reason ? 'branch-name-error' : undefined}
             placeholder="new-branch-name"
             onChange={(e) => setName(e.target.value)}
             onKeyDown={(e) => {
               if (e.key === 'Enter') void submit();
-              if (e.key === 'Escape') setCreating(false);
+              if (e.key === 'Escape') close();
             }}
-            onBlur={() => void submit()}
-            className="w-full rounded-md border border-line bg-surface-2 px-2 py-1 text-[12px] text-fg placeholder:text-faint focus:border-line-strong focus:outline-none"
+            // Blurring with nothing typed just dismisses; blurring with an
+            // invalid name leaves the field open rather than firing a doomed IPC.
+            onBlur={() => {
+              if (!trimmed) close();
+              else void submit();
+            }}
+            className={cn(
+              'w-full rounded-md border bg-surface-2 px-2 py-1 text-[12px] text-fg placeholder:text-faint focus:outline-none disabled:opacity-50',
+              reason ? 'border-danger/60 focus:border-danger' : 'border-line focus:border-line-strong',
+            )}
           />
+          {reason && (
+            <p id="branch-name-error" className="px-0.5 text-[11px] leading-snug text-danger">
+              {reason}
+            </p>
+          )}
         </div>
       )}
 

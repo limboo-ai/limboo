@@ -25,14 +25,13 @@ export function ActivityRail() {
             aria-label={tab.label}
             title={badge > 0 ? `${tab.label} (${badge})` : tab.label}
             onClick={() => toggleTab(tab.id)}
+            aria-current={isActive ? 'page' : undefined}
             className={cn(
               'relative flex h-9 w-9 items-center justify-center rounded-md transition-colors',
-              isActive ? 'bg-surface-2 text-fg' : 'text-muted hover:bg-surface-2 hover:text-fg',
+              'focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent',
+              isActive ? 'bg-surface-2 text-accent' : 'text-muted hover:bg-surface-2 hover:text-fg',
             )}
           >
-            {isActive && (
-              <span className="absolute -right-1.5 top-1/2 h-5 w-0.5 -translate-y-1/2 rounded-full bg-accent" />
-            )}
             <tab.icon size={17} />
             {badge > 0 && (
               <span className="absolute right-1 top-1 flex h-3.5 min-w-3.5 items-center justify-center rounded-full bg-accent px-1 text-[8px] font-bold leading-none text-base">

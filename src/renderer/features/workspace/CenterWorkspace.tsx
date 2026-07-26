@@ -30,7 +30,10 @@ import { useGitStore } from '@/renderer/stores/useGitStore';
 import { useUIStore } from '@/renderer/stores/useUIStore';
 import { useAttachmentStore } from '@/renderer/stores/useAttachmentStore';
 import { useResumeStore } from '@/renderer/stores/useResumeStore';
+import { useDocumentStore } from '@/renderer/stores/useDocumentStore';
 import { ResumeBanner } from '@/renderer/features/resume/ResumeBanner';
+import { DiffWorkspace } from '@/renderer/features/git/diff/DiffWorkspace';
+import { DocumentTabs } from './DocumentTabs';
 
 export function CenterWorkspace() {
   const session = useSessionStore((s) =>
@@ -46,21 +49,56 @@ export function CenterWorkspace() {
     session ? (s.pendingClarificationBySession[session.id] ?? null) : null,
   );
 
+  // Which workspace document this session is showing (conversation by default).
+  const activeDoc = useDocumentStore((s) =>
+    session ? (s.bySession[session.id]?.docs[s.bySession[session.id]?.activeId ?? ''] ?? null) : null,
+  );
+  const ensureSession = useDocumentStore((s) => s.ensureSession);
+
   // Restore the transcript whenever the selected session changes.
   useEffect(() => {
     if (session) {
+      ensureSession(session.id);
       void loadSession(session.id);
       // Restore the session's attachment set (composer drafts + sent chips).
       void useAttachmentStore.getState().loadSession(session.id);
       // Hydrate the session's revalidation state (banner + header chip).
       void useResumeStore.getState().loadSession(session.id);
     }
-  }, [session?.id, loadSession]);
+  }, [session?.id, loadSession, ensureSession]);
+
+  // A promoted diff takes over the column: the conversation chrome below
+  // (session header, services, banners, composer) belongs to the conversation
+  // document, and re-rendering it above a diff would waste three rows.
+  if (session && activeDoc && activeDoc.ref.kind !== 'conversation') {
+    return (
+      <main className="flex h-full min-h-0 flex-col bg-surface">
+        <WorktreeTabs />
+        <DocumentTabs sessionId={session.id} />
+        {activeDoc.ref.kind === 'diff' ? (
+          <DiffWorkspace
+            key={activeDoc.id}
+            documentId={activeDoc.id}
+            sessionId={session.id}
+            path={activeDoc.ref.path}
+            staged={activeDoc.ref.staged}
+            baseRef={activeDoc.ref.baseRef}
+          />
+        ) : (
+          <div className="flex min-h-0 flex-1 items-center justify-center text-[12px] text-faint">
+            {activeDoc.ref.path}
+          </div>
+        )}
+      </main>
+    );
+  }
 
   return (
     <main className="flex h-full min-h-0 flex-col bg-surface">
       {/* Editor-style tabs for worktree-backed sessions (hidden when none exist). */}
       <WorktreeTabs />
+      {/* Document tabs — renders null while the conversation is the only one. */}
+      {session && <DocumentTabs sessionId={session.id} />}
       {session && <SessionHeader sessionId={session.id} title={session.title} branch={session.branch} adds={session.adds} dels={session.dels} />}
       {/* Supervised services for this session (hidden when none are declared). */}
       {session && <ServicesStrip sessionId={session.id} />}

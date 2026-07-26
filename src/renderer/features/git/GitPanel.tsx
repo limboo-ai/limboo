@@ -32,7 +32,7 @@ import { useGitStore, type GitView } from '@/renderer/stores/useGitStore';
 import { useLayoutStore } from '@/renderer/stores/useLayoutStore';
 import { useSettingsStore } from '@/renderer/stores/useSettingsStore';
 import { useUIStore } from '@/renderer/stores/useUIStore';
-import { GitFileRow } from './GitFileRow';
+import { ChangesNavigator } from './ChangesNavigator';
 import { GitHistory } from './GitHistory';
 import { GitCheckpoints } from './GitCheckpoints';
 import { GitBranches } from './GitBranches';
@@ -313,7 +313,6 @@ function ChangesView() {
   const agentReady = useAgentStore((s) => s.install.installed);
   const template = useSettingsStore((s) => s.settings.git.commitMessageTemplate);
   const addToast = useUIStore((s) => s.addToast);
-  const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [committing, setCommitting] = useState(false);
 
   useEffect(() => {
@@ -322,13 +321,6 @@ function ChangesView() {
   }, [template]);
 
   const { staged, unstaged } = useMemo(() => splitFiles(status?.files ?? []), [status?.files]);
-
-  const toggle = (key: string) =>
-    setExpanded((prev) => {
-      const next = new Set(prev);
-      next.has(key) ? next.delete(key) : next.add(key);
-      return next;
-    });
 
   const doCommit = async () => {
     const trimmed = message.trim();
@@ -366,59 +358,7 @@ function ChangesView() {
 
   return (
     <div className="flex flex-col gap-3">
-      {staged.length > 0 && (
-        <Section
-          title={`Staged (${staged.length})`}
-          action={
-            <button
-              type="button"
-              onClick={() => void unstageAll()}
-              className="text-[11px] text-muted hover:text-fg"
-            >
-              Unstage all
-            </button>
-          }
-        >
-          <ul className="flex flex-col gap-0.5">
-            {staged.map((f) => (
-              <GitFileRow
-                key={`s:${f.path}`}
-                change={f}
-                staged
-                expanded={expanded.has(`s:${f.path}`)}
-                onToggle={() => toggle(`s:${f.path}`)}
-              />
-            ))}
-          </ul>
-        </Section>
-      )}
-
-      {unstaged.length > 0 && (
-        <Section
-          title={`Changes (${unstaged.length})`}
-          action={
-            <button
-              type="button"
-              onClick={() => void stageAll()}
-              className="text-[11px] text-muted hover:text-fg"
-            >
-              Stage all
-            </button>
-          }
-        >
-          <ul className="flex flex-col gap-0.5">
-            {unstaged.map((f) => (
-              <GitFileRow
-                key={`w:${f.path}`}
-                change={f}
-                staged={false}
-                expanded={expanded.has(`w:${f.path}`)}
-                onToggle={() => toggle(`w:${f.path}`)}
-              />
-            ))}
-          </ul>
-        </Section>
-      )}
+      <ChangesNavigator files={status?.files ?? []} />
 
       <div className="flex flex-col gap-1.5 border-t border-line pt-2">
         <textarea
@@ -489,28 +429,6 @@ function ChangesView() {
           </div>
         </div>
       </div>
-    </div>
-  );
-}
-
-function Section({
-  title,
-  action,
-  children,
-}: {
-  title: string;
-  action?: React.ReactNode;
-  children: React.ReactNode;
-}) {
-  return (
-    <div className="flex flex-col gap-1">
-      <div className="flex items-center justify-between px-1.5">
-        <span className="text-[11px] font-semibold uppercase tracking-wider text-faint">
-          {title}
-        </span>
-        {action}
-      </div>
-      {children}
     </div>
   );
 }
