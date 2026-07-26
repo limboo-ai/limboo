@@ -21,6 +21,7 @@ import type { VoiceManager } from '../managers/voice/VoiceManager';
 import type { VoiceModelManager } from '../managers/voice/VoiceModelManager';
 import type { CursorAuthManager } from '../managers/cursor/CursorAuthManager';
 import type { McpManager } from '../managers/mcp/McpManager';
+import type { WorkGraphManager } from '../managers/graph/WorkGraphManager';
 import { registerWindowHandlers } from './windowHandlers';
 import { registerSettingsHandlers } from './settingsHandlers';
 import { registerSystemHandlers } from './systemHandlers';
@@ -41,6 +42,7 @@ import { registerUpdateHandlers } from './updateHandlers';
 import { registerVoiceHandlers } from './voiceHandlers';
 import { registerCursorHandlers } from './cursorHandlers';
 import { registerMcpHandlers } from './mcpHandlers';
+import { registerGraphHandlers } from './graphHandlers';
 
 export interface IpcDeps {
   settings: SettingsManager;
@@ -63,9 +65,34 @@ export interface IpcDeps {
   voiceModels: VoiceModelManager;
   cursorAuth: CursorAuthManager;
   mcp: McpManager;
+  graph: WorkGraphManager;
+}
+
+/**
+ * Fail loudly, at registration, if a manager is missing.
+ *
+ * Handlers capture their manager in a closure, so a dep that is `undefined`
+ * here does not fail now — it fails later, on every call, as a
+ * `Cannot read properties of undefined` thrown from deep inside a handler with
+ * no indication of which manager was missing or why. That is exactly the shape
+ * of a real failure this code hit during development, when a hot-reloaded
+ * renderer invoked a channel whose manager had not been constructed by the
+ * main-process build then running.
+ *
+ * One assertion converts that into a boot error that names the culprit.
+ */
+function assertDeps(deps: IpcDeps): void {
+  const missing = (Object.keys(deps) as Array<keyof IpcDeps>).filter((key) => !deps[key]);
+  if (missing.length > 0) {
+    throw new Error(
+      `registerAllIpc: missing manager(s): ${missing.join(', ')}. ` +
+        'Every manager must be constructed in the composition root before IPC is wired.',
+    );
+  }
 }
 
 export function registerAllIpc(deps: IpcDeps): void {
+  assertDeps(deps);
   registerWindowHandlers();
   registerSettingsHandlers(deps.settings);
   registerSystemHandlers(deps.notifications);
@@ -86,4 +113,5 @@ export function registerAllIpc(deps: IpcDeps): void {
   registerVoiceHandlers(deps.voice, deps.voiceModels, deps.settings);
   registerCursorHandlers(deps.cursorAuth, () => deps.agent.hasActiveRuns());
   registerMcpHandlers(deps.mcp);
+  registerGraphHandlers(deps.graph);
 }

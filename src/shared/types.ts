@@ -42,7 +42,27 @@ export type ActivityTab =
   | 'activity'
   | 'console'
   | 'hooks'
+  | 'graph'
   | 'terminal';
+
+/** Kinds of center-column workspace document that survive a restart. */
+export type PersistedDocumentKind = 'diff' | 'file';
+
+/**
+ * One restorable center-column document. The `conversation` document is implicit
+ * (always present, never closable) and so is never persisted.
+ */
+export interface PersistedDocument {
+  sessionId: string;
+  kind: PersistedDocumentKind;
+  /** Repo-relative path of the reviewed file. */
+  path: string;
+  /** Whether the diff is the staged (index) side. */
+  staged: boolean;
+  /** Comparison base, when the document was opened against something other than HEAD. */
+  baseRef?: string;
+  pinned: boolean;
+}
 
 /**
  * Persistent, user-facing preferences. NOTE: there is intentionally NO light
@@ -76,6 +96,16 @@ export interface AppSettings {
     terminalWidth: number;
     /** Git workspace drawer width in px (wider default than other tabs). */
     gitWidth: number;
+    /** Work Graph drawer width in px (widest default — it renders a canvas). */
+    graphWidth: number;
+    /**
+     * Open center-column workspace documents, restored on launch. Only the tab
+     * SET is persisted — never the per-document view state (scroll offset, folds,
+     * selected hunk). Those describe a diff whose shape may have changed while
+     * the app was closed, and restoring a stale offset is worse than not
+     * restoring one. Bounded by `DOCUMENT_LIMITS.maxPersisted`.
+     */
+    documents: PersistedDocument[];
   };
   behavior: {
     /** Keep running in the tray when the last window closes. */
@@ -447,6 +477,83 @@ export interface AppSettings {
     maxCommitsInDelta: number;
     /** Days before an untouched session skips revalidation (0 = always run). */
     staleThresholdDays: number;
+  };
+  /**
+   * Work Graph — the Directed Acyclic Work Graph. A provider-neutral platform
+   * service owned by the app: both adapters' event streams are normalized into
+   * one typed, queryable graph of the work itself, so a session can be
+   * navigated by structure instead of by scrolling a transcript.
+   */
+  graph: {
+    /** Master switch. When off, nothing is ingested — zero rows, zero cost. */
+    enabled: boolean;
+    /** Persist to SQLite. When off the graph is live but in-memory only. */
+    persist: boolean;
+    /**
+     * Delta-coalescing window (ms). A burst of tool calls becomes one IPC push
+     * instead of one per event. 0 flushes synchronously (dev/debug).
+     */
+    updateFrequency: number;
+
+    /** Max nodes retained per session (ring-capped; oldest pruned). */
+    retentionPerSession: number;
+    /** Days before a node is swept (0 = keep forever). */
+    retentionDays: number;
+    /** Fold completed runs older than N days into one summary row (0 = off). */
+    collapseRunsOlderThan: number;
+    /** Drop nodes left orphaned by an interrupted run when the run ends. */
+    pruneOnSessionEnd: boolean;
+
+    /** `lanes` = one node per row (git-graph); `compact` merges sibling reads. */
+    layoutAlgorithm: 'lanes' | 'compact';
+    /** What drives node color. */
+    nodeColoring: 'kind' | 'status' | 'provider';
+    /** Label edges with their relationship kind. */
+    showEdgeLabels: boolean;
+    /** Draw semantic (non-spine) edges for the selected node's neighborhood. */
+    showSemanticEdges: boolean;
+    /** Draw heuristic edges (verified-by, sequential depends-on) — always dashed. */
+    showDerivedEdges: boolean;
+    /** Show file/diff previews in the node inspector. */
+    artifactPreviews: boolean;
+    /** Node-appear transitions. Forced off under `appearance.reducedMotion`. */
+    animate: boolean;
+    /** Replay/animation speed multiplier; scales the replay step interval. */
+    animationSpeed: number;
+
+    /** Group the outline/list view. */
+    outlineGroupBy: 'none' | 'kind' | 'tool' | 'file';
+    /** Collapse a subagent's children into their parent node. */
+    groupSubagents: boolean;
+    /** Auto-collapse branches whose every node has completed. */
+    autoCollapseCompleted: boolean;
+    /** Max traversal depth for queries and the semantic-edge neighborhood. */
+    maxDepth: number;
+
+    /** Hard cap on nodes held for one session in the renderer. */
+    maxNodes: number;
+    /** Max parallel lanes before overflow shares the last lane. */
+    maxLanes: number;
+    /** Node count above which row windowing kicks in. */
+    virtualizeThreshold: number;
+
+    /** Selecting a node navigates the conversation/panels, and vice versa. */
+    timelineSync: boolean;
+    /** Render git checkpoints as graph nodes alongside commits. */
+    checkpointIntegration: boolean;
+    /** Which event sources contribute nodes. */
+    overlays: {
+      git: boolean;
+      terminal: boolean;
+      mcp: boolean;
+      memory: boolean;
+      file: boolean;
+      search: boolean;
+      service: boolean;
+    };
+
+    /** Default format for the panel's export action. */
+    exportFormat: GraphExportTarget;
   };
   /**
    * Attachment Manager — user-supplied files attached in the composer become
@@ -2249,6 +2356,15 @@ export interface AgentToolCall {
    * real first line so the gutter matches the file when the read was offset.
    */
   read?: { content: string; lang?: string; startLine?: number; truncated?: boolean };
+  /**
+   * The `Task` tool call this call was made INSIDE, when it originated in a
+   * subagent's context — the Claude Agent SDK's `parent_tool_use_id`, which it
+   * sets on every assistant/result message from a spawned subagent. Absent for
+   * the main agent's own calls, and always absent for Cursor print mode, which
+   * has no subagents. The Work Graph uses it to nest a subagent's work under
+   * the node that spawned it instead of splicing it into the main spine.
+   */
+  parentCallId?: string;
   status: ToolCallStatus;
   startedAt: number;
   endedAt?: number;
@@ -2527,6 +2643,390 @@ export type HookAuditPush =
   | { kind: 'cleared'; sessionId: string | null };
 
 /* ------------------------------------------------------------------ */
+/* Work Graph — the Directed Acyclic Work Graph (DAWG)                 */
+/*                                                                     */
+/* Limboo's own STRUCTURAL record of engineering work, and the third    */
+/* peer of {@link AgentEvent} (the render stream) and {@link HookEvent} */
+/* (the governance stream). Neither Claude nor Cursor exposes a work    */
+/* graph — both are conversation-driven — but both emit enough          */
+/* structure (tool calls, plans, file edits, shell runs, MCP calls,     */
+/* results) for the host to derive one. So the graph is owned entirely  */
+/* by Limboo and is provider-neutral by construction: every adapter,    */
+/* present and future, contributes nodes through the SAME normalized    */
+/* event layer. See docs/architecture/subsystems/work-graph.md.         */
+/* ------------------------------------------------------------------ */
+
+/**
+ * What one vertex of the work graph represents. Every kind carries its own
+ * typed {@link WorkGraphNode.meta}, which is what makes the graph QUERYABLE
+ * without replaying a conversation.
+ *
+ * Note there is deliberately no `dependency` kind — a dependency is the
+ * `depends-on` EDGE. No provider exposes a dependency object, so a node for it
+ * would be a vertex with no data of its own.
+ */
+export type WorkGraphNodeKind =
+  | 'objective' // the user request that opened a run (the run root)
+  | 'planning' // a SessionPlan artifact reached `ready`
+  | 'task' // one TodoWrite checklist item
+  | 'subagent' // a Claude `Task` tool call — the lane-forking node
+  | 'investigation' // a read-risk tool call (Read/Glob/Grep/WebFetch/…)
+  | 'search' // a limboo_search MCP tool call
+  | 'memory' // a memory retrieval / write
+  | 'mcp' // any other `mcp__*` tool call
+  | 'terminal' // a command execution (agent Bash, user PTY, service, script)
+  | 'git' // commit / checkpoint / branch / tag / checkout / push / pull
+  | 'file' // a workspace file mutation
+  | 'approval' // a permission gate, or a plan approve/reject
+  | 'artifact' // a plan doc, a diff, an attachment, a commit object
+  | 'completion' // the run's terminal result
+  | 'service'; // a supervised service transition
+
+/**
+ * How two nodes relate. `follows`/`contains` are the STRUCTURAL SPINE — the only
+ * edges the lane layouter walks, and the reason the graph reads like a git
+ * history. Everything else is a semantic overlay drawn on demand.
+ */
+export type WorkGraphEdgeKind =
+  // Structural spine:
+  | 'follows'
+  | 'contains' // subagent → its children; objective → its run body
+  // Semantic overlay (the engineering vocabulary):
+  | 'generated'
+  | 'depends-on'
+  | 'implemented-in'
+  | 'verified-by'
+  | 'blocked-by'
+  | 'reviewed-by'
+  | 'produced-artifact';
+
+/** Lifecycle of one graph node. Mirrors {@link ToolCallStatus} where relevant. */
+export type WorkGraphNodeStatus = 'running' | 'done' | 'error' | 'denied' | 'skipped';
+
+/**
+ * The bidirectional-navigation join key: what existing entity this node stands
+ * for. Persisted as two indexed columns (`ref_kind` / `ref_id`) so "reveal the
+ * node for this commit" is an index lookup, not a scan. Selecting a node
+ * navigates to the referenced surface; the referenced surface can reveal the
+ * node.
+ */
+export type WorkGraphRef =
+  | { kind: 'message'; id: string } // ChatMessage.id
+  | { kind: 'tool'; id: string } // AgentToolCall.id
+  | { kind: 'commit'; id: string } // git commit hash
+  | { kind: 'checkpoint'; id: string } // git_checkpoints.id
+  | { kind: 'terminal'; id: string } // TerminalSession.id
+  | { kind: 'memory'; id: string } // memories.id
+  | { kind: 'file'; id: string } // workspace-relative path
+  | { kind: 'mcp'; id: string } // MCP server name
+  | { kind: 'plan'; id: string } // sessionId (agent_plans is 1:1)
+  | { kind: 'service'; id: string } // service name
+  | { kind: 'worktree'; id: string } // worktree branch name
+  | { kind: 'attachment'; id: string }; // attachment file name
+
+/**
+ * One edge. `derived` is the honesty valve: `follows`/`contains`/`generated`/
+ * `reviewed-by`/`produced-artifact`/`implemented-in` are read straight off a
+ * provider event (exact), while `verified-by` and the sequential `depends-on`
+ * are INFERRED. Derived edges render dashed and are independently filterable,
+ * so a heuristic can never masquerade as a fact.
+ */
+export interface WorkGraphEdge {
+  id: string;
+  sessionId: string;
+  /** Source node id. */
+  src: string;
+  /** Destination node id. */
+  dst: string;
+  kind: WorkGraphEdgeKind;
+  /** True when inferred by a heuristic rather than read from an event. */
+  derived: boolean;
+  /** Epoch ms. */
+  createdAt: number;
+}
+
+/** Fields every node carries, regardless of kind. */
+export interface WorkGraphNodeBase {
+  id: string;
+  sessionId: string;
+  workspaceId: string | null;
+  /** The `objective` node id this belongs to (a run root refers to itself). */
+  runId: string;
+  kind: WorkGraphNodeKind;
+  /** Which adapter produced it; `limboo` = app-originated (git, services, FS). */
+  provider: 'anthropic' | 'cursor' | 'limboo';
+  status: WorkGraphNodeStatus;
+  /** Redacted, clamped to GRAPH_LIMITS.titleMax. */
+  title: string;
+  /** Redacted, clamped to GRAPH_LIMITS.detailMax. */
+  detail?: string;
+  ref?: WorkGraphRef;
+  /** Epoch ms. */
+  startedAt: number;
+  endedAt?: number;
+  /**
+   * Monotonic per-session insertion counter. The layouter sorts by
+   * `(startedAt, seq)`, so this is what makes node order TOTAL and stable
+   * across reloads even when two events share a millisecond.
+   */
+  seq: number;
+}
+
+/**
+ * A typed vertex of the work graph. The `meta` discriminant is the whole point:
+ * because every node kind carries its own structured payload, the graph answers
+ * questions ("every task blocked by authentication", "commits created after a
+ * failed command") by traversal rather than by re-reading a transcript.
+ */
+export type WorkGraphNode =
+  | (WorkGraphNodeBase & {
+      kind: 'objective';
+      meta: {
+        prompt: string;
+        mode: SessionPermissionMode;
+        model: string;
+        attachmentCount: number;
+      };
+    })
+  | (WorkGraphNodeBase & {
+      kind: 'planning';
+      meta: {
+        planTitle: string;
+        taskCount: number;
+        affectedFiles?: number;
+        risk?: 'low' | 'medium' | 'high';
+        planStatus: PlanStatus;
+      };
+    })
+  | (WorkGraphNodeBase & {
+      kind: 'task';
+      meta: { label: string; taskStatus: TaskStatus; index: number };
+    })
+  | (WorkGraphNodeBase & {
+      kind: 'subagent';
+      meta: { toolName: string; childCount: number };
+    })
+  | (WorkGraphNodeBase & {
+      kind: 'investigation';
+      meta: { tool: string; target?: string; resultChars?: number };
+    })
+  | (WorkGraphNodeBase & {
+      kind: 'search';
+      meta: { tool: string; query?: string; hitCount?: number; durationMs?: number };
+    })
+  | (WorkGraphNodeBase & {
+      kind: 'memory';
+      meta: {
+        op: 'retrieve' | 'create' | 'accept' | 'use';
+        memoryIds: string[];
+        tiers: MemoryTier[];
+        scores?: number[];
+      };
+    })
+  | (WorkGraphNodeBase & {
+      kind: 'mcp';
+      meta: {
+        server: string;
+        tool: string;
+        /** True for Limboo's own in-process servers (limboo_memory/limboo_search). */
+        internal: boolean;
+        params?: string;
+        durationMs?: number;
+      };
+    })
+  | (WorkGraphNodeBase & {
+      kind: 'terminal';
+      meta: {
+        command: string;
+        origin: TerminalOrigin;
+        terminalId?: string;
+        /**
+         * Real PTY exit code. UNDEFINED for agent commands — the Agent SDK does
+         * not stream tool stdout, so an agent Bash call resolves to done/error
+         * only. Never synthesize a 0 here.
+         */
+        exitCode?: number;
+        durationMs?: number;
+        approval?: { decision: 'allow' | 'deny'; auto: boolean };
+      };
+    })
+  | (WorkGraphNodeBase & {
+      kind: 'git';
+      meta: {
+        op:
+          | 'commit'
+          | 'checkpoint'
+          | 'checkpoint-deleted'
+          | 'branch'
+          | 'tag'
+          | 'checkout'
+          | 'push'
+          | 'pull'
+          | 'fetch'
+          | 'init'
+          | 'restore'
+          | 'worktree-created'
+          | 'worktree-removed';
+        hash?: string;
+        branch?: string;
+        checkpointId?: string;
+        /** Remote name for push/pull/fetch; never a URL (URLs carry credentials). */
+        remote?: string;
+        files: FileChange[];
+        adds: number;
+        dels: number;
+      };
+    })
+  | (WorkGraphNodeBase & {
+      kind: 'file';
+      meta: { change: FileChange; tool?: string; hasPreview: boolean };
+    })
+  | (WorkGraphNodeBase & {
+      kind: 'approval';
+      meta: {
+        subject: 'tool' | 'plan';
+        tool?: string;
+        risk?: ToolRisk;
+        decision: 'allow' | 'deny' | 'ask';
+        /** True when resolved without prompting a human (auto / remembered). */
+        auto: boolean;
+      };
+    })
+  | (WorkGraphNodeBase & {
+      kind: 'artifact';
+      meta: {
+        artifactKind: 'plan' | 'diff' | 'attachment' | 'commit' | 'doc' | 'binary';
+        path?: string;
+        bytes?: number;
+        mime?: string;
+        /** Files covered, for a `diff` artifact (a resume delta). */
+        fileCount?: number;
+      };
+    })
+  | (WorkGraphNodeBase & {
+      kind: 'completion';
+      meta: {
+        ok: boolean;
+        outcome?: RequestOutcome;
+        durationMs: number;
+        toolCount: number;
+        fileCount: number;
+      };
+    })
+  | (WorkGraphNodeBase & {
+      kind: 'service';
+      meta: { name: string; state: ServiceStatus; port?: number; url?: string };
+    });
+
+/**
+ * Export formats the MAIN process renders from the stored graph. Pure data
+ * transforms, so they are always complete — unlike the two image formats, which
+ * can only be produced from the canvas the renderer drew.
+ */
+export type GraphExportFormat = 'json' | 'md' | 'mermaid' | 'dot' | 'csv' | 'html';
+
+/** Every format the export UI offers, including the renderer-drawn images. */
+export type GraphExportTarget = GraphExportFormat | 'svg' | 'png';
+
+/**
+ * Recording health, surfaced in the panel.
+ *
+ * Every error path in the graph subsystem is a swallowed log line — which is
+ * correct (the graph must never break a run) but left a graph that had silently
+ * stopped recording indistinguishable from a quiet session. This is the honest
+ * signal: the panel says so instead of implying an empty graph means no work.
+ */
+export interface WorkGraphHealth {
+  /** Consecutive persist failures. 0 = healthy. */
+  failures: number;
+  /** Last persist error message, redacted and clamped. */
+  lastError?: string;
+  /** Edges dropped because an endpoint no longer exists (ring-pruned). */
+  droppedEdges: number;
+}
+
+/** A session's whole persisted graph, used to hydrate the panel on mount. */
+export interface WorkGraphSnapshot {
+  sessionId: string;
+  nodes: WorkGraphNode[];
+  edges: WorkGraphEdge[];
+  /** The delta sequence this snapshot is current as of. */
+  seq: number;
+  /**
+   * True when this is not the whole history: either the read window cut rows,
+   * or the retention ring already deleted the start of the session. The panel
+   * surfaces it so a trimmed graph never reads as a complete one.
+   */
+  truncated: boolean;
+  /** Recording health at snapshot time; absent means healthy. */
+  health?: WorkGraphHealth;
+}
+
+/**
+ * The renderer-facing push. `nodes` in a delta are UPSERTS — a node is small, so
+ * re-sending it on completion is cheaper than a patch protocol and removes a
+ * whole class of merge bugs. `seq` is monotonic per session; on observing a gap
+ * the renderer refetches via `graph:get` instead of rendering a torn graph.
+ */
+export type WorkGraphPush =
+  | {
+      kind: 'delta';
+      sessionId: string;
+      seq: number;
+      nodes: WorkGraphNode[];
+      edges: WorkGraphEdge[];
+      /** Node ids the retention ring deleted; the renderer drops them. */
+      removed?: string[];
+      /** Present only when unhealthy, so a healthy push costs nothing. */
+      health?: WorkGraphHealth;
+    }
+  | { kind: 'reset'; sessionId: string | null; health?: WorkGraphHealth };
+
+/**
+ * A structural traversal request. Answered as an FTS seed set (the text
+ * predicate) followed by a BOUNDED recursive closure over the edge table —
+ * neither alone answers the product's questions. `depth` and `limit` are
+ * clamped in the main process: an unbounded `WITH RECURSIVE` over a large graph
+ * would be a renderer-triggerable main-process hang.
+ */
+export interface WorkGraphQuery {
+  /** Free text matched against node title+detail via FTS5 BM25. */
+  text?: string;
+  /** Restrict the seed set to these node kinds. */
+  kinds?: WorkGraphNodeKind[];
+  /** Restrict traversal to these edge kinds. */
+  edgeKinds?: WorkGraphEdgeKind[];
+  /**
+   * Restrict the seed set to these statuses. Without it "failed commands" was
+   * unexpressible — the canned query of that name could only filter to terminal
+   * nodes and then return the successful ones too.
+   */
+  statuses?: WorkGraphNodeStatus[];
+  /** Seed only nodes started at or after this epoch ms. */
+  since?: number;
+  /** Seed only nodes started at or before this epoch ms. */
+  until?: number;
+  /** Walk toward descendants (`down`) or ancestors (`up`). */
+  direction: 'up' | 'down';
+  /** Start the traversal from one node instead of an FTS seed set. */
+  fromNodeId?: string;
+  /** Include heuristic edges (verified-by, sequential depends-on). */
+  includeDerived: boolean;
+  depth: number;
+  limit: number;
+}
+
+/** The result of a {@link WorkGraphQuery} — a subgraph, not a flat list. */
+export interface WorkGraphQueryResult {
+  nodes: WorkGraphNode[];
+  edges: WorkGraphEdge[];
+  /** Node ids that matched the seed predicate directly (vs. reached by walking). */
+  seeds: string[];
+  /** True when `limit` or `depth` cut the traversal short. */
+  truncated: boolean;
+}
+
+/* ------------------------------------------------------------------ */
 /* Voice subsystem — local STT/TTS as a modality of the agent session  */
 /* ------------------------------------------------------------------ */
 
@@ -2642,6 +3142,11 @@ export type CommandId =
   | 'session.duplicate'
   | 'session.nextTab'
   | 'session.prevTab'
+  | 'document.close'
+  | 'document.reopenClosed'
+  | 'document.next'
+  | 'document.prev'
+  | 'diff.toggleSplit'
   | 'drawer.toggleFiles'
   | 'drawer.toggleChanges'
   | 'drawer.toggleTasks'

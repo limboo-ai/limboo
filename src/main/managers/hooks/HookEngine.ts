@@ -28,16 +28,10 @@ import { HOOK_LIMITS, providerForModel } from '@shared/constants';
 import type { DiagnosticSeverity, HookAuditPush, HookEvent, HookPhase } from '@shared/types';
 import { getDb } from '../../db/database';
 import { logger } from '../../logger';
+// The redactor is shared with the Work Graph so both observability sinks apply
+// identical rules — two copies would drift, and a drifted redactor is a leak.
+import { redactSecrets as redact } from '../graph/redact';
 import type { SettingsManager } from '../SettingsManager';
-
-/** Strip token-like secrets before anything reaches the DB / renderer. */
-function redact(text: string): string {
-  return text
-    .replace(/sk-[A-Za-z0-9_-]{10,}/g, 'sk-***')
-    .replace(/crsr_[A-Za-z0-9_-]{8,}/g, 'crsr_***')
-    .replace(/(ANTHROPIC_API_KEY|ANTHROPIC_AUTH_TOKEN|CLAUDE_CODE_OAUTH_TOKEN|CURSOR_API_KEY)=\S+/gi, '$1=***')
-    .replace(/(authorization|bearer)\s*[:=]?\s*[A-Za-z0-9._-]{10,}/gi, '$1 ***');
-}
 
 /** Fields a producer supplies; the engine stamps id/provider/at + redacts. */
 export interface HookEmit {

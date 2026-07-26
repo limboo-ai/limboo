@@ -716,6 +716,24 @@ export class ResumeManager {
     } catch {
       /* timeline is decoration — never fail revalidation over it */
     }
+    // The Work Graph records the delta as an artifact the next run depends on.
+    // It cannot pick this up from the timeline: `recordStatus` writes a
+    // `status` activity row, and the graph deliberately ingests no activity.
+    try {
+      this.graph?.onDelta(sessionId, 'Repository changed since last visit', summary, delta.filesTotal);
+    } catch {
+      /* observability must never fail revalidation */
+    }
+  }
+
+  /** Optional Work Graph — repository deltas become artifact nodes. */
+  private graph?: {
+    onDelta(sessionId: string, summary: string, detail: string | undefined, files: number): void;
+  };
+
+  /** Wire the Work Graph so a resume delta lands in the execution graph. */
+  setWorkGraph(graph: NonNullable<ResumeManager['graph']>): void {
+    this.graph = graph;
   }
 
   /* -------------------------------------------------------------- injection */

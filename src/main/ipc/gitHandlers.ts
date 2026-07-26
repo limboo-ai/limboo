@@ -5,6 +5,8 @@
  * and file paths are validated against the repo root inside the manager. Git is
  * always spawned argv-style (never a shell) by the manager.
  */
+import fs from 'node:fs/promises';
+import { dialog } from 'electron';
 import { IpcChannels } from '@shared/ipc-channels';
 import { GIT_LIMITS } from '@shared/constants';
 import type {
@@ -57,6 +59,92 @@ function assertText(value: unknown, max: number, label: string): asserts value i
   }
 }
 
+/**
+ * Validate the diff/patch options object. `assertBoolOpts` cannot be used here
+ * because `baseRef` is a string — and a string that becomes a git argv element,
+ * which is exactly the kind of value that must not arrive unchecked. The ref's
+ * SHAPE is then re-validated by `sanitizeRef` inside the manager; this is the
+ * boundary length/type/key check.
+ */
+function assertDiffOpts(
+  opts: unknown,
+  label = 'diff options',
+): asserts opts is { staged?: boolean; baseRef?: string } | undefined {
+  if (opts === undefined) return;
+  if (typeof opts !== 'object' || opts === null || Array.isArray(opts)) {
+    throw new Error(`git: invalid ${label}`);
+  }
+  for (const key of Object.keys(opts)) {
+    if (key !== 'staged' && key !== 'baseRef') {
+      throw new Error(`git: unexpected ${label} key: ${key}`);
+    }
+  }
+  const { staged, baseRef } = opts as { staged?: unknown; baseRef?: unknown };
+  if (staged !== undefined && typeof staged !== 'boolean') {
+    throw new Error(`git: ${label}.staged must be a boolean`);
+  }
+  if (
+    baseRef !== undefined &&
+    (typeof baseRef !== 'string' || baseRef.length === 0 || baseRef.length > GIT_LIMITS.refNameMax)
+  ) {
+    throw new Error(`git: invalid ${label}.baseRef`);
+  }
+}
+
+/** Validate the history options. `path` becomes a git pathspec, so it is checked. */
+function assertLogOpts(
+  opts: unknown,
+): asserts opts is { limit?: number; offset?: number; path?: string } | undefined {
+  if (opts === undefined) return;
+  if (typeof opts !== 'object' || opts === null || Array.isArray(opts)) {
+    throw new Error('git: invalid log options');
+  }
+  for (const key of Object.keys(opts)) {
+    if (key !== 'limit' && key !== 'offset' && key !== 'path') {
+      throw new Error(`git: unexpected log options key: ${key}`);
+    }
+  }
+  const { limit, offset, path } = opts as {
+    limit?: unknown;
+    offset?: unknown;
+    path?: unknown;
+  };
+  for (const [name, value] of [
+    ['limit', limit],
+    ['offset', offset],
+  ] as const) {
+    if (value !== undefined && (typeof value !== 'number' || !Number.isFinite(value))) {
+      throw new Error(`git: log options.${name} must be a number`);
+    }
+  }
+  if (
+    path !== undefined &&
+    (typeof path !== 'string' ||
+      path.length === 0 ||
+      path.length > GIT_LIMITS.patchPathMax ||
+      path.includes('\0'))
+  ) {
+    throw new Error('git: invalid log options.path');
+  }
+}
+
+/** Validate a renderer-supplied list of repo paths for a patch request. */
+function assertPaths(paths: unknown): asserts paths is string[] {
+  if (!Array.isArray(paths) || paths.length === 0 || paths.length > GIT_LIMITS.patchPathsMax) {
+    throw new Error('git: invalid paths');
+  }
+  for (const p of paths) {
+    if (
+      typeof p !== 'string' ||
+      p.length === 0 ||
+      p.length > GIT_LIMITS.patchPathMax ||
+      p.includes('\0')
+    ) {
+      throw new Error('git: invalid path');
+    }
+  }
+}
+
 export function registerGitHandlers(git: GitManager, agent: AgentManager): void {
   handle<[string], GitStatus>(IpcChannels.gitStatus, (_e, wsId) => {
     assertId(wsId, 'workspaceId');
@@ -67,9 +155,49 @@ export function registerGitHandlers(git: GitManager, agent: AgentManager): void 
     IpcChannels.gitDiff,
     (_e, wsId, path, opts) => {
       assertId(wsId, 'workspaceId');
+      assertDiffOpts(opts);
       return git.diff(wsId, path, opts ?? {});
     },
   );
+
+  handle<
+    [string, string[], { staged?: boolean; baseRef?: string }?],
+    { text: string; truncated: boolean }
+  >(IpcChannels.gitPatchText, (_e, wsId, paths, opts) => {
+    assertId(wsId, 'workspaceId');
+    assertPaths(paths);
+    assertDiffOpts(opts);
+    return git.patchText(wsId, paths, opts ?? {});
+  });
+
+  handle<
+    [string, string[], { staged?: boolean; baseRef?: string }?],
+    { saved: boolean; path?: string }
+  >(IpcChannels.gitPatchSave, async (_e, wsId, paths, opts) => {
+    assertId(wsId, 'workspaceId');
+    assertPaths(paths);
+    assertDiffOpts(opts);
+    const { text } = await git.patchText(wsId, paths, opts ?? {});
+    if (!text) return { saved: false };
+    // The renderer NEVER supplies a destination: main owns the dialog and the
+    // write, exactly like `graph:save`. This is the only filesystem write in the
+    // diff review path.
+    const suggested =
+      paths.length === 1
+        ? `${(paths[0].split('/').pop() ?? 'changes').replace(/[^\w.-]/g, '_')}.patch`
+        : 'changes.patch';
+    const result = await dialog.showSaveDialog({
+      title: 'Export patch',
+      defaultPath: suggested,
+      filters: [
+        { name: 'Patch', extensions: ['patch', 'diff'] },
+        { name: 'All files', extensions: ['*'] },
+      ],
+    });
+    if (result.canceled || !result.filePath) return { saved: false };
+    await fs.writeFile(result.filePath, text, 'utf8');
+    return { saved: true, path: result.filePath };
+  });
 
   handle<[string, string], void>(IpcChannels.gitStage, (_e, wsId, path) => {
     assertId(wsId, 'workspaceId');
@@ -122,10 +250,11 @@ export function registerGitHandlers(git: GitManager, agent: AgentManager): void 
     agent.cancelCommitMessage(wsId);
   });
 
-  handle<[string, { limit?: number; offset?: number }?], GitCommit[]>(
+  handle<[string, { limit?: number; offset?: number; path?: string }?], GitCommit[]>(
     IpcChannels.gitLog,
     (_e, wsId, opts) => {
       assertId(wsId, 'workspaceId');
+      assertLogOpts(opts);
       return git.log(wsId, opts ?? {});
     },
   );

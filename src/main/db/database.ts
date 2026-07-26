@@ -539,6 +539,91 @@ function migrate(database: Database.Database): void {
       ON mcp_servers (workspace_id, updated_at DESC);
     CREATE UNIQUE INDEX IF NOT EXISTS idx_mcp_servers_name
       ON mcp_servers (workspace_id, name);
+
+    -- Work Graph (schema v15) — the Directed Acyclic Work Graph: Limboo's own
+    -- structural record of engineering work, normalized across BOTH providers
+    -- from the AgentManager event stream. Nodes are typed, so the graph is
+    -- queryable without replaying a conversation. The payload column is the
+    -- JSON-serialized WorkGraphNode (already redacted + length-bounded by the
+    -- builder); the header columns are exactly the fields traversal and index
+    -- queries filter on. ref_kind/ref_id is the bidirectional-navigation join
+    -- (message/tool/commit/checkpoint/terminal/memory/file/mcp/plan/service).
+    -- There is no separate runs table: a run IS its objective node (run_id
+    -- refers to itself for a root).
+    CREATE TABLE IF NOT EXISTS work_graph_nodes (
+      id           TEXT PRIMARY KEY,
+      session_id   TEXT NOT NULL,
+      workspace_id TEXT,
+      run_id       TEXT NOT NULL,
+      kind         TEXT NOT NULL,
+      provider     TEXT NOT NULL,
+      status       TEXT NOT NULL,
+      title        TEXT NOT NULL,
+      detail       TEXT NOT NULL DEFAULT '',
+      ref_kind     TEXT,
+      ref_id       TEXT,
+      seq          INTEGER NOT NULL,
+      started_at   INTEGER NOT NULL,
+      ended_at     INTEGER,
+      payload      TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_work_graph_nodes_session
+      ON work_graph_nodes (session_id, seq);
+    CREATE INDEX IF NOT EXISTS idx_work_graph_nodes_run
+      ON work_graph_nodes (run_id, seq);
+    CREATE INDEX IF NOT EXISTS idx_work_graph_nodes_kind
+      ON work_graph_nodes (session_id, kind, started_at);
+    CREATE INDEX IF NOT EXISTS idx_work_graph_nodes_ref
+      ON work_graph_nodes (ref_kind, ref_id);
+    CREATE INDEX IF NOT EXISTS idx_work_graph_nodes_age
+      ON work_graph_nodes (started_at);
+
+    -- Work Graph edges (schema v15) — a SEPARATE table, deliberately not folded
+    -- into the node payload. The product's whole point is traversal ("every
+    -- task blocked by authentication"), which is a recursive join; edges stored
+    -- as JSON would force a full scan + parse per query. The derived flag marks
+    -- heuristic edges (verified-by, sequential depends-on) so the UI can dash
+    -- them and queries can exclude them — a heuristic must never be able to
+    -- masquerade as a fact. The FK cascade (PRAGMA foreign_keys is ON) keeps
+    -- edges from outliving a ring-pruned node.
+    CREATE TABLE IF NOT EXISTS work_graph_edges (
+      id         TEXT PRIMARY KEY,
+      session_id TEXT NOT NULL,
+      src        TEXT NOT NULL REFERENCES work_graph_nodes(id) ON DELETE CASCADE,
+      dst        TEXT NOT NULL REFERENCES work_graph_nodes(id) ON DELETE CASCADE,
+      kind       TEXT NOT NULL,
+      derived    INTEGER NOT NULL DEFAULT 0,
+      created_at INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_work_graph_edges_src
+      ON work_graph_edges (session_id, src, kind);
+    CREATE INDEX IF NOT EXISTS idx_work_graph_edges_dst
+      ON work_graph_edges (session_id, dst, kind);
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_work_graph_edges_triple
+      ON work_graph_edges (src, dst, kind);
+
+    -- FTS5 over node title+detail (mirrors memories_fts / search_files_fts).
+    -- Graph search is a HYBRID: FTS supplies the seed set for a text predicate
+    -- ("authentication", "touched GitHub"), and a WITH RECURSIVE closure over
+    -- work_graph_edges does the actual traversal from those seeds. Neither
+    -- alone answers the questions this subsystem exists for.
+    CREATE VIRTUAL TABLE IF NOT EXISTS work_graph_nodes_fts USING fts5(
+      title, detail, content='work_graph_nodes', content_rowid='rowid'
+    );
+    CREATE TRIGGER IF NOT EXISTS work_graph_nodes_ai AFTER INSERT ON work_graph_nodes BEGIN
+      INSERT INTO work_graph_nodes_fts(rowid, title, detail)
+        VALUES (new.rowid, new.title, new.detail);
+    END;
+    CREATE TRIGGER IF NOT EXISTS work_graph_nodes_ad AFTER DELETE ON work_graph_nodes BEGIN
+      INSERT INTO work_graph_nodes_fts(work_graph_nodes_fts, rowid, title, detail)
+        VALUES ('delete', old.rowid, old.title, old.detail);
+    END;
+    CREATE TRIGGER IF NOT EXISTS work_graph_nodes_au AFTER UPDATE ON work_graph_nodes BEGIN
+      INSERT INTO work_graph_nodes_fts(work_graph_nodes_fts, rowid, title, detail)
+        VALUES ('delete', old.rowid, old.title, old.detail);
+      INSERT INTO work_graph_nodes_fts(rowid, title, detail)
+        VALUES (new.rowid, new.title, new.detail);
+    END;
   `);
 
   // Idempotent column additions for databases created before a column existed.

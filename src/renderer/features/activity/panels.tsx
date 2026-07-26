@@ -9,7 +9,6 @@ import {
   Activity,
   AlertTriangle,
   CheckCircle2,
-  ChevronsDownUp,
   FileDiff,
   FolderOpen,
   GitBranch,
@@ -20,12 +19,7 @@ import {
   Terminal,
   type LucideIcon,
 } from 'lucide-react';
-import type {
-  AgentActivityItem,
-  FileChange,
-  GitFileChange,
-  SessionTimelineEntry,
-} from '@shared/types';
+import type { AgentActivityItem, FileChange, SessionTimelineEntry } from '@shared/types';
 import { DiffStat, EmptyState, IconButton } from '@/renderer/components/ui';
 import { cn } from '@/renderer/lib/cn';
 import { relativeTime } from '@/renderer/lib/format';
@@ -37,7 +31,7 @@ import { useFileSystemStore } from '@/renderer/stores/useFileSystemStore';
 import { useGitStore } from '@/renderer/stores/useGitStore';
 import { useLayoutStore } from '@/renderer/stores/useLayoutStore';
 import { FileTree } from './FileTree';
-import { GitFileRow } from '@/renderer/features/git/GitFileRow';
+import { ChangesNavigator } from '@/renderer/features/git/ChangesNavigator';
 
 export { PlanPanel as TasksPanel } from './PlanPanel';
 
@@ -124,7 +118,6 @@ export function ChangesPanel() {
   const refresh = useGitStore((s) => s.refresh);
   const stageAll = useGitStore((s) => s.stageAll);
   const setActiveTab = useLayoutStore((s) => s.setActiveTab);
-  const [expanded, setExpanded] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     void refresh();
@@ -173,63 +166,24 @@ export function ChangesPanel() {
     );
   }
 
-  const toggle = (key: string) =>
-    setExpanded((prev) => {
-      const next = new Set(prev);
-      next.has(key) ? next.delete(key) : next.add(key);
-      return next;
-    });
-  const expandAll = () => setExpanded(new Set(files.map((f) => rowKey(f))));
-  const collapseAll = () => setExpanded(new Set());
-  const totalAdds = files.reduce((n, f) => n + f.adds, 0);
-  const totalDels = files.reduce((n, f) => n + f.dels, 0);
-
   return (
-    <div className="flex flex-col gap-1">
-      <div className="flex items-center gap-1 px-1 pb-1">
-        <span className="mr-auto flex items-center gap-2 text-[11px] text-faint">
-          {files.length} change{files.length === 1 ? '' : 's'}
-          {(totalAdds > 0 || totalDels > 0) && <DiffStat adds={totalAdds} dels={totalDels} />}
-        </span>
-        <IconButton label="Expand all" size="sm" onClick={expandAll}>
-          <ChevronsDownUp size={13} className="rotate-180" />
-        </IconButton>
-        <IconButton label="Collapse all" size="sm" onClick={collapseAll}>
-          <ChevronsDownUp size={13} />
-        </IconButton>
-        <IconButton label="Stage all" size="sm" onClick={() => void stageAll()}>
-          <Plus size={13} />
-        </IconButton>
-        <IconButton label="Refresh" size="sm" onClick={() => void refresh()}>
-          <RefreshCw size={13} />
-        </IconButton>
-        <IconButton label="Open Git workspace" size="sm" onClick={() => setActiveTab('git')}>
-          <GitBranch size={13} />
-        </IconButton>
-      </div>
-      <ul className="flex flex-col gap-0.5">
-        {files.map((f) => {
-          const staged = !f.unstaged && f.staged;
-          const key = rowKey(f);
-          return (
-            <GitFileRow
-              key={key}
-              change={f}
-              staged={staged}
-              expanded={expanded.has(key)}
-              onToggle={() => toggle(key)}
-            />
-          );
-        })}
-      </ul>
-    </div>
+    <ChangesNavigator
+      files={files}
+      actions={
+        <>
+          <IconButton label="Stage all" size="sm" onClick={() => void stageAll()}>
+            <Plus size={13} />
+          </IconButton>
+          <IconButton label="Refresh" size="sm" onClick={() => void refresh()}>
+            <RefreshCw size={13} />
+          </IconButton>
+          <IconButton label="Open Git workspace" size="sm" onClick={() => setActiveTab('git')}>
+            <GitBranch size={13} />
+          </IconButton>
+        </>
+      }
+    />
   );
-}
-
-/** Stable expand key for a change row (matches the diff side used for display). */
-function rowKey(f: GitFileChange): string {
-  const staged = !f.unstaged && f.staged;
-  return `${staged ? 's' : 'w'}:${f.path}`;
 }
 
 /** Read-only row for the non-repo fallback (agent snapshot changes, no diff). */

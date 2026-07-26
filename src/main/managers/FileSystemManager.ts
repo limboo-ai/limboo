@@ -92,6 +92,29 @@ export class FileSystemManager {
     this.search = search;
   }
 
+  /**
+   * Optional Work Graph — workspace mutations become graph nodes.
+   *
+   * This is also what finally gives File Writer mutations a durable home: until
+   * now they landed only in the in-memory File History ring and were lost on
+   * quit. `source` distinguishes a change Limboo made itself (`writer`) from
+   * one the watcher observed (`watcher`, i.e. an external edit).
+   */
+  private graph?: {
+    onWorkspaceMutation(
+      workspaceId: string,
+      paths: string[],
+      source: 'watcher' | 'writer',
+    ): void;
+  };
+
+  /** Wire the Work Graph so workspace file changes land in the execution graph. */
+  setWorkGraph(graph: {
+    onWorkspaceMutation(workspaceId: string, paths: string[], source: 'watcher' | 'writer'): void;
+  }): void {
+    this.graph = graph;
+  }
+
   /* ----------------------------------------------------------- reads */
 
   /** Last-built tree for a workspace, if any (no disk access). */
@@ -346,6 +369,7 @@ export class FileSystemManager {
     // Refresh the search index: incremental for small file batches, full pass
     // for structural/large ones (coalesced; off the hot path — errors logged).
     this.scheduleSearchIndex(workspaceId, batch.paths, batch.structural);
+    this.graph?.onWorkspaceMutation(workspaceId, batch.paths, 'watcher');
   }
 
   /**
@@ -358,6 +382,7 @@ export class FileSystemManager {
     this.refreshGitStatus(ws);
     this.git?.notifyChanged(ws.id);
     this.scheduleSearchIndex(ws.id, changedRelPaths, changedRelPaths.length === 0);
+    this.graph?.onWorkspaceMutation(ws.id, changedRelPaths, 'writer');
   }
 
   /** Route a change set to the incremental or full search index pass. */

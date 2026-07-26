@@ -4,11 +4,18 @@
  * unstage / discard) and an inline, lazily-loaded {@link DiffView} on expand.
  */
 import { useEffect, useState } from 'react';
-import { ChevronDown, ChevronRight, Minus, Plus, RotateCcw } from 'lucide-react';
+import { ChevronDown, ChevronRight, Maximize2, Minus, Plus, RotateCcw } from 'lucide-react';
 import type { GitFileChange } from '@shared/types';
 import { DiffStat, IconButton } from '@/renderer/components/ui';
 import { cn } from '@/renderer/lib/cn';
 import { useGitStore } from '@/renderer/stores/useGitStore';
+import { useSessionStore } from '@/renderer/stores/useSessionStore';
+import {
+  diffKey,
+  documentId,
+  useDocumentStore,
+  type DocumentRef,
+} from '@/renderer/stores/useDocumentStore';
 import { DiffView } from './DiffView';
 
 const STATUS_META: Record<GitFileChange['status'], { label: string; cls: string }> = {
@@ -32,13 +39,18 @@ export function GitFileRow({
   expanded: boolean;
   onToggle: () => void;
 }) {
-  const diffKey = `${staged ? 's' : 'w'}:${change.path}`;
-  const diff = useGitStore((s) => s.diffs[diffKey]);
+  const key = diffKey(change.path, staged);
+  const diff = useGitStore((s) => s.diffs[key]);
   const loadDiff = useGitStore((s) => s.loadDiff);
   const stage = useGitStore((s) => s.stage);
   const unstage = useGitStore((s) => s.unstage);
   const discard = useGitStore((s) => s.discard);
+  const sessionId = useSessionStore((s) => s.selectedId);
+  const promote = useDocumentStore((s) => s.promote);
   const [loading, setLoading] = useState(false);
+
+  const docRef: DocumentRef = { kind: 'diff', path: change.path, staged };
+  const docId = documentId(docRef);
 
   useEffect(() => {
     if (expanded && !diff) {
@@ -78,6 +90,15 @@ export function GitFileRow({
         </button>
         <DiffStat adds={change.adds} dels={change.dels} className="shrink-0" />
         <div className="flex shrink-0 items-center opacity-0 transition-opacity group-hover:opacity-100">
+          {sessionId && (
+            <IconButton
+              label="Review in workspace"
+              size="sm"
+              onClick={() => promote(sessionId, docRef)}
+            >
+              <Maximize2 size={12} />
+            </IconButton>
+          )}
           {staged ? (
             <IconButton label="Unstage" size="sm" onClick={() => void unstage(change.path)}>
               <Minus size={13} />
@@ -102,7 +123,9 @@ export function GitFileRow({
       </div>
       {expanded && (
         <div className="ml-4 mt-1 overflow-hidden rounded-md border border-line bg-base">
-          <DiffView diff={diff} loading={loading} />
+          {/* Same document id the maximized workspace uses, so folds/layout/scroll
+              continue across a maximize -> minimize round-trip. */}
+          <DiffView diff={diff} loading={loading} documentId={docId} />
         </div>
       )}
     </li>

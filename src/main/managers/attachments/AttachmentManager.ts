@@ -307,7 +307,27 @@ export class AttachmentManager {
     );
     for (const meta of metas) stmt.run(messageId, now, meta.id, sessionId);
     this.broadcast(sessionId);
+    // Attaching to a message is the moment an attachment becomes part of the
+    // work — a staged draft the user removes again never should. One node per
+    // attachment, recorded here rather than at staging time for that reason.
+    for (const meta of metas) {
+      try {
+        this.graph?.onAttachment(sessionId, meta.name, meta.size, meta.mime);
+      } catch {
+        /* observability must never fail a send */
+      }
+    }
     return this.byIds(sessionId, metas.map((m) => m.id));
+  }
+
+  /** Optional Work Graph — attached files are inputs to the run. */
+  private graph?: {
+    onAttachment(sessionId: string, name: string, bytes: number, mime?: string): void;
+  };
+
+  /** Wire the Work Graph so attachments appear as artifacts in the graph. */
+  setWorkGraph(graph: NonNullable<AttachmentManager['graph']>): void {
+    this.graph = graph;
   }
 
   /** A read tool touched a staged path → mark that attachment 'read'. */

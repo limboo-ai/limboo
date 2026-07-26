@@ -42,8 +42,9 @@ import { logger } from '../logger';
 import type { WorkspaceManager } from './WorkspaceManager';
 import type { SettingsManager } from './SettingsManager';
 import type { MemoryManager } from './memory/MemoryManager';
+import type { GitOpDetail, GitOpKind } from './graph/builder';
 import { assertInsideRepo, gitText, runGit } from './git/exec';
-import { sanitizeRef } from './git/refs';
+import { sanitizeBranchName, sanitizeRef } from './git/refs';
 import {
   LOG_FORMAT,
   parseBlame,
@@ -108,6 +109,36 @@ export class GitManager {
     emit(sessionId: string, phase: 'checkpoint', opts?: { summary?: string }): void;
   }): void {
     this.hooks = hooks;
+  }
+
+  /**
+   * Optional Work Graph — repository mutations become graph nodes.
+   *
+   * Deliberately ONE seam at `notifyChanged`, not nine per-method hooks:
+   * `notifyChanged` is the chokepoint every mutating op already funnels
+   * through, so a listener here also catches commits the agent makes via
+   * `Bash("git commit")` and commits made in an external terminal — neither of
+   * which ever reaches `commit()`. Nine hooks would miss both.
+   */
+  private graph?: {
+    onGitChanged(workspaceId: string): void;
+    onCheckpoint(
+      sessionId: string,
+      checkpoint: GitCheckpoint,
+      op: 'create' | 'restore' | 'delete',
+    ): void;
+    /**
+     * A repository operation that produces no new commit, so `onGitChanged`'s
+     * `git log` reconcile can never see it — push, fetch, checkout, branch,
+     * tag, init — plus pull, which produces commits the reconciler would
+     * otherwise mistake for the run's own work.
+     */
+    onGitOp(workspaceId: string, op: GitOpKind, detail: GitOpDetail): void;
+  };
+
+  /** Wire the Work Graph so repository work lands in the execution graph. */
+  setWorkGraph(graph: NonNullable<GitManager['graph']>): void {
+    this.graph = graph;
   }
 
   /** Inject the active-root resolver (worktree-backed sessions). */
@@ -234,6 +265,31 @@ export class GitManager {
       truncated ? raw.slice(0, GIT_LIMITS.diffBytesMax) : raw,
     );
     return { path: rel, binary, staged: !!opts.staged, hunks, language, truncated };
+  }
+
+  /**
+   * Raw `git diff` output for one or more paths — a FAITHFUL patch, unlike
+   * anything reconstructed from `GitFileDiff`: `parseUnifiedDiff` deliberately
+   * drops the `diff --git` / `index` / `---` / `+++` / rename / mode preamble, so
+   * a renderer-built patch would not apply for renames, mode changes, or
+   * binaries. Anything that must round-trip through `git apply` comes from here.
+   */
+  async patchText(
+    workspaceId: string,
+    filePaths: string[],
+    opts: { staged?: boolean; baseRef?: string } = {},
+  ): Promise<{ text: string; truncated: boolean }> {
+    const root = await this.requireRoot(workspaceId);
+    const rels = filePaths.map((p) => assertInsideRepo(root, p));
+    const args = ['diff'];
+    if (opts.baseRef) args.push(sanitizeRef(opts.baseRef));
+    if (opts.staged) args.push('--cached');
+    args.push('--', ...rels);
+
+    const res = await runGit(root, args, { maxBuffer: GIT_LIMITS.diffBytesMax + 1024 });
+    const raw = res.stdout;
+    const truncated = raw.length > GIT_LIMITS.diffBytesMax;
+    return { text: truncated ? raw.slice(0, GIT_LIMITS.diffBytesMax) : raw, truncated };
   }
 
   /* --------------------------------------------------------------- staging */
@@ -381,7 +437,7 @@ export class GitManager {
 
   async log(
     workspaceId: string,
-    opts: { limit?: number; offset?: number } = {},
+    opts: { limit?: number; offset?: number; path?: string } = {},
   ): Promise<GitCommit[]> {
     const root = await this.requireRoot(workspaceId);
     const limit = Math.min(opts.limit ?? GIT_LIMITS.logPageSize, GIT_LIMITS.logPageSize);
@@ -392,6 +448,9 @@ export class GitManager {
       String(limit),
       `--skip=${Math.max(0, opts.offset ?? 0)}`,
     ];
+    // Optional path filter — powers "the last commit that touched this file".
+    // `--` terminates options, and the path is repo-root validated first.
+    if (opts.path) args.push('--', assertInsideRepo(root, opts.path));
     const res = await runGit(root, args);
     return res.ok ? parseLog(res.stdout) : [];
   }
@@ -458,14 +517,18 @@ export class GitManager {
     }
     const res = await runGit(root, ['checkout', ref]);
     this.notifyChanged(workspaceId);
+    if (res.ok) this.graph?.onGitOp(workspaceId, 'checkout', { branch: ref });
     return res.ok ? { ok: true } : { ok: false, error: res.stderr };
   }
 
   async createBranch(workspaceId: string, name: string, checkout = true): Promise<GitCheckoutResult> {
     const root = await this.requireRoot(workspaceId);
-    const ref = sanitizeRef(name);
+    // Creating a ref — apply the full check-ref-format rule set, not just the
+    // argv guard, so an illegal name fails with our reason instead of git's.
+    const ref = sanitizeBranchName(name.trim());
     const res = await runGit(root, checkout ? ['checkout', '-b', ref] : ['branch', ref]);
     this.notifyChanged(workspaceId);
+    if (res.ok) this.graph?.onGitOp(workspaceId, 'branch', { branch: ref });
     return res.ok ? { ok: true } : { ok: false, error: res.stderr };
   }
 
@@ -491,11 +554,12 @@ export class GitManager {
 
   async createTag(workspaceId: string, name: string, message?: string): Promise<void> {
     const root = await this.requireRoot(workspaceId);
-    const ref = sanitizeRef(name);
+    const ref = sanitizeBranchName(name.trim(), 'Tag name');
     const args = message ? ['tag', '-a', ref, '-m', message] : ['tag', ref];
     const res = await runGit(root, args);
     if (!res.ok) throw new Error(res.stderr || 'git tag failed');
     this.notifyChanged(workspaceId);
+    this.graph?.onGitOp(workspaceId, 'tag', { branch: ref, summary: message });
   }
 
   /* ----------------------------------------------------------------- blame */
@@ -513,6 +577,7 @@ export class GitManager {
     const root = await this.requireRoot(workspaceId);
     const res = await runGit(root, ['fetch', '--all', '--prune'], { timeout: 60_000 });
     this.notifyChanged(workspaceId);
+    if (res.ok) this.graph?.onGitOp(workspaceId, 'fetch', { remote: 'all' });
     return res.ok;
   }
 
@@ -553,6 +618,13 @@ export class GitManager {
     const res = await runGit(root, args, { timeout: GIT_LIMITS.networkTimeoutMs });
     this.notifyChanged(workspaceId);
     if (res.ok) {
+      // Remote NAME only — a remote URL can carry embedded credentials, and
+      // this lands in a persisted, broadcast node title (CLAUDE.md section 8).
+      this.graph?.onGitOp(workspaceId, 'push', {
+        branch,
+        remote: 'origin',
+        summary: ahead ? `${ahead} commit(s)` : undefined,
+      });
       return { ok: true, setUpstream: wantUpstream || undefined, pushed: ahead || undefined };
     }
     return { ok: false, ...classifyPushError(res.stderr) };
@@ -583,6 +655,9 @@ export class GitManager {
     this.notifyChanged(workspaceId);
     if (res.ok) {
       const upToDate = /already up to date/i.test(res.stdout) || /already up to date/i.test(res.stderr);
+      if (!upToDate) {
+        this.graph?.onGitOp(workspaceId, 'pull', { branch: status.branch, remote: 'origin' });
+      }
       return { ok: true, upToDate: upToDate || undefined, updated: !upToDate || undefined };
     }
     return { ok: false, ...classifyPullError(res.stderr || res.stdout) };
@@ -594,6 +669,7 @@ export class GitManager {
     const res = await runGit(ws.path, ['init']);
     this.invalidate(workspaceId);
     this.notifyChanged(workspaceId);
+    if (res.ok) this.graph?.onGitOp(workspaceId, 'init', {});
     return res.ok;
   }
 
@@ -683,6 +759,7 @@ export class GitManager {
       this.hooks?.emit(sessionId, 'checkpoint', {
         summary: `${opts.auto ? 'Auto-checkpoint' : 'Checkpoint'}: ${label}`,
       });
+      this.graph?.onCheckpoint(sessionId, checkpoint, 'create');
       return checkpoint;
     } catch (err) {
       logger.warn('createCheckpoint failed', err);
@@ -726,6 +803,7 @@ export class GitManager {
     if (!res.ok) await runGit(root, ['checkout', cp.commit, '--', '.']);
     this.notifyChanged(workspaceId);
     this.notifyCheckpoints(cp.sessionId);
+    this.graph?.onCheckpoint(cp.sessionId, cp, 'restore');
     return true;
   }
 
@@ -736,6 +814,7 @@ export class GitManager {
     if (root) await runGit(root, ['update-ref', '-d', cp.ref]);
     this.db.prepare('DELETE FROM git_checkpoints WHERE id = ?').run(checkpointId);
     this.notifyCheckpoints(cp.sessionId);
+    this.graph?.onCheckpoint(cp.sessionId, cp, 'delete');
   }
 
   private checkpointById(id: string): CheckpointRow | undefined {
@@ -765,6 +844,9 @@ export class GitManager {
     for (const win of BrowserWindow.getAllWindows()) {
       if (!win.isDestroyed()) win.webContents.send(IpcEvents.gitChanged, { workspaceId });
     }
+    // The single seam that sees every commit path (panel, agent Bash, external
+    // CLI). The Work Graph debounces and reconciles against `git log` itself.
+    this.graph?.onGitChanged(workspaceId);
   }
 
   private notifyCheckpoints(sessionId: string): void {

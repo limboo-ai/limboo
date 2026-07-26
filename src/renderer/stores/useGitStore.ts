@@ -19,6 +19,13 @@ import type {
 import { useWorkspaceStore } from './useWorkspaceStore';
 import { useSessionStore } from './useSessionStore';
 import { useUIStore } from './useUIStore';
+import { diffKey } from './useDocumentStore';
+
+/** Diff/patch selectors shared by the diff, patch-text, and patch-save calls. */
+export interface PatchOpts {
+  staged?: boolean;
+  baseRef?: string;
+}
 
 /** Which Git workspace sub-view is focused (also the activity-card jump target). */
 export type GitView = 'status' | 'diff' | 'commit' | 'history' | 'checkpoints' | 'branches';
@@ -27,6 +34,8 @@ interface GitFocus {
   view: GitView;
   path?: string;
   staged?: boolean;
+  /** Commit hash to reveal in the History view (set by the Work Graph). */
+  hash?: string;
 }
 
 interface GitState {
@@ -35,7 +44,7 @@ interface GitState {
   branches: GitBranch[];
   tags: GitTag[];
   checkpoints: GitCheckpoint[];
-  /** Diff cache keyed by `${staged ? 's' : 'w'}:${path}`. */
+  /** Diff cache keyed by {@link diffKey} (side + comparison base + path). */
   diffs: Record<string, GitFileDiff>;
   loading: boolean;
   /** Drives which sub-view + file the GitPanel reveals (activity-card jumps). */
@@ -51,7 +60,14 @@ interface GitState {
   generateCommitMessage: () => Promise<void>;
   cancelCommitMessage: () => void;
   refresh: () => Promise<void>;
-  loadDiff: (path: string, staged: boolean) => Promise<GitFileDiff | null>;
+  /** Load (and cache) a file diff, optionally against an arbitrary base ref. */
+  loadDiff: (path: string, staged: boolean, baseRef?: string) => Promise<GitFileDiff | null>;
+  /** Copy a FAITHFUL patch (from git, not the parsed diff) to the clipboard. */
+  copyPatch: (paths: string[], opts?: PatchOpts) => Promise<boolean>;
+  /** Export a patch; main owns the save dialog and destination. */
+  savePatch: (paths: string[], opts?: PatchOpts) => Promise<boolean>;
+  /** The most recent commit touching `path`, or null. */
+  lastCommitFor: (path: string) => Promise<GitCommit | null>;
   stage: (path: string) => Promise<void>;
   unstage: (path: string) => Promise<void>;
   stageAll: () => Promise<void>;
@@ -66,7 +82,8 @@ interface GitState {
   restoreCheckpoint: (checkpointId: string) => Promise<void>;
   deleteCheckpoint: (checkpointId: string) => Promise<void>;
   checkout: (branch: string, force?: boolean) => Promise<import('@shared/types').GitCheckoutResult>;
-  createBranch: (name: string) => Promise<void>;
+  /** Resolves true when the branch was created; toasts and resolves false otherwise. */
+  createBranch: (name: string) => Promise<boolean>;
   fetch: () => Promise<boolean>;
   push: (opts?: { setUpstream?: boolean; force?: boolean }) => Promise<boolean>;
   pull: (opts?: { rebase?: boolean }) => Promise<boolean>;
@@ -76,6 +93,34 @@ interface GitState {
 
 function gitApi() {
   return window.limboo?.git;
+}
+
+/**
+ * Electron wraps a rejected `ipcRenderer.invoke` as
+ * `Error invoking remote method 'git:x': Error: git: <reason>`. Strip the
+ * envelope so the toast shows the reason the main process actually gave.
+ */
+function cleanIpcError(message: string): string {
+  const stripped = message.replace(/^Error invoking remote method '[^']*':\s*/, '');
+  return stripped.replace(/^Error:\s*/, '').replace(/^git:\s*/, '');
+}
+
+/**
+ * Run a git action that can REJECT (main-process `throw`) rather than return a
+ * result object, surfacing the failure as a toast instead of an unhandled
+ * rejection that silently aborts the caller.
+ */
+async function guard<T>(title: string, fn: () => Promise<T>): Promise<T | undefined> {
+  try {
+    return await fn();
+  } catch (err) {
+    useUIStore.getState().addToast({
+      title,
+      description: err instanceof Error ? cleanIpcError(err.message) : String(err),
+      tone: 'danger',
+    });
+    return undefined;
+  }
 }
 
 function activeWs(): string | null {
@@ -217,34 +262,90 @@ export const useGitStore = create<GitState>((set, get) => ({
     }
   },
 
-  loadDiff: async (path, staged) => {
+  loadDiff: async (path, staged, baseRef) => {
     const api = gitApi();
     const wsId = activeWs();
     if (!api || !wsId) return null;
-    const diff = await api.diff(wsId, path, { staged });
-    set((s) => ({ diffs: { ...s.diffs, [`${staged ? 's' : 'w'}:${path}`]: diff } }));
+    // A read: a rejected path guard must not become an unhandled rejection that
+    // leaves the expanding row stuck in its loading state.
+    let diff: GitFileDiff;
+    try {
+      diff = await api.diff(wsId, path, { staged, ...(baseRef ? { baseRef } : {}) });
+    } catch {
+      return null;
+    }
+    set((s) => ({ diffs: { ...s.diffs, [diffKey(path, staged, baseRef)]: diff } }));
     return diff;
   },
 
-  stage: async (path) => {
+  copyPatch: async (paths, opts) => {
+    const api = gitApi();
     const wsId = activeWs();
-    if (wsId) await gitApi()?.stage(wsId, path);
+    const toast = useUIStore.getState().addToast;
+    if (!api?.patchText || !wsId || paths.length === 0) return false;
+    const result = await guard('Could not copy patch', () => api.patchText(wsId, paths, opts));
+    if (!result) return false;
+    if (!result.text) {
+      toast({ title: 'Nothing to copy', description: 'This file has no diff.', tone: 'warning' });
+      return false;
+    }
+    await window.limboo?.system.clipboardWrite(result.text);
+    toast({
+      title: 'Patch copied',
+      description: result.truncated ? 'Truncated — the diff exceeded the size cap.' : undefined,
+      tone: result.truncated ? 'warning' : 'success',
+    });
+    return true;
+  },
+
+  savePatch: async (paths, opts) => {
+    const api = gitApi();
+    const wsId = activeWs();
+    const toast = useUIStore.getState().addToast;
+    if (!api?.patchSave || !wsId || paths.length === 0) return false;
+    const result = await guard('Could not export patch', () => api.patchSave(wsId, paths, opts));
+    // A canceled dialog is not a failure — say nothing.
+    if (!result || !result.saved) return false;
+    toast({ title: 'Patch exported', description: result.path, tone: 'success' });
+    return true;
+  },
+
+  lastCommitFor: async (path) => {
+    const api = gitApi();
+    const wsId = activeWs();
+    if (!api || !wsId) return null;
+    try {
+      const commits = await api.log(wsId, { limit: 1, path });
+      return commits[0] ?? null;
+    } catch {
+      return null;
+    }
+  },
+
+  stage: async (path) => {
+    const api = gitApi();
+    const wsId = activeWs();
+    if (api && wsId) await guard('Could not stage file', () => api.stage(wsId, path));
   },
   unstage: async (path) => {
+    const api = gitApi();
     const wsId = activeWs();
-    if (wsId) await gitApi()?.unstage(wsId, path);
+    if (api && wsId) await guard('Could not unstage file', () => api.unstage(wsId, path));
   },
   stageAll: async () => {
+    const api = gitApi();
     const wsId = activeWs();
-    if (wsId) await gitApi()?.stageAll(wsId);
+    if (api && wsId) await guard('Could not stage changes', () => api.stageAll(wsId));
   },
   unstageAll: async () => {
+    const api = gitApi();
     const wsId = activeWs();
-    if (wsId) await gitApi()?.unstageAll(wsId);
+    if (api && wsId) await guard('Could not unstage changes', () => api.unstageAll(wsId));
   },
   discard: async (path) => {
+    const api = gitApi();
     const wsId = activeWs();
-    if (wsId) await gitApi()?.discard(wsId, path);
+    if (api && wsId) await guard('Could not discard changes', () => api.discard(wsId, path));
   },
 
   commit: async (message) => {
@@ -289,27 +390,34 @@ export const useGitStore = create<GitState>((set, get) => ({
     const wsId = activeWs();
     const sid = activeSession();
     if (!api || !wsId || !sid) return;
-    await api.checkpointCreate(wsId, sid, label);
+    await guard('Could not create checkpoint', () => api.checkpointCreate(wsId, sid, label));
   },
   restoreCheckpoint: async (checkpointId) => {
     const api = gitApi();
     const wsId = activeWs();
     if (!api || !wsId) return;
-    await api.checkpointRestore(wsId, checkpointId);
+    await guard('Could not restore checkpoint', () => api.checkpointRestore(wsId, checkpointId));
     await get().refresh();
   },
   deleteCheckpoint: async (checkpointId) => {
     const api = gitApi();
     const wsId = activeWs();
     if (!api || !wsId) return;
-    await api.checkpointDelete(wsId, checkpointId);
+    await guard('Could not delete checkpoint', () => api.checkpointDelete(wsId, checkpointId));
   },
 
   checkout: async (branch, force) => {
     const api = gitApi();
     const wsId = activeWs();
     if (!api || !wsId) return { ok: false, error: 'No workspace' };
-    const result = await api.checkout(wsId, branch, { force });
+    // `checkout` returns a result object for git failures but still THROWS for a
+    // rejected ref, so the rejection has to be converted into that same shape.
+    let result: import('@shared/types').GitCheckoutResult;
+    try {
+      result = await api.checkout(wsId, branch, { force });
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? cleanIpcError(err.message) : String(err) };
+    }
     if (result.ok) {
       await get().refresh();
       await get().loadBranches();
@@ -319,10 +427,27 @@ export const useGitStore = create<GitState>((set, get) => ({
   createBranch: async (name) => {
     const api = gitApi();
     const wsId = activeWs();
-    if (!api || !wsId) return;
-    await api.createBranch(wsId, name, true);
-    await get().refresh();
-    await get().loadBranches();
+    const toast = useUIStore.getState().addToast;
+    if (!api || !wsId) return false;
+    // The main process throws (not returns) on an invalid ref, so this MUST be
+    // caught: an uncaught rejection here silently aborts the caller mid-way.
+    try {
+      const result = await api.createBranch(wsId, name, true);
+      await get().refresh();
+      await get().loadBranches();
+      if (result && result.ok === false) {
+        toast({ title: 'Could not create branch', description: result.error, tone: 'danger' });
+        return false;
+      }
+      return true;
+    } catch (err) {
+      toast({
+        title: 'Could not create branch',
+        description: err instanceof Error ? cleanIpcError(err.message) : String(err),
+        tone: 'danger',
+      });
+      return false;
+    }
   },
   fetch: async () => {
     const api = gitApi();
@@ -403,7 +528,7 @@ export const useGitStore = create<GitState>((set, get) => ({
     const api = gitApi();
     const wsId = activeWs();
     if (!api || !wsId) return;
-    await api.init(wsId);
+    await guard('Could not initialize repository', () => api.init(wsId));
     await get().refresh();
   },
 

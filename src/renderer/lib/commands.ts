@@ -15,6 +15,7 @@ import { useSettingsStore } from '@/renderer/stores/useSettingsStore';
 import { useFileSystemStore } from '@/renderer/stores/useFileSystemStore';
 import { useTerminalStore } from '@/renderer/stores/useTerminalStore';
 import { useVoiceStore } from '@/renderer/stores/useVoiceStore';
+import { useDocumentStore } from '@/renderer/stores/useDocumentStore';
 
 /** Set the composer's default permission mode (Plan / Ask before edits / Accept edits). */
 function setDefaultMode(defaultMode: SessionPermissionMode): void {
@@ -145,6 +146,76 @@ export const COMMANDS: Command[] = [
     inPalette: true,
     run: () => {
       void useSessionStore.getState().cycleWorktreeTab(-1);
+    },
+  },
+  // Workspace documents. Ctrl+Tab / Ctrl+Shift+Tab already cycle WORKTREE tabs
+  // (above), so documents deliberately take Mod+PageDown / Mod+PageUp instead of
+  // stealing a binding that already means something else in this window.
+  {
+    id: 'document.next',
+    title: 'Next document tab',
+    section: 'Workspace',
+    keys: ['Mod', 'PageDown'],
+    inPalette: true,
+    run: () => {
+      const sessionId = useSessionStore.getState().selectedId;
+      if (sessionId) useDocumentStore.getState().cycle(sessionId, 1);
+    },
+  },
+  {
+    id: 'document.prev',
+    title: 'Previous document tab',
+    section: 'Workspace',
+    keys: ['Mod', 'PageUp'],
+    inPalette: true,
+    run: () => {
+      const sessionId = useSessionStore.getState().selectedId;
+      if (sessionId) useDocumentStore.getState().cycle(sessionId, -1);
+    },
+  },
+  {
+    // Deliberately UNBOUND. The obvious binding (Mod+W) is taken on macOS by the
+    // File menu's `role: 'close'` accelerator, and a native menu accelerator wins
+    // over a renderer keydown — so binding it here would close the user's WINDOW
+    // on macOS while closing a tab everywhere else. The tab's X, middle-click,
+    // and the palette all cover this without a platform-dependent surprise.
+    id: 'document.close',
+    title: 'Close document tab',
+    section: 'Workspace',
+    inPalette: true,
+    run: () => {
+      const sessionId = useSessionStore.getState().selectedId;
+      if (!sessionId) return;
+      const store = useDocumentStore.getState();
+      const activeId = store.bySession[sessionId]?.activeId;
+      if (activeId) store.close(sessionId, activeId);
+    },
+  },
+  {
+    id: 'document.reopenClosed',
+    title: 'Reopen closed document',
+    section: 'Workspace',
+    keys: ['Mod', 'Shift', 'T'],
+    inPalette: true,
+    run: () => {
+      const sessionId = useSessionStore.getState().selectedId;
+      if (sessionId) useDocumentStore.getState().reopenClosed(sessionId);
+    },
+  },
+  {
+    id: 'diff.toggleSplit',
+    title: 'Toggle split / unified diff',
+    section: 'Workspace',
+    inPalette: true,
+    run: () => {
+      const sessionId = useSessionStore.getState().selectedId;
+      if (!sessionId) return;
+      const store = useDocumentStore.getState();
+      const activeId = store.bySession[sessionId]?.activeId;
+      // Only meaningful while a diff document is in front.
+      if (!activeId || store.bySession[sessionId]?.docs[activeId]?.ref.kind !== 'diff') return;
+      const current = store.viewFor(activeId);
+      store.patchView(activeId, { layout: current.layout === 'split' ? 'unified' : 'split' });
     },
   },
   {

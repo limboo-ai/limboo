@@ -57,6 +57,14 @@ import type {
   RepoConfigState,
   RepoDelta,
   ResumeState,
+  WorkGraphEdge,
+  WorkGraphNode,
+  WorkGraphPush,
+  WorkGraphQuery,
+  WorkGraphQueryResult,
+  WorkGraphRef,
+  WorkGraphSnapshot,
+  GraphExportFormat,
   SavedSearch,
   SearchFilter,
   ServiceInfo,
@@ -443,8 +451,24 @@ const gitApi = {
     ipcRenderer.invoke(IpcChannels.gitCommitMessageGenerate, workspaceId),
   cancelCommitMessage: (workspaceId: string): Promise<void> =>
     ipcRenderer.invoke(IpcChannels.gitCommitMessageCancel, workspaceId),
-  log: (workspaceId: string, opts?: { limit?: number; offset?: number }): Promise<GitCommit[]> =>
-    ipcRenderer.invoke(IpcChannels.gitLog, workspaceId, opts),
+  log: (
+    workspaceId: string,
+    opts?: { limit?: number; offset?: number; path?: string },
+  ): Promise<GitCommit[]> => ipcRenderer.invoke(IpcChannels.gitLog, workspaceId, opts),
+  /** Faithful patch text for one or more paths (main re-reads it from git). */
+  patchText: (
+    workspaceId: string,
+    paths: string[],
+    opts?: { staged?: boolean; baseRef?: string },
+  ): Promise<{ text: string; truncated: boolean }> =>
+    ipcRenderer.invoke(IpcChannels.gitPatchText, workspaceId, paths, opts),
+  /** Export a patch. Main owns the save dialog and the destination path. */
+  patchSave: (
+    workspaceId: string,
+    paths: string[],
+    opts?: { staged?: boolean; baseRef?: string },
+  ): Promise<{ saved: boolean; path?: string }> =>
+    ipcRenderer.invoke(IpcChannels.gitPatchSave, workspaceId, paths, opts),
   commitDetail: (workspaceId: string, hash: string): Promise<GitCommitDetail | null> =>
     ipcRenderer.invoke(IpcChannels.gitCommitDetail, workspaceId, hash),
   branches: (workspaceId: string): Promise<GitBranch[]> =>
@@ -620,6 +644,54 @@ const resumeApi = {
     subscribe<ResumeState>(IpcEvents.resumeStateChanged, cb),
 };
 
+/**
+ * Work Graph — read + maintenance only. Nodes are produced in the main process
+ * from the normalized agent event stream; the renderer never submits one.
+ */
+const graphApi = {
+  /** The session's persisted graph, for hydration on mount. */
+  get: (sessionId: string): Promise<WorkGraphSnapshot> =>
+    ipcRenderer.invoke(IpcChannels.graphGet, sessionId),
+  /** One node plus every edge touching it, for the inspector. */
+  nodeDetail: (
+    sessionId: string,
+    nodeId: string,
+  ): Promise<{ node: WorkGraphNode; edges: WorkGraphEdge[] } | null> =>
+    ipcRenderer.invoke(IpcChannels.graphNodeDetail, sessionId, nodeId),
+  /** A structural traversal: an FTS seed set expanded by a bounded closure. */
+  query: (sessionId: string, q: WorkGraphQuery): Promise<WorkGraphQueryResult> =>
+    ipcRenderer.invoke(IpcChannels.graphQuery, sessionId, q),
+  /**
+   * Serialize the graph to a string, for the clipboard. Size-capped in main —
+   * use `save` for anything that should never be truncated.
+   */
+  export: (sessionId: string, format: GraphExportFormat): Promise<string> =>
+    ipcRenderer.invoke(IpcChannels.graphExport, sessionId, format),
+  /**
+   * Write an export to a file the USER picks. Main opens the save dialog and
+   * owns the path; the renderer supplies only a format (and, for `svg`/`png`,
+   * the bytes it rendered, since main cannot draw the canvas).
+   */
+  save: (
+    sessionId: string,
+    format: GraphExportFormat | 'svg' | 'png',
+    content?: string,
+  ): Promise<{ saved: boolean; path?: string }> =>
+    ipcRenderer.invoke(IpcChannels.graphSave, sessionId, format, content),
+  /** Resolve an entity (commit, message, terminal, memory…) to its node id. */
+  findByRef: (sessionId: string, ref: WorkGraphRef): Promise<string | null> =>
+    ipcRenderer.invoke(IpcChannels.graphFindByRef, sessionId, ref),
+  /** Drop nodes left unattached by an interrupted run. Returns rows removed. */
+  prune: (sessionId: string): Promise<number> =>
+    ipcRenderer.invoke(IpcChannels.graphPrune, sessionId),
+  /** Delete this session's graph. */
+  clear: (sessionId: string): Promise<void> =>
+    ipcRenderer.invoke(IpcChannels.graphClear, sessionId),
+  /** Incremental deltas (appended nodes/edges) or a reset signal. */
+  onChanged: (cb: (push: WorkGraphPush) => void): (() => void) =>
+    subscribe<WorkGraphPush>(IpcEvents.graphChanged, cb),
+};
+
 const hooksApi = {
   /** The session's redacted governance audit trail (for hydration on mount). */
   getAudit: (sessionId: string): Promise<HookEvent[]> =>
@@ -739,6 +811,7 @@ const limbooApi = {
   voice: voiceApi,
   attachment: attachmentApi,
   mcp: mcpApi,
+  graph: graphApi,
 };
 
 contextBridge.exposeInMainWorld('limboo', limbooApi);

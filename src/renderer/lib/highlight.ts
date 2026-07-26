@@ -57,3 +57,61 @@ export async function highlightCode(code: string, lang?: string): Promise<string
     return null;
   }
 }
+
+/**
+ * One themed token. A deliberately plain, serializable shape rather than Shiki's
+ * `ThemedToken` — the diff renderer memoizes and structurally compares these, and
+ * keeping Shiki's types out of the component tree means the highlighter can be
+ * swapped without touching a single component.
+ */
+export interface HlToken {
+  content: string;
+  color?: string;
+  italic?: boolean;
+  bold?: boolean;
+  underline?: boolean;
+}
+
+/** Shiki's `FontStyle` bitflags (it exports them as a const enum we can't import). */
+const FONT_ITALIC = 1;
+const FONT_BOLD = 2;
+const FONT_UNDERLINE = 4;
+
+/**
+ * Tokenize `code` into one `HlToken[]` per line, for renderers that own their own
+ * per-line markup (the diff editor puts each line in its own grid row, so it
+ * cannot use `codeToHtml`'s single `<pre>`).
+ *
+ * Runs on the same singleton highlighter as {@link highlightCode}, so it inherits
+ * the JS-RegExp-engine choice that keeps highlighting working under the packaged
+ * CSP. Returns `null` on any failure — callers render plain text.
+ */
+export async function highlightLines(code: string, lang?: string): Promise<HlToken[][] | null> {
+  const requested = (lang || '').toLowerCase().trim();
+  if (!requested || requested === 'text') return null;
+  try {
+    const hl = await getHighlighter();
+    const language = await ensureLang(hl, requested);
+    if (language === 'text') return null;
+    const lines = hl.codeToTokensBase(code, {
+      // `language` is a runtime-validated id from `ensureLang` (it either loaded
+      // or fell back to 'text'), which the bundled-language union can't express.
+      lang: language as Parameters<Highlighter['codeToTokensBase']>[1]['lang'],
+      theme: THEME,
+      includeExplanation: false,
+    });
+    return lines.map((line) =>
+      line.map((token) => {
+        const style = token.fontStyle ?? 0;
+        const out: HlToken = { content: token.content };
+        if (token.color) out.color = token.color;
+        if (style & FONT_ITALIC) out.italic = true;
+        if (style & FONT_BOLD) out.bold = true;
+        if (style & FONT_UNDERLINE) out.underline = true;
+        return out;
+      }),
+    );
+  } catch {
+    return null;
+  }
+}

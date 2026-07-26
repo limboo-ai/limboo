@@ -21,6 +21,7 @@ import {
   Paperclip,
   TerminalSquare,
   ArrowUpCircle,
+  Workflow,
   type LucideIcon,
 } from 'lucide-react';
 import { GeneralPanel } from './panels/GeneralPanel';
@@ -33,6 +34,7 @@ import { PlanTasksPanel } from './panels/PlanTasksPanel';
 import { TerminalPanel } from './panels/TerminalPanel';
 import { GitPanel } from './panels/GitPanel';
 import { MemoryPanel } from './panels/MemoryPanel';
+import { GraphPanel } from './panels/GraphPanel';
 import { AttachmentsPanel } from './panels/AttachmentsPanel';
 import { VoicePanel } from './panels/VoicePanel';
 import { ShortcutsPanel } from './panels/ShortcutsPanel';
@@ -275,6 +277,59 @@ export const SETTINGS_CATALOG: SettingsCategory[] = [
       { id: 'gitCommandApproval', label: 'Require approval for git operations', keywords: ['safety', 'confirm', 'destructive'] },
     ],
     Panel: GitPanel,
+  },
+  {
+    id: 'graph',
+    label: 'Work Graph',
+    icon: Workflow,
+    keywords: ['graph', 'dag', 'work graph', 'nodes', 'edges', 'lanes', 'relationships', 'traversal', 'visualize', 'structure', 'topology', 'subagent', 'branch', 'execution', 'timeline', 'export', 'retention', 'prune'],
+    fields: [
+      { id: 'graphEnabled', label: 'Record the work graph', keywords: ['enable', 'capture', 'off'] },
+      { id: 'graphPersist', label: 'Save between restarts', keywords: ['persist', 'store', 'database'] },
+      { id: 'graphUpdateFrequency', label: 'Update frequency', keywords: ['batch', 'coalesce', 'refresh', 'live'] },
+      { id: 'graphLayout', label: 'Layout', keywords: ['lanes', 'compact', 'algorithm', 'arrange'] },
+      { id: 'graphColoring', label: 'Color nodes by', keywords: ['color', 'kind', 'status', 'provider', 'agent'] },
+      { id: 'graphSemanticEdges', label: 'Show relationships', keywords: ['edges', 'links', 'semantic'] },
+      { id: 'graphDerivedEdges', label: 'Show inferred relationships', keywords: ['derived', 'inferred', 'dashed', 'heuristic'] },
+      { id: 'graphEdgeLabels', label: 'Label relationships', keywords: ['labels', 'edges', 'names'] },
+      { id: 'graphArtifactPreviews', label: 'Preview artifacts', keywords: ['preview', 'diff', 'file'] },
+      { id: 'graphAnimate', label: 'Animate', keywords: ['animation', 'motion', 'transition'] },
+      {
+        id: 'graphAnimationSpeed',
+        label: 'Replay speed',
+        keywords: ['animation', 'speed', 'replay', 'playback'],
+      },
+      { id: 'graphOverlay-git', label: 'Git source', keywords: ['commits', 'checkpoints', 'overlay'] },
+      { id: 'graphOverlay-terminal', label: 'Terminal source', keywords: ['commands', 'shell', 'overlay'] },
+      { id: 'graphOverlay-file', label: 'Files source', keywords: ['changes', 'writes', 'overlay'] },
+      { id: 'graphOverlay-mcp', label: 'MCP source', keywords: ['tools', 'servers', 'overlay'] },
+      { id: 'graphOverlay-memory', label: 'Memory source', keywords: ['recall', 'knowledge', 'overlay'] },
+      { id: 'graphOverlay-search', label: 'Search source', keywords: ['lookup', 'index', 'overlay'] },
+      { id: 'graphOverlay-service', label: 'Services source', keywords: ['processes', 'supervised', 'overlay'] },
+      { id: 'graphCheckpointIntegration', label: 'Include checkpoints', keywords: ['checkpoint', 'snapshot', 'git'] },
+      { id: 'graphTimelineSync', label: 'Link to the conversation', keywords: ['navigate', 'jump', 'sync', 'timeline'] },
+      { id: 'graphGroupBy', label: 'Group by', keywords: ['group', 'outline', 'organize'] },
+      { id: 'graphGroupSubagents', label: 'Collapse subagents', keywords: ['subagent', 'task', 'branch', 'fold'] },
+      { id: 'graphAutoCollapse', label: 'Collapse finished branches', keywords: ['collapse', 'completed', 'fold'] },
+      { id: 'graphMaxDepth', label: 'Relationship depth', keywords: ['depth', 'hops', 'traversal'] },
+      { id: 'graphMaxNodes', label: 'Max nodes shown', keywords: ['limit', 'performance', 'large'] },
+      { id: 'graphMaxLanes', label: 'Max parallel lanes', keywords: ['lanes', 'parallel', 'columns'] },
+      { id: 'graphVirtualize', label: 'Virtualize above', keywords: ['virtualize', 'performance', 'window'] },
+      { id: 'graphRetentionPerSession', label: 'Keep per session', keywords: ['retention', 'prune', 'ring', 'limit'] },
+      { id: 'graphRetentionDays', label: 'Keep for', keywords: ['retention', 'age', 'days', 'sweep'] },
+      { id: 'graphCollapseOld', label: 'Collapse completed runs', keywords: ['collapse', 'summary', 'old', 'compress'] },
+      { id: 'graphPruneOnEnd', label: 'Clean up after interrupted runs', keywords: ['orphan', 'prune', 'cleanup'] },
+      {
+        id: 'graphExportFormat',
+        label: 'Export as',
+        keywords: [
+          'export', 'download', 'save', 'json', 'markdown', 'mermaid', 'dot',
+          'graphviz', 'csv', 'html', 'svg', 'png',
+        ],
+      },
+      { id: 'graphMaintenance', label: 'Maintenance', keywords: ['prune', 'clear', 'delete', 'reset'] },
+    ],
+    Panel: GraphPanel,
   },
   {
     id: 'attachments',

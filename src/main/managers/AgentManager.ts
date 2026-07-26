@@ -99,6 +99,7 @@ import {
 } from './sandbox/policy';
 import { isReadOnlyShellCommand } from './agent/readOnlyCommands';
 import { HookEngine, type HookEmit } from './hooks/HookEngine';
+import type { PermissionDecisionSignal } from './graph/builder';
 import type { CursorRunOutcome, ProviderRunBridge } from './cursor/types';
 import { IpcEvents } from '@shared/ipc-channels';
 import { getDb } from '../db/database';
@@ -615,6 +616,22 @@ export class AgentManager {
    */
   setHookEngine(hooks: HookEngine): void {
     this.hooks = hooks;
+  }
+
+  /**
+   * Optional Work Graph permission sink. Everything else the graph needs
+   * already arrives on the public {@link onEvent} stream; permission decisions
+   * do not, because the decision is computed inside the gate and only its
+   * *effect* is observable. A structural type keeps the coupling one-way.
+   */
+  private graph: { onDecision(sessionId: string, signal: PermissionDecisionSignal): void } | null =
+    null;
+
+  /** Wire the Work Graph so permission gates become approval nodes. */
+  setWorkGraph(graph: {
+    onDecision(sessionId: string, signal: PermissionDecisionSignal): void;
+  }): void {
+    this.graph = graph;
   }
 
   /**
@@ -1170,6 +1187,10 @@ export class AgentManager {
     db.prepare('DELETE FROM agent_diagnostics WHERE session_id = ?').run(sessionId);
     db.prepare('DELETE FROM agent_plans WHERE session_id = ?').run(sessionId);
     db.prepare('DELETE FROM hook_audit WHERE session_id = ?').run(sessionId);
+    // Work Graph: edges BEFORE nodes. The FK cascade would handle it, but being
+    // explicit keeps this correct even if `foreign_keys` is ever off.
+    db.prepare('DELETE FROM work_graph_edges WHERE session_id = ?').run(sessionId);
+    db.prepare('DELETE FROM work_graph_nodes WHERE session_id = ?').run(sessionId);
   }
 
   /** Abort every active run + stop all supervision timers. Called on quit. */
@@ -1881,6 +1902,12 @@ export class AgentManager {
           finishStreaming(text);
         }
 
+        // Messages originating inside a subagent carry the spawning `Task` call's
+        // id in `parent_tool_use_id` (Agent SDK). It is the only signal that
+        // distinguishes a subagent's tool call from the main agent's, so it is
+        // threaded through rather than dropped — the Work Graph nests on it.
+        const parentId = (msg as unknown as { parent_tool_use_id?: unknown }).parent_tool_use_id;
+        const parentCallId = typeof parentId === 'string' && parentId ? parentId : undefined;
         for (const block of content) {
           if (block.type === 'tool_use') {
             this.onToolUse(
@@ -1888,6 +1915,7 @@ export class AgentManager {
               String(block.id ?? newId()),
               String(block.name ?? 'tool'),
               (block.input as Record<string, unknown>) ?? {},
+              parentCallId,
             );
           }
         }
@@ -2448,6 +2476,8 @@ export class AgentManager {
     id: string,
     name: string,
     input: Record<string, unknown>,
+    /** `parent_tool_use_id` when this call came from inside a subagent. */
+    parentCallId?: string,
   ): void {
     // TodoWrite drives the live task checklist rather than an inline chip.
     if (name === TODO_TOOL) {
@@ -2481,6 +2511,7 @@ export class AgentManager {
       target: toolTarget(name, input),
       change: change ?? undefined,
       edit: edit ?? undefined,
+      parentCallId,
       status: 'running',
       startedAt: Date.now(),
     };
@@ -3128,13 +3159,32 @@ export class AgentManager {
       gate,
     );
     const decision = result.behavior === 'allow' ? 'allow' : 'deny';
+    const risk = classifyTool(toolName);
+    const summary = summarizeTool(toolName, input, risk);
     this.emitHook(sessionId, 'pre-tool-use', {
       tool: toolName,
-      summary: summarizeTool(toolName, input, classifyTool(toolName)),
+      summary,
       severity: decision === 'deny' ? 'warning' : 'info',
       decision,
       auto: !gate.prompted,
     });
+    // The Work Graph records the same outcome from the same place, so an
+    // approval node is provider-neutral by construction: the Cursor hook bridge
+    // calls this method too. It is the ONLY site that knows the user's actual
+    // answer — `respondPermission` only writes a diagnostic.
+    try {
+      this.graph?.onDecision(sessionId, {
+        tool: toolName,
+        summary,
+        detail: permissionDetail(toolName, input),
+        risk,
+        decision,
+        auto: !gate.prompted,
+        at: Date.now(),
+      });
+    } catch {
+      /* observability must never change a permission outcome */
+    }
     return result;
   }
 

@@ -80,6 +80,20 @@ export class ServiceManager {
     this.source = source;
   }
 
+  /**
+   * Optional Work Graph — service lifecycle transitions become graph nodes.
+   * Wired at the single `broadcast` chokepoint every transition already funnels
+   * through, so start/stop/restart/crash/backoff are all covered by one call.
+   */
+  private graph?: { onServicesChanged(sessionId: string, services: ServiceInfo[]): void };
+
+  /** Wire the Work Graph so supervised services land in the execution graph. */
+  setWorkGraph(graph: {
+    onServicesChanged(sessionId: string, services: ServiceInfo[]): void;
+  }): void {
+    this.graph = graph;
+  }
+
   /* --------------------------------------------------------------- queries */
 
   /** Declared + running services for a session (declared ones show as stopped). */
@@ -167,6 +181,25 @@ export class ServiceManager {
   }
 
   /** Run a named on-demand script in the session's root (visible terminal). */
+  /**
+   * Script names the repo's own limboo.json declares. The Work Graph treats a
+   * declared script as a strong signal that a command was verification — the
+   * project itself defining what "verify" means for this codebase.
+   */
+  scriptNames(sessionId: string): string[] {
+    // Deliberately NOT gated on the limboo.json ack: this reads declared script
+    // NAMES for classification, never a command, and never runs anything. The
+    // ack gate exists to stop repo-authored commands from executing, which this
+    // cannot do. Reading names before an ack is safe and keeps inference
+    // working for sessions the user has not yet reviewed.
+    try {
+      const state = this.source?.getRepoConfigState(sessionId);
+      return Object.keys(state?.config?.scripts ?? {});
+    } catch {
+      return [];
+    }
+  }
+
   runScript(sessionId: string, name: string): void {
     assertName(name);
     const state = this.requireAckedConfig(sessionId);
@@ -391,6 +424,7 @@ export class ServiceManager {
     for (const win of BrowserWindow.getAllWindows()) {
       if (!win.isDestroyed()) win.webContents.send(IpcEvents.servicesUpdated, payload);
     }
+    this.graph?.onServicesChanged(sessionId, payload.services);
   }
 }
 

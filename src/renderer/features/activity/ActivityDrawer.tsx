@@ -21,6 +21,7 @@ import { HookAuditPanel } from './HookAuditPanel';
 import { TerminalPanel } from '@/renderer/features/terminal/TerminalPanel';
 import { GitPanel } from '@/renderer/features/git/GitPanel';
 import { MemoryPanel } from '@/renderer/features/memory/MemoryPanel';
+import { WorkGraphPanel } from '@/renderer/features/graph/WorkGraphPanel';
 
 export function ActivityDrawer({ tab }: { tab: ActivityTab }) {
   const meta = ACTIVITY_TABS.find((t) => t.id === tab) ?? ACTIVITY_TABS[0];
@@ -30,6 +31,7 @@ export function ActivityDrawer({ tab }: { tab: ActivityTab }) {
   if (tab === 'terminal') return <TerminalPanel />;
   if (tab === 'git') return <GitPanel />;
   if (tab === 'memory') return <MemoryPanel />;
+  if (tab === 'graph') return <WorkGraphPanel />;
 
   return (
     <section className="flex h-full min-h-0 flex-col bg-surface">

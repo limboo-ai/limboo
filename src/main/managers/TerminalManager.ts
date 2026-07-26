@@ -34,6 +34,7 @@ import type {
   TerminalCommandRecord,
   TerminalCreateOptions,
   TerminalExit,
+  TerminalOrigin,
   TerminalSession,
   Workspace,
 } from '@shared/types';
@@ -155,11 +156,36 @@ export class TerminalManager {
       meta.exitCode = exitCode;
       this.broadcast<TerminalExit>(IpcEvents.terminalExit, { terminalId: id, exitCode, signal });
       this.broadcastUpdated(workspaceId);
+      this.emitLifecycle({ ...toSignal(meta), phase: 'exited', exitCode, signal, at: Date.now() });
     });
 
+    this.emitLifecycle({ ...toSignal(meta), phase: 'created', at: Date.now() });
     logger.info(`Terminal opened: ${redact(title)} (${shell}) in workspace ${workspaceId}`);
     this.broadcastUpdated(workspaceId);
     return meta;
+  }
+
+  /**
+   * In-process lifecycle observers. Additive: every existing renderer broadcast
+   * is untouched, and a throwing observer is contained per-observer so a
+   * subscriber can never take down a PTY.
+   */
+  private readonly lifecycleListeners = new Set<(ev: TerminalLifecycleSignal) => void>();
+
+  /** Subscribe to PTY create/exit across every origin. Returns an unsubscribe. */
+  onLifecycle(fn: (ev: TerminalLifecycleSignal) => void): () => void {
+    this.lifecycleListeners.add(fn);
+    return () => this.lifecycleListeners.delete(fn);
+  }
+
+  private emitLifecycle(ev: TerminalLifecycleSignal): void {
+    for (const fn of this.lifecycleListeners) {
+      try {
+        fn(ev);
+      } catch (err) {
+        logger.warn('terminal lifecycle listener failed', err);
+      }
+    }
   }
 
   /** Feed user keystrokes / paste into a terminal (byte-capped). */
@@ -363,6 +389,9 @@ export class TerminalManager {
       meta.exitCode = exitCode;
       this.broadcast<TerminalExit>(IpcEvents.terminalExit, { terminalId: id, exitCode, signal });
       this.broadcastUpdated(opts.workspaceId);
+      // Fired ALONGSIDE the caller's callback, never in place of it:
+      // `opts.onExit` is owned by ServiceManager's restart supervision.
+      this.emitLifecycle({ ...toSignal(meta), phase: 'exited', exitCode, signal, at: Date.now() });
       try {
         opts.onExit?.(exitCode);
       } catch (err) {
@@ -370,6 +399,7 @@ export class TerminalManager {
       }
     });
 
+    this.emitLifecycle({ ...toSignal(meta), phase: 'created', at: Date.now() });
     logger.info(`Command terminal opened: ${redact(meta.title)} (${opts.origin})`);
     this.broadcastUpdated(opts.workspaceId);
     return meta;
@@ -518,4 +548,42 @@ function defaultShell(): string {
     return process.env.SHELL || '/bin/zsh';
   }
   return process.env.SHELL || '/bin/bash';
+}
+
+/**
+ * One PTY lifecycle signal. Deliberately a flat, provider-neutral shape rather
+ * than the full `TerminalSession`: subscribers (the Work Graph) need identity,
+ * origin, and outcome — not the scrollback or the process handle.
+ */
+export interface TerminalLifecycleSignal {
+  terminalId: string;
+  workspaceId: string;
+  /** The agent session that owns this terminal, when one does. */
+  sessionId?: string;
+  origin: TerminalOrigin;
+  phase: 'created' | 'exited';
+  title: string;
+  cwd: string;
+  /** Real PTY exit code — present only on `exited`. */
+  exitCode?: number;
+  signal?: number;
+  /** Epoch ms. */
+  at: number;
+}
+
+/** Project the managed session onto the identity half of a lifecycle signal. */
+function toSignal(
+  meta: TerminalSession,
+): Pick<
+  TerminalLifecycleSignal,
+  'terminalId' | 'workspaceId' | 'sessionId' | 'origin' | 'title' | 'cwd'
+> {
+  return {
+    terminalId: meta.id,
+    workspaceId: meta.workspaceId,
+    sessionId: meta.sessionId,
+    origin: meta.origin,
+    title: meta.title,
+    cwd: meta.cwd,
+  };
 }
