@@ -13,6 +13,7 @@
     "dist": "electron-forge package && node scripts/dist.mjs",
     "dist:publish": "electron-forge package && node scripts/dist.mjs --publish always",
     "gen:icons": "node scripts/gen-icons.mjs",
+    "gen:notes": "node scripts/gen-release-notes.mjs",
     "gen:installer": "node scripts/gen-installer-assets.mjs",
     "gen:appx": "node scripts/gen-appx-assets.mjs",
     "lint": "eslint --ext .ts,.tsx ."

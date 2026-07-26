@@ -1,13 +1,24 @@
 #!/usr/bin/env node
 /**
- * generate-release-notes.mjs — produce human-readable, categorized release notes
- * from git history between the previous tag and a target ref.
+ * generate-release-notes.mjs — produce the Markdown body for a GitHub/GitLab
+ * Release.
  *
- * Provider-neutral (Node builtins + git only). Rather than dumping raw commit
- * messages, it groups Conventional-Commit-style subjects into sections (Features,
- * Fixes, Performance, Security, …), lists other notable commits, surfaces
- * BREAKING CHANGES, and credits contributors. The output is Markdown suitable for
- * a GitHub/GitLab Release body.
+ * TWO SOURCES, in priority order:
+ *
+ *   1. `CHANGELOG.md`, when it has a section for the tag being released. Hand-
+ *      written notes explain *why* a change matters and what it means for the
+ *      user; a commit subject cannot. Every shipped release so far was in fact
+ *      hand-authored on the release page while this script generated something
+ *      else entirely — the two were never connected, so they disagreed.
+ *   2. Categorized git history, unchanged, when there is no such section. This
+ *      keeps the change additive: a tag cut without a changelog entry still gets
+ *      the notes it always got, rather than an empty release body.
+ *
+ * The `Installing` / `Verifying this release` footers are appended either way.
+ * They are per-release boilerplate rather than narrative, they answer the same
+ * questions every time, and every prior release carries them.
+ *
+ * Provider-neutral: Node builtins + git only.
  *
  * Usage:
  *   node ci/scripts/generate-release-notes.mjs [toRef=HEAD] [outFile]
@@ -16,6 +27,7 @@
  */
 import { spawnSync } from 'node:child_process';
 import { writeFile } from 'node:fs/promises';
+import { normalizeVersion, sectionFor } from './lib/changelog.mjs';
 
 // argv[2] may be an explicit empty string (e.g. an unset "$CIRCLE_TAG" passed
 // through by CI), which `?? 'HEAD'` would NOT catch — treat empty/whitespace as a
@@ -37,9 +49,24 @@ function git(args) {
   return r.stdout.trim();
 }
 
-/** The most recent tag strictly before `toRef`, or null for the first release. */
+/** True when git can resolve a ref — used to tolerate a not-yet-created tag. */
+function revExists(ref) {
+  return spawnSync('git', ['rev-parse', '--verify', '--quiet', `${ref}^{commit}`]).status === 0;
+}
+
+/**
+ * The ref git ranges actually run against.
+ *
+ * `docs/ci/release-process.md` tells maintainers to PREVIEW the notes before
+ * tagging, so the common local invocation names a tag that does not exist yet.
+ * Falling back to HEAD makes that preview work instead of aborting; in CI the
+ * tag always exists and this resolves to it.
+ */
+const gitRef = revExists(toRef) ? toRef : 'HEAD';
+
+/** The most recent tag strictly before the release, or null for the first one. */
 function previousTag() {
-  const r = spawnSync('git', ['describe', '--tags', '--abbrev=0', `${toRef}^`], { encoding: 'utf8' });
+  const r = spawnSync('git', ['describe', '--tags', '--abbrev=0', `${gitRef}^`], { encoding: 'utf8' });
   return r.status === 0 ? r.stdout.trim() : null;
 }
 
@@ -68,9 +95,30 @@ function parse(subject) {
   return { section, breaking: !!bang, text: desc };
 }
 
-function main() {
-  const prev = previousTag();
-  const range = prev ? `${prev}..${toRef}` : toRef;
+/**
+ * The narrative body, taken from CHANGELOG.md when it has a section for this
+ * tag. Returns null when it does not — that null is the signal to fall back.
+ */
+function bodyFromChangelog(prev) {
+  const section = sectionFor(toRef);
+  if (!section) return null;
+  const version = normalizeVersion(toRef);
+  const out = [`## Limboo ${version}${section.date ? ` (${section.date})` : ''}`, ''];
+  if (prev) out.push(`Changes since **${prev}**.`, '');
+  out.push(section.body, '');
+  return { out, commitCount: countCommits(prev) };
+}
+
+/** How many commits this release contains, for the footer line. */
+function countCommits(prev) {
+  const range = prev ? `${prev}..${gitRef}` : gitRef;
+  const raw = git(['log', range, '--no-merges', '--pretty=format:%h']);
+  return raw.split('\n').filter(Boolean).length;
+}
+
+/** The categorized-from-git-history body — unchanged behaviour, now a fallback. */
+function bodyFromHistory(prev) {
+  const range = prev ? `${prev}..${gitRef}` : gitRef;
   const sep = '';
   // subject<US>author-name per commit (exclude merge commits for cleaner notes)
   const raw = git(['log', range, '--no-merges', `--pretty=format:%s${sep}%an`]);
@@ -116,6 +164,21 @@ function main() {
     out.push('### Contributors', '');
     out.push([...contributors].sort().map((c) => `@${c}`).join(', '), '');
   }
+
+  return { out, commitCount };
+}
+
+function main() {
+  const prev = previousTag();
+  // CHANGELOG first, history second. Which one ran is logged to stderr so a
+  // release that silently fell back is visible in the job output.
+  const fromChangelog = bodyFromChangelog(prev);
+  console.error(
+    fromChangelog
+      ? `generate-release-notes: using the CHANGELOG.md section for ${toRef}`
+      : `generate-release-notes: no CHANGELOG.md section for ${toRef}; using git history`,
+  );
+  const { out, commitCount } = fromChangelog ?? bodyFromHistory(prev);
 
   // Installation notes ride every release because the answers differ per
   // platform and the questions are otherwise asked every single time: why

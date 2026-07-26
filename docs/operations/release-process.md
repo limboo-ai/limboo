@@ -20,14 +20,32 @@ Forge; releases are driven from the `main` branch.
 2. **Update the changelog.** Move the `Unreleased` items in
    [CHANGELOG.md](../../CHANGELOG.md) into a new version section with the date, and
    refresh the compare links.
-3. **Commit and tag.** Commit the changelog, then tag `vX.Y.Z` and
+
+   This file is the **single source of the release notes**. The section you write
+   here becomes the GitHub/GitLab release body verbatim —
+   `ci/scripts/generate-release-notes.mjs` reads it and only falls back to
+   categorized commit subjects when a tag has no section — and the same text is
+   what the app shows in its **What's New** tab. Preview the body before tagging:
+
+   ```bash
+   node ci/scripts/generate-release-notes.mjs vX.Y.Z
+   ```
+
+   It prints which source it used to stderr, so a release that silently fell back
+   to commit subjects is visible rather than discovered on the release page.
+3. **Regenerate the bundled notes.** `npm run gen:notes` rewrites
+   `src/shared/releaseNotes.generated.ts` from the changelog so the build ships
+   its own release notes. Commit it with the changelog — it is generated but
+   committed, so the notes are reviewable in the diff and a build never depends
+   on the script having been run.
+4. **Commit and tag.** Commit the changelog, then tag `vX.Y.Z` and
    `git push origin vX.Y.Z` (fans out to GitLab — the source of truth — and the
    GitHub mirror). The tag triggers the GitLab release pipeline, and separately
    the GitHub Actions `release-supplement.yml` workflow, which adds the
    architectures GitLab's runners cannot build (macOS Intel, arm64 Linux, arm64
    Windows) to the same release. Tagging a commit that already carries a `v*` tag
    is rejected by `ci/scripts/check-tag-unique.mjs`.
-4. **Build artifacts.**
+5. **Build artifacts.**
    ```bash
    npm run package   # runnable bundle (no installers)
    npm run dist      # branded installers + auto-update metadata into dist/
@@ -37,12 +55,12 @@ Forge; releases are driven from the `main` branch.
    `latest*.yml` auto-update metadata. See
    [installer and updates](installer-and-updates.md) and
    [packaging and signing](packaging-and-signing.md).
-5. **Publish.** The GitLab pipeline publishes automatically on a `v*` tag — an
+6. **Publish.** The GitLab pipeline publishes automatically on a `v*` tag — an
    identical GitLab Release and GitHub Release (see
    [release-process](../ci/release-process.md)). For a manual fallback use
    `npm run dist:publish` (with `GH_TOKEN` set) or attach `dist/*` — installers,
    `latest*.yml`, and `*.blockmap` — to the GitHub release with the `gh` CLI.
-6. **Verify the release.** Download an artifact from both hosts and confirm it
+7. **Verify the release.** Download an artifact from both hosts and confirm it
    launches.
 
 ## Release checklist
@@ -50,6 +68,9 @@ Forge; releases are driven from the `main` branch.
 - [ ] `main` is green (CI passed).
 - [ ] `package.json` version left ALONE (the tag supplies it).
 - [ ] `CHANGELOG.md` updated with date and compare links.
+- [ ] `npm run gen:notes` re-run and `src/shared/releaseNotes.generated.ts` committed.
+- [ ] `node ci/scripts/generate-release-notes.mjs vX.Y.Z` reports it used the
+      CHANGELOG section, not the git-history fallback.
 - [ ] Tag `vX.Y.Z` created on a commit that carries no other `v*` tag.
 - [ ] Artifacts built (`npm run dist`) and smoke-tested.
 - [ ] `ci/scripts/verify-artifacts.mjs` passed on the assembled publish set.

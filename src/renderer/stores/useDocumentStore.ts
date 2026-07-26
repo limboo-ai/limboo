@@ -24,7 +24,13 @@ import { debounce } from '@/renderer/lib/debounce';
 export type DocumentRef =
   | { kind: 'conversation' }
   | { kind: 'diff'; path: string; staged: boolean; baseRef?: string }
-  | { kind: 'file'; path: string };
+  | { kind: 'file'; path: string }
+  /**
+   * The release notes for one app version. Pathless — unlike every other kind
+   * it does not point at a file in the repository, which is why `documentId`
+   * and `titleFor` below both need an explicit case for it.
+   */
+  | { kind: 'release-notes'; version: string };
 
 export type DocumentId = string;
 
@@ -126,6 +132,9 @@ const CONVERSATION_ENTRY: DocumentEntry = {
 export function documentId(ref: DocumentRef): DocumentId {
   if (ref.kind === 'conversation') return CONVERSATION_ID;
   if (ref.kind === 'file') return `file:${ref.path}`;
+  // Keyed by version, so notes for two versions are two documents and the tab
+  // for a version already read is never reused for a newer one.
+  if (ref.kind === 'release-notes') return `release-notes:${ref.version}`;
   return `diff:${ref.staged ? 's' : 'w'}:${ref.baseRef ?? ''}:${ref.path}`;
 }
 
@@ -141,6 +150,9 @@ function basename(p: string): string {
 
 function titleFor(ref: DocumentRef): string {
   if (ref.kind === 'conversation') return 'Conversation';
+  // Must precede the `basename` call: this ref has no path, and reading one
+  // would hand `basename` an undefined and throw while opening the tab.
+  if (ref.kind === 'release-notes') return "What's New";
   return basename(ref.path);
 }
 
@@ -171,6 +183,12 @@ const persist = debounce((bySession: Record<string, SessionDocuments>) => {
     for (const id of session.order) {
       const entry = session.docs[id];
       if (!entry || entry.ref.kind === 'conversation') continue;
+      // Release notes are deliberately NOT restored: reopening What's New on
+      // every launch is the exact behaviour "dismiss until the next update" is
+      // meant to prevent. Skipped explicitly rather than left to be dropped by
+      // the pathless-ref filter in SettingsManager, so the intent is in the
+      // code instead of being an accident of a downstream guard.
+      if (entry.ref.kind === 'release-notes') continue;
       if (documents.length >= DOCUMENT_LIMITS.maxPersisted) break;
       documents.push({
         sessionId,

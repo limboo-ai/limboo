@@ -599,6 +599,13 @@ export interface AppSettings {
     autoCheck: boolean;
     /** Download an available update automatically (else wait for the user). */
     autoDownload: boolean;
+    /**
+     * The last app version whose release notes the user has seen, `''` before
+     * they have seen any. Written when the What's New tab is CLOSED, not when
+     * it opens — so notes are never marked read on a launch nobody looked at.
+     * Any mismatch with the running version opens the tab exactly once.
+     */
+    lastSeenVersion: string;
   };
   /**
    * Voice subsystem — speech is another input/output modality for the SAME
@@ -3146,6 +3153,7 @@ export type CommandId =
   | 'document.reopenClosed'
   | 'document.next'
   | 'document.prev'
+  | 'updates.releaseNotes'
   | 'diff.toggleSplit'
   | 'drawer.toggleFiles'
   | 'drawer.toggleChanges'

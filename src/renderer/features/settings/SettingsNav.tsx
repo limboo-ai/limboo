@@ -104,10 +104,14 @@ export function SettingsNav({
                     onClick={() => onSelectCategory(category.id)}
                     aria-current={active ? 'page' : undefined}
                     className={cn(
-                      'relative flex w-full items-center gap-2.5 rounded-md px-2.5 py-1.5 text-left text-[12px] transition-colors',
+                      'flex w-full items-center gap-2.5 rounded-md px-2.5 py-1.5 text-left text-[12px] transition-colors',
                       'focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent',
+                      // Active is carried by COLOR, not a background plate (see
+                      // ActivityRail). The label takes accent too: with the plate
+                      // gone, `text-fg` alone is nearly indistinguishable from an
+                      // inactive row on this palette.
                       active
-                        ? 'bg-surface-2 text-fg'
+                        ? 'text-accent'
                         : 'text-muted hover:bg-surface-2 hover:text-fg',
                     )}
                   >

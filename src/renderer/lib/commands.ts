@@ -16,6 +16,8 @@ import { useFileSystemStore } from '@/renderer/stores/useFileSystemStore';
 import { useTerminalStore } from '@/renderer/stores/useTerminalStore';
 import { useVoiceStore } from '@/renderer/stores/useVoiceStore';
 import { useDocumentStore } from '@/renderer/stores/useDocumentStore';
+import { useUpdateStore } from '@/renderer/stores/useUpdateStore';
+import { releaseNotesRef } from '@/renderer/features/updates/useReleaseNotes';
 
 /** Set the composer's default permission mode (Plan / Ask before edits / Accept edits). */
 function setDefaultMode(defaultMode: SessionPermissionMode): void {
@@ -151,6 +153,20 @@ export const COMMANDS: Command[] = [
   // Workspace documents. Ctrl+Tab / Ctrl+Shift+Tab already cycle WORKTREE tabs
   // (above), so documents deliberately take Mod+PageDown / Mod+PageUp instead of
   // stealing a binding that already means something else in this window.
+  {
+    // The equivalent of Claude Code's `/release-notes`: the notes normally
+    // appear once after an update, so there has to be a way back to them.
+    id: 'updates.releaseNotes',
+    title: "What's New in this version",
+    section: 'Workspace',
+    inPalette: true,
+    run: () => {
+      const sessionId = useSessionStore.getState().selectedId;
+      const version = useUpdateStore.getState().status.currentVersion;
+      if (!sessionId || !version) return;
+      useDocumentStore.getState().promote(sessionId, releaseNotesRef(version));
+    },
+  },
   {
     id: 'document.next',
     title: 'Next document tab',
