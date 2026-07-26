@@ -22,6 +22,91 @@ export interface ReleaseNotesEntry {
 /** Newest first. */
 export const RELEASE_NOTES: ReleaseNotesEntry[] = [
   {
+    version: '1.9.0',
+    date: '2026-07-27',
+    markdown: `Fixes the Linux updater, which could never finish. On Arch and Manjaro the
+published package declared dependencies that no longer exist, so \`pacman -U\`
+failed every single time — after the user had already typed their password. The
+release document also drops its badges and coloured glyphs, and contributors now
+appear with their real profile picture and name.
+
+### Fixed
+
+- **The \`.pacman\` package could never install.** electron-builder's default
+  dependency list for that target still names \`http-parser\` (dropped from Arch)
+  and \`libappindicator-gtk3\` (AUR-only), so every self-update ended in
+  \`cannot resolve "http-parser"\` and the app stayed on the old version.
+  \`pacman.depends\` is now declared explicitly and every entry is verified present
+  in core/extra.
+- **"Restart & install" froze the app, prompted twice, then killed it.**
+  electron-updater runs the system package manager with a synchronous,
+  shell-quoted spawn, which blocks the main process for the entire
+  authorization — nineteen seconds in the reported case — and then fires a
+  *second* password prompt (\`pacman -Sy\`) when the first attempt fails. Limboo
+  now owns the privileged install: argv-only, asynchronous, one prompt, no
+  retry that re-prompts, and the window stays responsive throughout.
+- **A refused install no longer force-quits the app.** The four-second quit
+  watchdog fired unconditionally, so an install the package manager had already
+  rejected still terminated the app — the update appeared to do nothing except
+  close the window. The watchdog is now armed only once the installer handoff is
+  confirmed.
+- **An install that fails now says so.** electron-updater reports this class of
+  failure on an event rather than by throwing, so \`install()\` returned success
+  and the UI stayed silent. The real error is captured and surfaced.
+- **Quitting Limboo no longer asks for your password.** \`autoInstallOnAppQuit\`
+  re-ran the whole privileged install on every ordinary quit, blocking shutdown
+  behind a polkit dialog. It is disabled for the Linux package formats.
+- **The Linux updater can no longer pick the wrong package manager.** The
+  \`package-type\` marker baked into the build is cross-checked against the tooling
+  actually present on the machine, so a stale marker cannot select a package
+  manager that is not installed.
+- **"Keep running in tray" finally does something.** The setting had shipped
+  since the first release with no main-process consumer at all: nothing could
+  veto a window close, so closing always quit the app and the tray icon vanished
+  with it. Closing now hides to the tray, the tray can restore or recreate the
+  window, and a one-time notification says where the app went. If the tray icon
+  could not be created, closing still quits — being left with no window *and* no
+  icon is worse than not having the feature.
+
+### Added
+
+- **Contributors show their real profile picture and name.** Resolved at build
+  time through the forge's own commit-email-to-account mapping and embedded in
+  the release manifest, so the picture ships inside the build that describes it.
+  Anyone the lookup cannot resolve keeps their initials.
+- **When an update cannot install itself, Limboo hands you the command that
+  will.** The exact \`sudo pacman -U …\` (or \`dpkg\`/\`dnf\`) line for the file
+  already downloaded, copyable from the update ribbon.
+
+### Changed
+
+- **The release document has no badges and no decorative icons.** Status reads as
+  words — "Stable", "Running now", "Windows: self-signed" — and every section is
+  identified by its name alone. The category glyphs are gone, and so is the
+  colour coding: what matters most is simply listed first, which survives a
+  screenshot, colour-blindness, and the Markdown export in a way a red triangle
+  does not.
+- **The update ribbon reports the whole install.** It now has a real "Installing"
+  state that cannot be dismissed mid-flight, a determinate progress bar, and a
+  restart button with proper pressed, focused, disabled and busy states.
+- **Prerelease rows in the release history print their channel correctly.** The
+  list showed a lowercase \`beta\` where the header showed \`Beta\`; both now read
+  from one table.
+
+### Security
+
+- **Embedded avatars are screened before they are displayed.** The build-time
+  fetch is HTTPS-only and host-allowlisted, follows redirects manually so every
+  hop is re-checked, caps the response while streaming, and identifies images by
+  their magic bytes rather than a declared content type. The renderer re-screens
+  the value before it reaches an image tag, rejecting anything that is not a
+  base64 raster data URI — a manifest is data even when the file it arrived in is
+  ours. Contributor email addresses remain lookup keys and are never written into
+  the manifest.
+- **The privileged Linux install passes no shell.** The package manager is
+  invoked with an argument vector rather than a quoted \`/bin/bash -c\` string.`,
+  },
+  {
     version: '1.8.0',
     date: '2026-07-26',
     markdown: `Turns an update from a maintenance task into a workspace document. The release
@@ -361,69 +446,6 @@ and arm64 builds for all three platforms.
   \`.desktop\` entry pointing at \`/opt/Limboo/limboo\` plus a dangling
   \`/usr/bin/limboo\` symlink. Windows and macOS were unaffected. The application
   itself was never broken — only the launchers around it.`,
-  },
-  {
-    version: '1.5.0',
-    date: '2026-07-25',
-    markdown: `Restores boot after a regression that made the app unlaunchable, and adds
-conversation navigation plus visible file reads.
-
-### Fixed
-
-- **The app could not start.** The SQL-injection hardening added in v1.4.2's
-  \`addColumnIfMissing\` validated the column definition against a character
-  allowlist that had no \`[\` or \`]\`, so the pre-existing \`sessions.tags\`
-  migration (\`TEXT NOT NULL DEFAULT '[]'\`) threw inside \`migrate()\` before the
-  window opened — on fresh installs as well as existing databases, because the
-  check ran ahead of the column-existence guard. \`ALTER TABLE … ADD COLUMN\` is
-  now composed from validated parts (a typed column spec plus SQL-escaped
-  literals) instead of a pattern-matched SQL fragment, so the CWE-89 defense is
-  kept without guessing at legal defaults. The emitted DDL is unchanged, so no
-  data migration is required.
-- **Syntax highlighting in packaged builds** — Shiki now runs on its JavaScript
-  RegExp engine, which needs neither WASM nor \`unsafe-eval\` under the production
-  CSP; secret files prompt instead of hard-blocking.
-
-### Added
-
-- **Preview Rail** — a Codex-style navigation rail on the right of the
-  conversation: one tick per message block, a hover "pyramid" that swells toward
-  the pointer, and a floating preview of the destination prompt. Clicking jumps
-  to that turn. It appears once a conversation passes three prompts.
-- **File reads show their contents** — a \`Read\` tool row expands into the
-  Shiki-highlighted code the model actually saw, with gutter numbers matching the
-  real file (offset reads included), instead of surfacing only the path.
-- **App-owned MCP platform layer** shared across Claude and Cursor.
-- **\`Slider\`** — a token-styled range control over a native \`input[type=range]\`,
-  keeping pointer, keyboard, and screen-reader behavior; adopted by the
-  Appearance and Agent panels.
-- **\`HelixLoader\`** — a pure-CSS strand indicator used for streaming status.
-
-### Changed
-
-- The settings modal is wider (768px → 1024px); its height is unchanged.
-- Activity, Console, and Hooks icons moved from the right rail to the title bar,
-  with their drawers still opening on the right.
-- Opus 5 added to the model catalog and set as the default agent model.
-- File paths and commands in tool rows render in the monospace face.
-
-### Security
-
-- **MCP transport hardening** — an over-limit HTTP response now rejects
-  immediately instead of hanging or truncating silently; the stdio client drains
-  and rejects every in-flight request when a child dies, so a hung process no
-  longer pins async frames.
-- **Path traversal** — MCP config merges resolve the root before the containment
-  check and realpath the deepest existing ancestor, defeating a symlinked parent
-  that would redirect the write outside the repository.
-- **Prototype pollution** — untrusted on-disk MCP config is rebuilt from a
-  sanitized copy with unsafe keys stripped.
-- **Sandbox floor corrected** — the OS jail denied the whole \`userData\` root,
-  which contains the session worktree and attachments the agent must use. It now
-  denies only the crown jewels (\`secrets/\`, \`limboo.db\`, \`settings.json\`,
-  \`window-state.json\`); \`allowWritePaths\` entries are screened at both
-  persistence and runtime, and Strict mode closes the
-  \`dangerouslyDisableSandbox\` escape hatch.`,
   },
 ];
 
