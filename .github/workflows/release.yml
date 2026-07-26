@@ -158,4 +158,10 @@ jobs:
             dist/*.yml
             dist/*.blockmap
             dist/*.cdx.json
+            # The structured release description the app's release document
+            # reads. This list is an explicit ALLOWLIST of extensions, not a
+            # glob — v1.8.0 generated and verified the manifest and then never
+            # uploaded it, because `release-manifest.json` matches none of the
+            # patterns above. Anything new added to dist/ needs a line here.
+            dist/release-manifest.json
             SHA256SUMS
