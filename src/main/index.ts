@@ -112,6 +112,22 @@ function bootstrap(): void {
   const appMenu = new AppMenuManager();
   const tray = new TrayManager();
 
+  /**
+   * True from the moment the app has committed to shutting down. The window's
+   * `close` handler consults it so an intentional quit is never mistaken for a
+   * "hide to tray" close. Set in `before-quit` — which Electron emits BEFORE it
+   * starts closing windows — so every quit route inherits it: the native menu's
+   * `role: 'quit'`, the tray's Quit item, Cmd/Ctrl+Q, an OS session logout, and
+   * the updater's `app.quit()` after a successful install.
+   */
+  let isQuitting = false;
+
+  /** Quit for real, announcing it first so `close` handlers stand aside. */
+  const requestQuit = (): void => {
+    isQuitting = true;
+    app.quit();
+  };
+
   app.on('second-instance', () => {
     // During an update handoff the "second instance" IS the new version starting
     // up while we tear down. Focusing our soon-to-die window would steal it back.
@@ -436,21 +452,83 @@ function bootstrap(): void {
     graphSweepTimer = setInterval(() => workGraph.sweep(), 60 * 60 * 1000);
 
     appMenu.install();
+
+    /**
+     * Focus the main window, recreating it if it is gone. Shared by the tray and
+     * by macOS `activate` so "Show Limboo" can never be a silent no-op.
+     */
+    const showOrCreateWindow = (): void => {
+      const existing = getMainWindow();
+      if (existing) {
+        if (existing.isMinimized()) existing.restore();
+        existing.show();
+        existing.focus();
+        return;
+      }
+      const created = createMainWindow(windowState);
+      appMenu.attachContextMenu(created);
+      attachCloseToTray(created);
+    };
+
+    /**
+     * Tell the user where the window went, once per launch. A window that
+     * disappears with no trace is indistinguishable from a crash — and on Linux
+     * desktops the tray icon is often tucked inside an overflow menu.
+     *
+     * Deliberately in-memory rather than persisted: a per-launch reminder needs
+     * no `SETTINGS_VERSION` bump and no migration.
+     */
+    let trayHintShown = false;
+    const announceTrayOnce = (): void => {
+      if (trayHintShown) return;
+      trayHintShown = true;
+      notifications.notify({
+        title: 'Limboo is still running',
+        body: 'The window was hidden to the system tray. Open it again from the tray icon.',
+      });
+    };
+
+    /**
+     * Make `settings.behavior.minimizeToTray` real.
+     *
+     * The setting has shipped since Phase 1 with no main-process consumer at all:
+     * the only `close` listener was WindowStateManager's geometry capture, which
+     * cannot veto, so closing the window always destroyed it →
+     * `window-all-closed` → `app.quit()` → `tray.destroy()`. The tray icon
+     * vanished because the whole app had quit.
+     *
+     * The `tray.isActive()` guard is not defensive noise. Swallowing the close on
+     * a desktop where the tray never appeared would leave Limboo running with no
+     * window and no icon — unreachable and unquittable. Quitting is the correct
+     * behaviour there, whatever the setting says.
+     */
+    const attachCloseToTray = (target: BrowserWindow): void => {
+      target.on('close', (event) => {
+        if (isQuitting) return;
+        if (!settings.getAll().behavior.minimizeToTray) return;
+        if (!tray.isActive()) return;
+        event.preventDefault();
+        target.hide();
+        tray.refresh();
+        announceTrayOnce();
+      });
+    };
+
     const win = createMainWindow(windowState);
     appMenu.attachContextMenu(win);
-    tray.init();
+    // The tray must exist before the close handler can consult isActive().
+    tray.init({ showWindow: showOrCreateWindow, quit: requestQuit });
+    attachCloseToTray(win);
 
     logger.info('Limboo main process ready');
 
     app.on('activate', () => {
-      if (BrowserWindow.getAllWindows().length === 0) {
-        const created = createMainWindow(windowState);
-        appMenu.attachContextMenu(created);
-      }
+      if (BrowserWindow.getAllWindows().length === 0) showOrCreateWindow();
     });
   });
 
   app.on('window-all-closed', () => {
+    // Not reached while a window is merely hidden — hiding does not close it.
     if (process.platform !== 'darwin') {
       app.quit();
     }
@@ -461,6 +539,10 @@ function bootstrap(): void {
   // handler, so the process stayed alive with half its resources released — which
   // is exactly how "Restart & install" ended up quitting nothing at all.
   app.on('before-quit', () => {
+    // FIRST, ahead of every disposer: the window's close handler reads this to
+    // tell an intentional quit from a hide-to-tray close, and Electron closes
+    // windows only after this handler returns.
+    isQuitting = true;
     safeDispose('agent', () => agent?.cleanup());
     safeDispose('cursorRuntime', () => cursorRuntime?.dispose());
     safeDispose('cursorAuth', () => cursorAuth?.dispose());

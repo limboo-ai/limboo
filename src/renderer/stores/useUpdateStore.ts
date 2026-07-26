@@ -52,9 +52,17 @@ export const useUpdateStore = create<UpdateState>((set, get) => ({
     api.onStatus((status) =>
       set((prev) => ({
         status,
-        busy: false,
+        // `installing` is the one stage that IS the in-flight action, so it must
+        // keep the buttons busy rather than release them.
+        busy: status.stage === 'installing',
         // A new stage is a fresh thing to surface — clear any prior dismissal.
-        dismissed: status.stage === prev.status.stage ? prev.dismissed : false,
+        // An install in flight always surfaces, dismissal or not.
+        dismissed:
+          status.stage === 'installing'
+            ? false
+            : status.stage === prev.status.stage
+              ? prev.dismissed
+              : false,
       })),
     );
   },
@@ -70,11 +78,18 @@ export const useUpdateStore = create<UpdateState>((set, get) => ({
     }
   },
 
+  // The `finally` is not redundant with the `onStatus` push below: if the main
+  // process never emits (the download throws before its first progress event),
+  // relying on the push alone leaves the Download button disabled forever.
   download: async () => {
     const api = window.limboo?.updates;
     if (!api) return;
     set({ busy: true });
-    await api.download();
+    try {
+      await api.download();
+    } finally {
+      set({ busy: false });
+    }
   },
 
   // The install path can refuse (nothing staged, updates disabled, the installer
@@ -85,10 +100,13 @@ export const useUpdateStore = create<UpdateState>((set, get) => ({
     if (!api) return;
     const result = await api.install();
     if (result && !result.ok) {
+      const reason = result.error ?? 'The updater refused to start the installer.';
       useUIStore.getState().addToast({
         tone: 'danger',
         title: 'Could not install the update',
-        description: result.error ?? 'The updater refused to start the installer.',
+        // The manual command is the actual way out of a refused install, so it
+        // travels with the failure rather than living only in the ribbon.
+        description: result.manualCommand ? `${reason} Run: ${result.manualCommand}` : reason,
       });
     }
   },

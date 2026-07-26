@@ -6,6 +6,7 @@
 import { RefreshCw } from 'lucide-react';
 import { useSettingsStore } from '@/renderer/stores/useSettingsStore';
 import { useUpdateStore } from '@/renderer/stores/useUpdateStore';
+import { UpdateAction } from '@/renderer/features/updates/UpdateAction';
 import { Section, Field, Toggle } from '../controls';
 
 const STAGE_LABEL: Record<string, string> = {
@@ -16,6 +17,7 @@ const STAGE_LABEL: Record<string, string> = {
   'not-available': 'Up to date',
   downloading: 'Downloading…',
   downloaded: 'Ready to install',
+  installing: 'Installing…',
   error: 'Update check failed',
 };
 
@@ -38,7 +40,11 @@ export function UpdatesPanel() {
         id="updateStatus"
         label="Status"
         hint={
-          status.stage === 'error' && status.error
+          // A failed install that left a runnable command is more useful as the
+          // command than as the error alone.
+          status.stage === 'error' && status.manualCommand
+            ? `${status.error ?? 'The update could not be applied.'} Run: ${status.manualCommand}`
+            : status.stage === 'error' && status.error
             ? status.error
             : // Say WHY self-update is off (dev build, Microsoft Store install,
               // unsigned macOS app, unsupported Linux packaging) rather than
@@ -63,24 +69,24 @@ export function UpdatesPanel() {
       </Field>
 
       <Field id="updateCheck" label="Check for updates" hint="Look for a newer release now.">
-        {status.stage === 'downloaded' ? (
-          <button
-            type="button"
+        {status.stage === 'downloaded' || status.stage === 'installing' ? (
+          <UpdateAction
+            size="sm"
+            label={status.stage === 'installing' ? 'Installing…' : 'Restart & install'}
+            icon={RefreshCw}
+            busy={status.stage === 'installing'}
             onClick={() => void install()}
-            className="flex items-center gap-1.5 rounded-md bg-accent px-2.5 py-1 text-[12px] font-medium text-base transition-opacity hover:opacity-90"
-          >
-            <RefreshCw size={13} /> Restart & install
-          </button>
+          />
         ) : (
-          <button
-            type="button"
-            disabled={disabled || busy || status.stage === 'checking'}
+          <UpdateAction
+            size="sm"
+            tone="secondary"
+            label="Check now"
+            icon={RefreshCw}
+            busy={busy || status.stage === 'checking'}
+            disabled={disabled}
             onClick={() => void check()}
-            className="flex items-center gap-1.5 rounded-md border border-line bg-surface-2 px-2.5 py-1 text-[12px] text-fg transition-colors hover:border-line-strong disabled:opacity-40"
-          >
-            <RefreshCw size={13} className={busy || status.stage === 'checking' ? 'animate-spin' : ''} />
-            Check now
-          </button>
+          />
         )}
       </Field>
 

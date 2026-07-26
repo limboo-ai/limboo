@@ -28,7 +28,7 @@ no-op.
 | Windows (NSIS) | Runs the downloaded installer with `--updated /S --force-run` | — |
 | macOS | Squirrel.Mac, fed the update zip over a loopback proxy | **A valid code signature** |
 | Linux AppImage | Replaces the AppImage in place, then re-execs it | `APPIMAGE` in the environment |
-| Linux deb / rpm / pacman | `dpkg`/`apt`, `zypper`/`dnf`/`yum`/`rpm`, `pacman` via `pkexec`/`sudo` | A graphical sudo prompt |
+| Linux deb / rpm / pacman | **Limboo's own installer** (`managers/updates/linuxInstall.ts`) runs `dpkg`/`apt-get`, `dnf`/`zypper`/`yum`/`rpm`, or `pacman` under `pkexec` | `pkexec` (polkit) |
 | Microsoft Store (MSIX) | **Disabled** — the Store owns updates | — |
 
 Windows uses silent mode deliberately. Limboo's NSIS installer is the assisted
@@ -105,8 +105,71 @@ stale `deb`/`rpm` marker inside the AppImage.
 
 1. `APPIMAGE` is set → `AppImageUpdater` (if we are running as an AppImage, that
    is what has to be replaced, whatever marker file is baked in).
-2. `{resources}/package-type` → `DebUpdater` / `RpmUpdater` / `PacmanUpdater`.
+2. `{resources}/package-type`, **cross-checked against the host's real tooling**
+   (`detectPackageFormat` in `managers/updates/linuxInstall.ts`) →
+   `DebUpdater` / `RpmUpdater` / `PacmanUpdater`. A marker naming a package
+   manager this machine does not have is not trusted; the host decides instead.
+   Without the cross-check a stale `rpm` marker on an Arch box selects
+   `RpmUpdater`, which downloads the `.rpm`, prompts for a password, and *then*
+   reports `zypper: command not found`.
 3. Neither → updates disabled, with a reason.
+
+## Linux package installs do NOT go through electron-updater
+
+`quitAndInstall()` is used on Windows, macOS, and AppImage only. For deb / rpm /
+pacman the update is applied by `managers/updates/linuxInstall.ts`, because
+electron-updater's own path has four properties a desktop app cannot ship with:
+
+1. It runs the package manager with **`spawnSync` + `shell: true`**, wrapped in
+   `/bin/bash -c '<joined argv>'`. That blocks the whole main process for the
+   entire authorization — measured at 19 s — so the window is frozen while the
+   polkit dialog is up and the prompt can land behind a dead app.
+2. On failure it immediately fires a **second** privileged command
+   (`pacman -Sy`) — a second password prompt for a database sync nobody asked
+   for.
+3. With no graphical helper it falls back to plain `sudo` with piped stdio,
+   which blocks forever on a password it can never read.
+4. `RpmUpdater` picks the **first** entry of its priority list when none of the
+   package managers exist, so a host with no rpm tooling still prompts before
+   failing.
+
+Limboo's replacement is argv-only (never `shell: true`, per CLAUDE.md §6),
+**asynchronous** so the renderer can paint the `installing` stage, single-shot
+(no retry chain, therefore one prompt), and `pkexec`-only — gksudo/kdesudo take
+the command as a shell-quoted string, which is the very thing being removed.
+
+Two consequences are load-bearing:
+
+- **`autoInstallOnAppQuit` is `false`** whenever the Linux package path is
+  active. electron-updater's quit handler runs the same synchronous privileged
+  install, so leaving it on meant every ordinary quit threw a password prompt at
+  the user and blocked shutdown behind it.
+- **The quit watchdog is armed only after the handoff is confirmed.** It used to
+  fire unconditionally, so `app.exit(0)` killed the app four seconds after an
+  install the package manager had already *refused* — the app vanished, still on
+  the old version, with nothing on screen to explain it.
+
+When the install cannot succeed, `UpdateStatus.manualCommand` carries the exact
+line that will (`sudo pacman -U <staged file>`), rendered and copyable in the
+update ribbon. It is display text: main composes it, the renderer never sends it
+back, and nothing executes it.
+
+### Linux package dependencies are an update invariant
+
+A `.pacman` / `.deb` / `.rpm` that cannot resolve its own dependencies is an
+update that can never install, no matter how well the updater behaves. v1.7.0
+shipped exactly that: `electron-builder.yml` declared no `pacman:` block, so
+app-builder-lib's default `depends` applied — and two of its entries,
+`http-parser` (dropped from Arch) and `libappindicator-gtk3` (AUR-only), do not
+exist in the Arch/Manjaro repos. Every pacman self-update failed with
+`cannot resolve "http-parser", a dependency of "limboo"`.
+
+`electron-builder.yml` now declares `pacman.depends` explicitly. Anything added
+there must exist in `core`/`extra` — verify before shipping:
+
+```bash
+bsdtar -xOf dist/limboo-*-x64.pacman .PKGINFO | grep '^depend'
+```
 
 ## AppImage filenames change on update
 

@@ -907,6 +907,10 @@ export type UpdateStage =
   | 'not-available'
   | 'downloading'
   | 'downloaded'
+  // The installer is running and we have NOT quit yet. Only reachable on the
+  // Linux package-manager path, where the privileged install is an async child
+  // we own (and can therefore report on) rather than a handoff-then-die.
+  | 'installing'
   | 'error';
 
 /** The full updater status pushed to the renderer on every transition. */
@@ -924,6 +928,14 @@ export interface UpdateStatus {
   resuming?: boolean;
   /** Last error message (error stage only). */
   error?: string;
+  /**
+   * A shell command the user can run themselves to finish the update, offered
+   * whenever the app could not apply it (today: the Linux package-manager path).
+   * Composed ENTIRELY in the main process from the staged path electron-updater
+   * reports — never renderer-supplied, never echoed back across IPC into a spawn.
+   * It is display/clipboard text only.
+   */
+  manualCommand?: string;
   /** Epoch ms of the last check. */
   checkedAt?: number;
   /**
@@ -942,6 +954,8 @@ export interface UpdateStatus {
 export interface UpdateInstallResult {
   ok: boolean;
   error?: string;
+  /** See {@link UpdateStatus.manualCommand} — the "do it yourself" escape hatch. */
+  manualCommand?: string;
 }
 
 /**

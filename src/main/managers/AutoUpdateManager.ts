@@ -21,15 +21,26 @@
  * `{resources}/package-type`, and that file OVERRIDES the AppImage default. Our
  * hybrid `--prepackaged` build hands one staged app dir to every Linux target, so
  * electron-builder's FpmTarget can leave a stale `deb`/`rpm` marker inside the
- * AppImage. Choosing the implementation ourselves — APPIMAGE env first, marker
- * second — makes the decision deterministic and independent of build ordering.
+ * AppImage. Choosing the implementation ourselves — APPIMAGE env first, then the
+ * marker CROSS-CHECKED against the host's real package tooling
+ * ({@link detectPackageFormat}) — makes the decision deterministic and
+ * independent of build ordering.
+ *
+ * Why the Linux install does not go through electron-updater at all
+ * (see {@link installLinuxPackage} / `updates/linuxInstall.ts`): its deb/rpm/
+ * pacman path runs the package manager with `spawnSync` + `shell: true`, which
+ * freezes the main process for the entire authorization, fires a second password
+ * prompt on failure, and reports the failure on an event this class used to
+ * ignore — so a refused install looked identical to a successful one, right up
+ * until the quit watchdog killed the app. We own that install now; the handoff
+ * path below is for Windows, macOS, and AppImage only.
  */
 import { spawnSync } from 'node:child_process';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { app, BrowserWindow } from 'electron';
 import electronUpdater from 'electron-updater';
-import type { AppUpdater, ProgressInfo, UpdateInfo } from 'electron-updater';
+import type { AppUpdater, ProgressInfo, UpdateDownloadedEvent, UpdateInfo } from 'electron-updater';
 import type { SettingsManager } from './SettingsManager';
 import type { NotificationManager } from './NotificationManager';
 import type { AppSettings, UpdateInstallResult, UpdateStatus } from '@shared/types';
@@ -37,6 +48,12 @@ import { IpcEvents } from '@shared/ipc-channels';
 import { logger } from '../logger';
 import { readJson, writeJson } from '../storage';
 import { getMainWindow } from '../window/createWindow';
+import {
+  detectPackageFormat,
+  manualInstallCommand,
+  runPrivilegedInstall,
+  type LinuxPackageFormat,
+} from './updates/linuxInstall';
 
 // electron-updater is CommonJS; the concrete updater classes ride on the default
 // export alongside the auto-dispatched `autoUpdater` singleton (unused here).
@@ -99,6 +116,18 @@ export class AutoUpdateManager {
    * off `downloaded`, turning the install button into a silent no-op.
    */
   private downloadedVersion: string | null = null;
+  /**
+   * Absolute path of the staged installer, from `UpdateDownloadedEvent`. Only
+   * the Linux package path needs it — it applies the update itself rather than
+   * handing off to electron-updater.
+   */
+  private downloadedFile: string | null = null;
+  /**
+   * Non-null when this is a Linux deb/rpm/pacman install, i.e. when applying the
+   * update means asking a package manager (and the user's password) rather than
+   * replacing a file we own. See {@link installLinuxPackage}.
+   */
+  private readonly linuxFormat: LinuxPackageFormat | null;
   private pollTimer: ReturnType<typeof setInterval> | undefined;
   private initialTimer: ReturnType<typeof setTimeout> | undefined;
 
@@ -107,8 +136,9 @@ export class AutoUpdateManager {
     private readonly notifications: NotificationManager,
   ) {
     this.status = { stage: 'idle', currentVersion: app.getVersion() };
+    this.linuxFormat = app.isPackaged ? detectPackageFormat(process.resourcesPath) : null;
 
-    const { updater, reason } = resolveUpdater();
+    const { updater, reason } = resolveUpdater(this.linuxFormat);
     this.updater = updater;
 
     if (!updater) {
@@ -127,7 +157,13 @@ export class AutoUpdateManager {
       debug: (m: unknown) => void m,
     };
     updater.autoDownload = this.settings.getAll().updates.autoDownload;
-    updater.autoInstallOnAppQuit = true;
+    // Install-on-quit is right for the formats electron-updater can apply
+    // unattended (NSIS, Squirrel.Mac, AppImage) and catastrophic for the Linux
+    // package formats: its quit handler runs the whole privileged install
+    // SYNCHRONOUSLY, so every ordinary quit threw a password prompt at the user
+    // and blocked shutdown behind it — even after the same install had already
+    // failed once. On Linux we apply the update explicitly or not at all.
+    updater.autoInstallOnAppQuit = this.linuxFormat === null;
     // We never publish a web installer (nsis.differentialPackage is off), so opt
     // out explicitly rather than let electron-updater warn on every download.
     updater.disableWebInstaller = true;
@@ -190,7 +226,73 @@ export class AutoUpdateManager {
   }
 
   /**
-   * Quit and apply a downloaded update.
+   * Apply a downloaded update. Two very different code paths live behind one
+   * button, because two very different things happen.
+   */
+  async install(): Promise<UpdateInstallResult> {
+    if (!this.updater) {
+      const error = this.status.disabledReason ?? 'Updates are not available in this build.';
+      logger.warn('[updater] install ignored:', error);
+      return { ok: false, error };
+    }
+    if (!this.downloadedVersion) {
+      const error = 'No update has been downloaded yet.';
+      logger.warn('[updater] install ignored: nothing staged');
+      return { ok: false, error };
+    }
+
+    return this.linuxFormat ? this.installLinuxPackage(this.linuxFormat) : this.handOffToUpdater();
+  }
+
+  /**
+   * Linux deb/rpm/pacman: WE run the package manager, then quit.
+   *
+   * Everything here is the inverse of the handoff path. The install is an async
+   * child we own, so the main process keeps painting (the renderer shows
+   * `installing` and the polkit dialog cannot hide behind a frozen window), the
+   * outcome is a real result rather than a fire-and-forget, and a failure leaves
+   * the app RUNNING with the staged update intact — plus the exact command the
+   * user can run themselves. Nothing is force-exited on a failed install: the
+   * old code's unconditional `app.exit(0)` killed the app after the package
+   * manager had already refused, which is how "I entered my password and it just
+   * disappeared, still on the old version" happened.
+   */
+  private async installLinuxPackage(format: LinuxPackageFormat): Promise<UpdateInstallResult> {
+    const file = this.downloadedFile;
+    if (!file) {
+      const error = 'The downloaded update could not be located on disk.';
+      this.emit({ stage: 'error', error });
+      return { ok: false, error };
+    }
+
+    const manualCommand = manualInstallCommand(format, file);
+    logger.info(`[updater] installing ${this.downloadedVersion} via ${format}`);
+    // Emit BEFORE spawning: the renderer is a separate process, so this paints
+    // "Installing update…" while we wait on authorization.
+    this.emit({ stage: 'installing', error: undefined, manualCommand: undefined });
+
+    const result = await runPrivilegedInstall(format, file);
+
+    if (!result.ok) {
+      const error = result.error ?? 'The update could not be installed.';
+      logger.error('[updater] privileged install failed:', error);
+      // Stay alive and stay staged — the user can retry, or run the command.
+      this.emit({ stage: 'error', error, manualCommand });
+      return { ok: false, error, manualCommand };
+    }
+
+    logger.info('[updater] package installed — relaunching');
+    quittingForUpdate = true;
+    app.releaseSingleInstanceLock();
+    app.relaunch();
+    app.quit();
+    this.armQuitWatchdog();
+    return { ok: true };
+  }
+
+  /**
+   * Windows / macOS / AppImage: hand the staged installer to electron-updater
+   * and die.
    *
    * Two platform details matter here and are the reason this is not a one-liner:
    *
@@ -207,44 +309,60 @@ export class AutoUpdateManager {
    *    back. Releasing the lock before handing off is the fix; it must happen
    *    before, not during, `before-quit`.
    */
-  async install(): Promise<UpdateInstallResult> {
-    if (!this.updater) {
-      const error = this.status.disabledReason ?? 'Updates are not available in this build.';
-      logger.warn('[updater] install ignored:', error);
-      return { ok: false, error };
-    }
-    if (!this.downloadedVersion) {
-      const error = 'No update has been downloaded yet.';
-      logger.warn('[updater] install ignored: nothing staged');
-      return { ok: false, error };
-    }
+  private handOffToUpdater(): UpdateInstallResult {
+    const updater = this.updater;
+    if (!updater) return { ok: false, error: 'Updates are not available in this build.' };
 
     logger.info(`[updater] installing ${this.downloadedVersion} — releasing instance lock`);
     quittingForUpdate = true;
     app.releaseSingleInstanceLock();
 
+    // `BaseUpdater.quitAndInstall` DISPATCHES failures on the `error` event
+    // instead of throwing, so a try/catch alone reports success for an install
+    // that never started. Everything inside the call is synchronous, so a
+    // one-shot listener sees the failure before the call returns.
+    let dispatched: string | null = null;
+    const capture = (err: Error) => {
+      dispatched = errorMessage(err);
+    };
+    updater.once('error', capture);
+
     try {
       // Windows: silent so the assisted wizard does not re-run. Everywhere else
       // the flag is ignored and `autoRunAppAfterInstall` drives the relaunch.
       const silent = process.platform === 'win32';
-      this.updater.quitAndInstall(silent, true);
+      updater.quitAndInstall(silent, true);
     } catch (err) {
-      quittingForUpdate = false;
-      const error = errorMessage(err);
-      logger.error('[updater] quitAndInstall threw:', error);
-      this.emit({ stage: 'error', error });
-      return { ok: false, error };
+      dispatched = errorMessage(err);
+    } finally {
+      updater.removeListener('error', capture);
     }
 
-    // The installer is running detached at this point. If our own teardown wedges
-    // — a disposer that hangs, a handle that never closes — forcing the exit is
-    // strictly better than sitting on the old version with an installer waiting.
+    if (dispatched) {
+      // The handoff never happened. Take back the lock and stay on this version
+      // — arming the watchdog here would kill a perfectly healthy app.
+      quittingForUpdate = false;
+      app.requestSingleInstanceLock();
+      logger.error('[updater] quitAndInstall failed:', dispatched);
+      this.emit({ stage: 'error', error: dispatched });
+      return { ok: false, error: dispatched };
+    }
+
+    this.armQuitWatchdog();
+    return { ok: true };
+  }
+
+  /**
+   * Force the exit if our own teardown wedges after the update has been handed
+   * off. Only ever armed once the handoff is CONFIRMED: the installer (or the
+   * relaunch) is already committed by then, so a stuck disposer is the only
+   * thing left to beat.
+   */
+  private armQuitWatchdog(): void {
     setTimeout(() => {
-      logger.warn('[updater] still alive after quitAndInstall; forcing exit');
+      logger.warn('[updater] still alive after install handoff; forcing exit');
       app.exit(0);
     }, QUIT_WATCHDOG_MS).unref?.();
-
-    return { ok: true };
   }
 
   private wireEvents(): void {
@@ -283,10 +401,20 @@ export class AutoUpdateManager {
         resuming: this.status.resuming,
       });
     });
-    updater.on('update-downloaded', (info: UpdateInfo) => {
+    updater.on('update-downloaded', (info: UpdateDownloadedEvent) => {
       this.clearMarker();
       this.downloadedVersion = info.version;
-      this.emit({ stage: 'downloaded', version: info.version, notes: releaseNotes(info), resuming: false });
+      // The staged path. Only the Linux package path consumes it, but capture it
+      // unconditionally — it is the event's only chance to tell us.
+      this.downloadedFile = info.downloadedFile ?? null;
+      this.emit({
+        stage: 'downloaded',
+        version: info.version,
+        notes: releaseNotes(info),
+        resuming: false,
+        error: undefined,
+        manualCommand: undefined,
+      });
       this.notifications.notify({
         title: 'Update ready',
         body: `Limboo ${info.version} has been downloaded. Restart to install.`,
@@ -333,6 +461,7 @@ export class AutoUpdateManager {
     // A new check supersedes any stale error/version once it resolves.
     if (patch.stage === 'not-available' || patch.stage === 'checking') {
       this.status.error = undefined;
+      this.status.manualCommand = undefined;
     }
     // Drive the OS taskbar progress button so download progress is visible
     // without switching to the window; clear it whenever we're not downloading.
@@ -356,7 +485,7 @@ export class AutoUpdateManager {
  * Decide whether this build can update itself, and with which implementation.
  * Every `null` return carries a reason the UI can show verbatim.
  */
-function resolveUpdater(): Enablement {
+function resolveUpdater(linuxFormat: LinuxPackageFormat | null): Enablement {
   if (!app.isPackaged) {
     return { updater: null, reason: 'Automatic updates only run in a packaged build.' };
   }
@@ -378,7 +507,7 @@ function resolveUpdater(): Enablement {
       reason: 'This install is missing its update metadata. Reinstall Limboo to restore it.',
     };
   }
-  return createUpdater();
+  return createUpdater(linuxFormat);
 }
 
 /**
@@ -386,7 +515,7 @@ function resolveUpdater(): Enablement {
  * auto-dispatched singleton — see the file header for why the Linux dispatch is
  * unsafe in a `--prepackaged` build.
  */
-function createUpdater(): Enablement {
+function createUpdater(linuxFormat: LinuxPackageFormat | null): Enablement {
   if (process.platform === 'win32') return { updater: new NsisUpdater() };
 
   if (process.platform === 'darwin') {
@@ -408,7 +537,11 @@ function createUpdater(): Enablement {
   // AppImage, that is what has to be replaced, whatever marker file is baked in.
   if (process.env.APPIMAGE) return { updater: new AppImageUpdater() };
 
-  switch (readPackageType()) {
+  // Otherwise `linuxFormat` decides — the marker cross-checked against the host's
+  // real tooling (see detectPackageFormat). Picking the class from the raw marker
+  // could select, say, RpmUpdater on a machine with no rpm tooling at all, which
+  // downloads the wrong artifact and then prompts for a password before failing.
+  switch (linuxFormat) {
     case 'deb':
       return { updater: new DebUpdater() };
     case 'rpm':
@@ -420,17 +553,6 @@ function createUpdater(): Enablement {
         updater: null,
         reason: 'This Linux build cannot self-update. Install the update from your package manager.',
       };
-  }
-}
-
-/** Read electron-builder's `{resources}/package-type` marker, if present. */
-function readPackageType(): string | null {
-  try {
-    const marker = join(process.resourcesPath, 'package-type');
-    if (!existsSync(marker)) return null;
-    return readFileSync(marker, 'utf8').trim();
-  } catch {
-    return null;
   }
 }
 

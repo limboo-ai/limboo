@@ -31,9 +31,14 @@ directories:
 # type" mismatch, and the auto-generated tag (v<version>) stays consistent with
 # package.json. The version is the single source of truth: bump it (git tag or
 # `node ci/scripts/apply-tag-version.mjs vX.Y.Z`) and the tag follows.
+# `owner` MUST match the feed AutoUpdateManager pins at runtime (`FEED` in
+# src/main/managers/AutoUpdateManager.ts), the `app-update.yml` that
+# scripts/write-app-update-yml.mjs bakes into every package, and CI's `GH_REPO`.
+# CI publishes with `gh release create`, so a mismatch here is inert there — but a
+# local `npm run publish` would upload to a repo the app never checks.
 publish:
   provider: github
-  owner: BotCoder254
+  owner: limboo-ai
   repo: limboo
   releaseType: release
 
@@ -156,6 +161,41 @@ linux:
   # Include the arch in every Linux filename so the arm64 artifacts published by
   # the GitHub Actions supplement cannot collide with the x64 ones GitLab builds.
   artifactName: ${name}-${version}-${arch}.${ext}
+
+# ---------------------------------------------------------------------------
+# pacman — the dependency list MUST be declared explicitly.
+#
+# app-builder-lib's default `depends` for this target is
+#   c-ares ffmpeg gtk3 http-parser libevent libvpx libxslt libxss minizip nss
+#   re2 snappy libnotify libappindicator-gtk3
+# and TWO of those cannot be resolved on a current Arch/Manjaro system:
+# `http-parser` was dropped from the repos, and `libappindicator-gtk3` is AUR-only.
+# `pacman -U` therefore fails with `cannot resolve "http-parser", a dependency of
+# "limboo"` on EVERY machine — which is exactly how v1.7.0 shipped an in-app
+# updater whose Linux install could never succeed (the user authenticated, pacman
+# refused, and the app force-quit without updating).
+#
+# Electron statically bundles its own ffmpeg / re2 / snappy / libevent / minizip /
+# c-ares / libvpx / libxslt, so the genuine runtime set is much smaller. Every
+# entry below is verified present in `extra`/`core`. Keep it that way: a name that
+# only exists in the AUR is indistinguishable from a typo at install time.
+# ---------------------------------------------------------------------------
+pacman:
+  depends:
+    - gtk3
+    - nss
+    - nspr
+    - alsa-lib
+    - libxss
+    - libxtst
+    - libnotify
+    # Electron safeStorage — the SecretStore's encryption backend.
+    - libsecret
+    # shell.openExternal
+    - xdg-utils
+    # System tray (StatusNotifierItem). The maintained replacement for the
+    # AUR-only libappindicator-gtk3 the default list asked for.
+    - libayatana-appindicator
 
 # ---------------------------------------------------------------------------
 # Microsoft Store (MSIX/AppX) — the warning-free Windows channel.
