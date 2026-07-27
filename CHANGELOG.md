@@ -7,6 +7,79 @@ All notable changes to Limboo are documented here. The format is based on
 
 ## [Unreleased]
 
+## [1.10.0] - 2026-07-27
+
+Plan and Ask are read-only modes, and they enforced that by refusing anything
+they could not prove safe. Because nothing could prove a third-party tool safe,
+both modes blocked every MCP server you had connected — and the agent's own
+research subagents — in every project, with no prompt and no way to allow them.
+Read-only now means read-only rather than unusable. The plan itself also leaves
+the side drawer and appears in the conversation, where the work is.
+
+### Fixed
+
+- **Connected MCP tools were blocked while planning, with no way through.** A
+  tool from a server you added yourself — a database browser, a deployment
+  client — was refused in Plan and Ask even when it only reads, and the refusal
+  offered no way to permit it. Servers now carry a **Plan & Ask access** setting,
+  and read-only tools work in both modes.
+- **The agent could not delegate research while planning.** Spawning a subagent
+  was treated as a mutating command and blocked outright, so planning a large
+  change could not fan out to explore the codebase first — in any project. A
+  subagent performs no work of its own, and everything it goes on to do is
+  checked by the same permission gate under the same mode, so it can still only
+  read while a plan is being written.
+- **A Plan or Ask run using Cursor could fail before it started.** A missing
+  default in the permission configuration threw as the run was assembled.
+- **Cursor mislabelled MCP tool calls.** Tool names arriving from Cursor's hooks
+  were reformatted before they were recognized, so a server's tools were shown
+  under a mangled name and were never matched against that server's own
+  permissions.
+- **Editing an MCP server discarded everything known about its tools.** Saving an
+  unrelated field — a rename, a timeout — cleared the cached tool list until the
+  next successful health probe, which also meant a server briefly lost the
+  read-only information its permissions depend on.
+- **A blocked tool now says what to change.** Every denial pointed at the same
+  setting, even when the setting was already correct and the real cause was a
+  server that was unknown, belonged to another project, or was not trusted.
+
+### Added
+
+- **Plan & Ask access, per MCP server.** Three choices: *Blocked* (nothing runs
+  in the read-only modes), *Read-only tools* (only the tools that server declares
+  read-only), or *Whole server* (you vouch for it). A server that declares
+  nothing says so in its settings rather than silently allowing nothing, and
+  tools it does declare read-only are marked in its tool list.
+- **The plan appears in the conversation.** It used to live only in the narrow
+  Tasks drawer, so a long plan read as raw Markdown next to the work it
+  describes. It now renders as text at full width in the stream, with copy, a
+  Markdown view, collapse, and a control that opens the full panel. Approving no
+  longer means leaving the conversation to find the button.
+
+### Changed
+
+- **A run's MCP servers come from its own project.** They were resolved from
+  whichever project happened to be open, so switching or closing a project while
+  the agent was working changed which servers it was allowed to use mid-run — a
+  trusted server would start asking for approval, and a permitted one could be
+  refused. The set is now fixed when the run starts, from the session's own
+  project.
+
+### Security
+
+- **A server's claim to be read-only is not taken on faith.** Servers may declare
+  which of their tools only read. Following the Model Context Protocol's own
+  guidance, that declaration is honored only for servers you have marked trusted;
+  for anything else it is shown as information and the tool still asks. Choosing
+  *Whole server* is recorded as your assertion, not the server's.
+- **Permitting a tool while planning never widens it elsewhere.** The read-only
+  allowance applies to Plan and Ask alone; in the normal modes every one of these
+  tools still asks exactly as before, and the workspace, app-data and
+  sensitive-file guards run ahead of it unchanged.
+- **A subagent that asks to run outside the sandbox is refused while planning**
+  and recorded in the timeline, alongside the existing audit for shell commands
+  that do the same.
+
 ## [1.9.0] - 2026-07-27
 
 Fixes the Linux updater, which could never finish. On Arch and Manjaro the
@@ -527,7 +600,8 @@ operational.
 - **Unified streaming timeline** — the conversation rendered as one continuous,
   turn-grouped event stream of messages, tool calls, and status markers.
 
-[Unreleased]: https://github.com/limboo-ai/limboo/compare/v1.9.0...HEAD
+[Unreleased]: https://github.com/limboo-ai/limboo/compare/v1.10.0...HEAD
+[1.10.0]: https://github.com/limboo-ai/limboo/compare/v1.9.0...v1.10.0
 [1.9.0]: https://github.com/limboo-ai/limboo/compare/v1.8.0...v1.9.0
 [1.8.0]: https://github.com/limboo-ai/limboo/compare/v1.7.0...v1.8.0
 [1.7.0]: https://github.com/limboo-ai/limboo/compare/v1.6.0...v1.7.0

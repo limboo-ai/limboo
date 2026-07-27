@@ -658,10 +658,11 @@ function migrate(database: Database.Database): void {
     notNull: true,
     default: '',
   });
-  // How far a server's tools reach inside the read-only plan/ask session modes,
-  // which otherwise deny every non-read tool outright (McpPlanAccess). Existing
-  // rows adopt 'annotated': only tools the server itself declares read-only —
-  // and even those still prompt unless the server is also marked trusted.
+  // MCP plan/ask access (schema v16) — how far a server's tools reach inside the
+  // read-only session modes, which otherwise deny every non-read tool outright
+  // (McpPlanAccess). Existing rows adopt 'annotated': only tools the server
+  // itself declares read-only — and even those still prompt unless the server is
+  // also marked trusted.
   addColumnIfMissing(database, 'mcp_servers', 'plan_access', {
     type: 'TEXT',
     notNull: true,

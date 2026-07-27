@@ -24,6 +24,114 @@ import type { ReleaseIndexEntry, ReleaseManifestEntry } from './release';
 /** Newest first. */
 export const RELEASE_MANIFESTS: ReleaseManifestEntry[] = [
   {
+    "version": "1.10.0",
+    "date": "2026-07-27",
+    "channel": "stable",
+    "codename": null,
+    "gitTag": "v1.10.0",
+    "commit": null,
+    "buildNumber": null,
+    "summary": "Plan and Ask are read-only modes, and they enforced that by refusing anything\nthey could not prove safe. Because nothing could prove a third-party tool safe,\nboth modes blocked every MCP server you had connected — and the agent's own\nresearch subagents — in every project, with no prompt and no way to allow them.\nRead-only now means read-only rather than unusable. The plan itself also leaves\nthe side drawer and appears in the conversation, where the work is.",
+    "sections": [
+      {
+        "category": "fixed",
+        "title": "Fixed",
+        "items": [
+          {
+            "lead": "Connected MCP tools were blocked while planning, with no way through",
+            "text": "A\n  tool from a server you added yourself — a database browser, a deployment\n  client — was refused in Plan and Ask even when it only reads, and the refusal\n  offered no way to permit it. Servers now carry a **Plan & Ask access** setting,\n  and read-only tools work in both modes."
+          },
+          {
+            "lead": "The agent could not delegate research while planning",
+            "text": "Spawning a subagent\n  was treated as a mutating command and blocked outright, so planning a large\n  change could not fan out to explore the codebase first — in any project. A\n  subagent performs no work of its own, and everything it goes on to do is\n  checked by the same permission gate under the same mode, so it can still only\n  read while a plan is being written."
+          },
+          {
+            "lead": "A Plan or Ask run using Cursor could fail before it started",
+            "text": "A missing\n  default in the permission configuration threw as the run was assembled."
+          },
+          {
+            "lead": "Cursor mislabelled MCP tool calls",
+            "text": "Tool names arriving from Cursor's hooks\n  were reformatted before they were recognized, so a server's tools were shown\n  under a mangled name and were never matched against that server's own\n  permissions."
+          },
+          {
+            "lead": "Editing an MCP server discarded everything known about its tools",
+            "text": "Saving an\n  unrelated field — a rename, a timeout — cleared the cached tool list until the\n  next successful health probe, which also meant a server briefly lost the\n  read-only information its permissions depend on."
+          },
+          {
+            "lead": "A blocked tool now says what to change",
+            "text": "Every denial pointed at the same\n  setting, even when the setting was already correct and the real cause was a\n  server that was unknown, belonged to another project, or was not trusted."
+          }
+        ],
+        "markdown": "- **Connected MCP tools were blocked while planning, with no way through.** A\n  tool from a server you added yourself — a database browser, a deployment\n  client — was refused in Plan and Ask even when it only reads, and the refusal\n  offered no way to permit it. Servers now carry a **Plan & Ask access** setting,\n  and read-only tools work in both modes.\n- **The agent could not delegate research while planning.** Spawning a subagent\n  was treated as a mutating command and blocked outright, so planning a large\n  change could not fan out to explore the codebase first — in any project. A\n  subagent performs no work of its own, and everything it goes on to do is\n  checked by the same permission gate under the same mode, so it can still only\n  read while a plan is being written.\n- **A Plan or Ask run using Cursor could fail before it started.** A missing\n  default in the permission configuration threw as the run was assembled.\n- **Cursor mislabelled MCP tool calls.** Tool names arriving from Cursor's hooks\n  were reformatted before they were recognized, so a server's tools were shown\n  under a mangled name and were never matched against that server's own\n  permissions.\n- **Editing an MCP server discarded everything known about its tools.** Saving an\n  unrelated field — a rename, a timeout — cleared the cached tool list until the\n  next successful health probe, which also meant a server briefly lost the\n  read-only information its permissions depend on.\n- **A blocked tool now says what to change.** Every denial pointed at the same\n  setting, even when the setting was already correct and the real cause was a\n  server that was unknown, belonged to another project, or was not trusted."
+      },
+      {
+        "category": "added",
+        "title": "Added",
+        "items": [
+          {
+            "lead": "Plan & Ask access, per MCP server",
+            "text": "Three choices: *Blocked* (nothing runs\n  in the read-only modes), *Read-only tools* (only the tools that server declares\n  read-only), or *Whole server* (you vouch for it). A server that declares\n  nothing says so in its settings rather than silently allowing nothing, and\n  tools it does declare read-only are marked in its tool list."
+          },
+          {
+            "lead": "The plan appears in the conversation",
+            "text": "It used to live only in the narrow\n  Tasks drawer, so a long plan read as raw Markdown next to the work it\n  describes. It now renders as text at full width in the stream, with copy, a\n  Markdown view, collapse, and a control that opens the full panel. Approving no\n  longer means leaving the conversation to find the button."
+          }
+        ],
+        "markdown": "- **Plan & Ask access, per MCP server.** Three choices: *Blocked* (nothing runs\n  in the read-only modes), *Read-only tools* (only the tools that server declares\n  read-only), or *Whole server* (you vouch for it). A server that declares\n  nothing says so in its settings rather than silently allowing nothing, and\n  tools it does declare read-only are marked in its tool list.\n- **The plan appears in the conversation.** It used to live only in the narrow\n  Tasks drawer, so a long plan read as raw Markdown next to the work it\n  describes. It now renders as text at full width in the stream, with copy, a\n  Markdown view, collapse, and a control that opens the full panel. Approving no\n  longer means leaving the conversation to find the button."
+      },
+      {
+        "category": "changed",
+        "title": "Changed",
+        "items": [
+          {
+            "lead": "A run's MCP servers come from its own project",
+            "text": "They were resolved from\n  whichever project happened to be open, so switching or closing a project while\n  the agent was working changed which servers it was allowed to use mid-run — a\n  trusted server would start asking for approval, and a permitted one could be\n  refused. The set is now fixed when the run starts, from the session's own\n  project."
+          }
+        ],
+        "markdown": "- **A run's MCP servers come from its own project.** They were resolved from\n  whichever project happened to be open, so switching or closing a project while\n  the agent was working changed which servers it was allowed to use mid-run — a\n  trusted server would start asking for approval, and a permitted one could be\n  refused. The set is now fixed when the run starts, from the session's own\n  project."
+      },
+      {
+        "category": "security",
+        "title": "Security",
+        "items": [
+          {
+            "lead": "A server's claim to be read-only is not taken on faith",
+            "text": "Servers may declare\n  which of their tools only read. Following the Model Context Protocol's own\n  guidance, that declaration is honored only for servers you have marked trusted;\n  for anything else it is shown as information and the tool still asks. Choosing\n  *Whole server* is recorded as your assertion, not the server's."
+          },
+          {
+            "lead": "Permitting a tool while planning never widens it elsewhere",
+            "text": "The read-only\n  allowance applies to Plan and Ask alone; in the normal modes every one of these\n  tools still asks exactly as before, and the workspace, app-data and\n  sensitive-file guards run ahead of it unchanged."
+          },
+          {
+            "lead": "A subagent that asks to run outside the sandbox is refused while planning",
+            "text": "and recorded in the timeline, alongside the existing audit for shell commands\n  that do the same."
+          }
+        ],
+        "markdown": "- **A server's claim to be read-only is not taken on faith.** Servers may declare\n  which of their tools only read. Following the Model Context Protocol's own\n  guidance, that declaration is honored only for servers you have marked trusted;\n  for anything else it is shown as information and the tool still asks. Choosing\n  *Whole server* is recorded as your assertion, not the server's.\n- **Permitting a tool while planning never widens it elsewhere.** The read-only\n  allowance applies to Plan and Ask alone; in the normal modes every one of these\n  tools still asks exactly as before, and the workspace, app-data and\n  sensitive-file guards run ahead of it unchanged.\n- **A subagent that asks to run outside the sandbox is refused while planning**\n  and recorded in the timeline, alongside the existing audit for shell commands\n  that do the same."
+      }
+    ],
+    "contributors": [],
+    "pullRequests": [],
+    "mergedBranches": [],
+    "assets": [],
+    "signing": [],
+    "stats": {
+      "commits": null,
+      "filesChanged": null,
+      "additions": null,
+      "deletions": null
+    },
+    "links": {
+      "release": "https://github.com/limboo-ai/limboo/releases/tag/v1.10.0",
+      "compare": "https://github.com/limboo-ai/limboo/compare/v1.9.0...v1.10.0",
+      "tag": "https://github.com/limboo-ai/limboo/releases/tag/v1.10.0",
+      "milestone": null
+    },
+    "checksumManifest": "SHA256SUMS",
+    "provenanceRepo": "limboo-ai/limboo",
+    "markdown": "Plan and Ask are read-only modes, and they enforced that by refusing anything\nthey could not prove safe. Because nothing could prove a third-party tool safe,\nboth modes blocked every MCP server you had connected — and the agent's own\nresearch subagents — in every project, with no prompt and no way to allow them.\nRead-only now means read-only rather than unusable. The plan itself also leaves\nthe side drawer and appears in the conversation, where the work is.\n\n### Fixed\n\n- **Connected MCP tools were blocked while planning, with no way through.** A\n  tool from a server you added yourself — a database browser, a deployment\n  client — was refused in Plan and Ask even when it only reads, and the refusal\n  offered no way to permit it. Servers now carry a **Plan & Ask access** setting,\n  and read-only tools work in both modes.\n- **The agent could not delegate research while planning.** Spawning a subagent\n  was treated as a mutating command and blocked outright, so planning a large\n  change could not fan out to explore the codebase first — in any project. A\n  subagent performs no work of its own, and everything it goes on to do is\n  checked by the same permission gate under the same mode, so it can still only\n  read while a plan is being written.\n- **A Plan or Ask run using Cursor could fail before it started.** A missing\n  default in the permission configuration threw as the run was assembled.\n- **Cursor mislabelled MCP tool calls.** Tool names arriving from Cursor's hooks\n  were reformatted before they were recognized, so a server's tools were shown\n  under a mangled name and were never matched against that server's own\n  permissions.\n- **Editing an MCP server discarded everything known about its tools.** Saving an\n  unrelated field — a rename, a timeout — cleared the cached tool list until the\n  next successful health probe, which also meant a server briefly lost the\n  read-only information its permissions depend on.\n- **A blocked tool now says what to change.** Every denial pointed at the same\n  setting, even when the setting was already correct and the real cause was a\n  server that was unknown, belonged to another project, or was not trusted.\n\n### Added\n\n- **Plan & Ask access, per MCP server.** Three choices: *Blocked* (nothing runs\n  in the read-only modes), *Read-only tools* (only the tools that server declares\n  read-only), or *Whole server* (you vouch for it). A server that declares\n  nothing says so in its settings rather than silently allowing nothing, and\n  tools it does declare read-only are marked in its tool list.\n- **The plan appears in the conversation.** It used to live only in the narrow\n  Tasks drawer, so a long plan read as raw Markdown next to the work it\n  describes. It now renders as text at full width in the stream, with copy, a\n  Markdown view, collapse, and a control that opens the full panel. Approving no\n  longer means leaving the conversation to find the button.\n\n### Changed\n\n- **A run's MCP servers come from its own project.** They were resolved from\n  whichever project happened to be open, so switching or closing a project while\n  the agent was working changed which servers it was allowed to use mid-run — a\n  trusted server would start asking for approval, and a permitted one could be\n  refused. The set is now fixed when the run starts, from the session's own\n  project.\n\n### Security\n\n- **A server's claim to be read-only is not taken on faith.** Servers may declare\n  which of their tools only read. Following the Model Context Protocol's own\n  guidance, that declaration is honored only for servers you have marked trusted;\n  for anything else it is shown as information and the tool still asks. Choosing\n  *Whole server* is recorded as your assertion, not the server's.\n- **Permitting a tool while planning never widens it elsewhere.** The read-only\n  allowance applies to Plan and Ask alone; in the normal modes every one of these\n  tools still asks exactly as before, and the workspace, app-data and\n  sensitive-file guards run ahead of it unchanged.\n- **A subagent that asks to run outside the sandbox is refused while planning**\n  and recorded in the timeline, alongside the existing audit for shell commands\n  that do the same."
+  },
+  {
     "version": "1.9.0",
     "date": "2026-07-27",
     "channel": "stable",
@@ -482,54 +590,18 @@ export const RELEASE_MANIFESTS: ReleaseManifestEntry[] = [
     "checksumManifest": "SHA256SUMS",
     "provenanceRepo": "limboo-ai/limboo",
     "markdown": "Repairs in-app updating, which has never worked on macOS and could fail to\ninstall or restart anywhere; adds code signing and a Microsoft Store channel;\nand extends the release to every architecture, including Arch/Manjaro packages\nand arm64 builds for all three platforms.\n\n### Fixed\n\n- **\"Restart & install\" did nothing.** Clicking it could leave the app running on\n  the old version, or quit without ever coming back. Four separate causes:\n  - The install request was gated on the UI stage being `downloaded`, but the\n    hourly poll re-emitted `update-available` for the already-downloaded version\n    and moved the stage off it. The click then returned with no log, no error and\n    no feedback of any kind. Staged updates are now tracked by version\n    independently of the UI stage, polling is suspended while an update is\n    staged, and every refusal is logged and surfaced to the user.\n  - **The restart lost a race with itself.** `quitAndInstall` spawns the\n    replacement process synchronously but defers `app.quit()` to the next tick,\n    so the new instance hit `requestSingleInstanceLock()` while the old one still\n    held it and quit itself. The lock is now released before the handoff, and\n    `second-instance` events are ignored while an update is in flight.\n  - **A throwing disposer could keep the app alive.** `before-quit` ran thirteen\n    `dispose()` calls with no error containment; one throw aborted the rest and\n    was swallowed by the global `uncaughtException` handler, leaving the process\n    up with an installer waiting on it. Each disposer is now isolated, and a\n    watchdog forces the exit if the process is still running four seconds after\n    the handoff.\n  - Windows now installs silently (`--updated /S --force-run`). Without `/S` the\n    assisted NSIS wizard re-ran from the first page, which reads as \"nothing\n    happened\".\n- **macOS auto-update was impossible, and the \"Intel\" downloads were arm64\n  builds.** `scripts/dist.mjs` passed the Forge output *directory* to\n  `electron-builder --prepackaged`, but electron-builder treats that value as the\n  `.app` bundle path on macOS. The published update zips were rooted at\n  `Limboo-darwin-arm64/` instead of `Limboo.app/`, which Squirrel.Mac cannot\n  install — they downloaded and checksummed perfectly and then failed, every\n  time. The same misconfiguration made electron-builder wrap that one\n  single-architecture directory once per architecture listed in\n  `electron-builder.yml`, so `Limboo-1.5.1-mac.zip` (\"Intel\") and\n  `Limboo-1.5.1-arm64-mac.zip` were byte-identical. Fixed by pointing\n  `--prepackaged` at the bundle on darwin and removing every explicit `arch:`\n  list, so the architecture comes only from the CI matrix.\n  **Users on v1.5.1 or earlier must download the new `.dmg` once, manually** —\n  those builds cannot auto-update to this release.\n- **Linux `.deb` / `.rpm` installs never received updates.** Self-update was\n  disabled unless `APPIMAGE` was set, though electron-updater has supported\n  installing deb, rpm and pacman packages through the system package manager for\n  some time. The app now selects its updater explicitly — `APPIMAGE` first, then\n  the `package-type` marker — which also fixes AppImages that shipped a stale\n  `deb`/`rpm` marker from electron-builder's shared staging directory and so\n  routed AppImage users to the wrong updater.\n\n### Added\n\n- **A code-signing pipeline.** Developer ID signing + notarization for macOS\n  (hardened runtime + entitlements) — which is also what makes macOS auto-update\n  possible at all, since Squirrel.Mac refuses to update an app it cannot verify —\n  and Authenticode for Windows, with Azure Trusted Signing wired and dormant\n  beside a self-signed route. Note that a self-signed certificate does **not**\n  remove the SmartScreen warning; it is documented as such. The whole path is\n  opt-in from environment credentials (`scripts/signing.cjs`), so builds without\n  them — **including this release** — are unsigned and behave exactly as before.\n  Because signing runs in Forge rather than electron-builder — `--prepackaged`\n  skips the pack step where electron-builder would sign — the split is documented\n  in [code signing](docs/ci/code-signing.md).\n- **A Microsoft Store (MSIX) channel**, the only warning-free Windows route that\n  does not require buying a certificate. Store builds disable self-update, since\n  the Store owns updates there. See\n  [microsoft-store.md](docs/operations/microsoft-store.md).\n- **Wider platform coverage.** Linux gains `pacman` (Arch/Manjaro) and `tar.gz`\n  targets, and every platform now publishes both x64 and arm64. The\n  architectures GitLab's SaaS runners cannot build — macOS Intel, arm64 Linux,\n  arm64 Windows — are produced by a new tag-triggered\n  `release-supplement.yml` workflow that uploads into the same release.\n- **Release gates for the failures above.**\n  `ci/scripts/verify-artifacts.mjs` asserts the macOS zip root, that no two\n  artifacts in an update feed share a hash, that every file a feed references\n  exists, and that debug output stays out of the publish set.\n  `ci/scripts/verify-signing.mjs` gained a Gatekeeper assessment and enforces the\n  Windows `publisherName` invariant.\n  `ci/scripts/merge-update-metadata.mjs` merges the per-runner update feeds, so a\n  supplementary upload adds an architecture instead of deleting one.\n- [auto-update.md](docs/operations/auto-update.md) — the per-platform update\n  mechanism and the invariants that must not be broken.\n- Documentation subsystem: landing `README`, a structured `docs/` site (getting\n  started, concepts, guides, reference, architecture, operations), community-health\n  files (`LICENSE`, `CONTRIBUTING`, `CODE_OF_CONDUCT`, `SECURITY`, `ROADMAP`,\n  `SUPPORT`, `GOVERNANCE`, `AUTHORS`, `CITATION.cff`), and `.github/` automation\n  (CI, CodeQL, Dependabot, issue/PR templates).\n\n### Security\n\n- Windows update-signature verification is pinned off\n  (`win.verifyUpdateCodeSignature: false`) while the self-signed route is in use,\n  and enforced in CI. Left at its default, electron-builder derives\n  `publisherName` from the certificate CN and writes it into `app-update.yml`;\n  electron-updater would then demand a trusted Authenticode chain that a\n  self-signed certificate can never satisfy, breaking every Windows update with\n  no recovery short of a manual reinstall.\n\n### Changed\n\n- **Integrated Terminal** — pinned `node-pty` to the `1.2.0-beta` line,\n  Microsoft's in-progress rewrite of the native addon on Node-API\n  (`node-addon-api`) instead of NAN. The compiled binary is ABI-stable across\n  Node.js *and* Electron major versions, so the per-platform prebuilt bundled\n  in the npm package works as-is — no `node-gyp` rebuild, no Visual Studio\n  Build Tools requirement, for any Electron version including future ones.\n  `forge.config.ts`'s `rebuildConfig.ignoreModules` excludes `node-pty` from\n  Electron Forge's native-rebuild pass, since `@electron/rebuild` doesn't know\n  the bundled prebuilt is already correct and would otherwise try (and fail\n  without the toolchain) to recompile it. No terminal behavior change. (An\n  earlier attempt at this used `@homebridge/node-pty-prebuilt-multiarch`, a\n  NAN-based fork — verified afterward to have no published prebuilt past\n  roughly Electron 29's ABI, so it didn't actually fix the problem; superseded\n  by this change.) See [installation](docs/getting-started/installation.md)."
-  },
-  {
-    "version": "1.5.1",
-    "date": "2026-07-25",
-    "channel": "stable",
-    "codename": null,
-    "gitTag": "v1.5.1",
-    "commit": null,
-    "buildNumber": null,
-    "summary": "",
-    "sections": [
-      {
-        "category": "fixed",
-        "title": "Fixed",
-        "items": [
-          {
-            "lead": "Linux packages could not launch",
-            "text": "`electron-builder.yml` set no\n  `linux.executableName`, so electron-builder derived every Linux launcher path\n  from the package name (`limboo`, lowercase) while Electron Forge — which owns\n  packaging and hands the result over via `--prepackaged` — produced the binary\n  as `Limboo`. On a case-sensitive filesystem that mismatch broke all three\n  Linux artifacts in v1.5.0: the AppImage's `AppRun` exec'd a non-existent\n  `limboo` and failed to start at all, and the deb/rpm shipped a\n  `.desktop` entry pointing at `/opt/Limboo/limboo` plus a dangling\n  `/usr/bin/limboo` symlink. Windows and macOS were unaffected. The application\n  itself was never broken — only the launchers around it."
-          }
-        ],
-        "markdown": "- **Linux packages could not launch.** `electron-builder.yml` set no\n  `linux.executableName`, so electron-builder derived every Linux launcher path\n  from the package name (`limboo`, lowercase) while Electron Forge — which owns\n  packaging and hands the result over via `--prepackaged` — produced the binary\n  as `Limboo`. On a case-sensitive filesystem that mismatch broke all three\n  Linux artifacts in v1.5.0: the AppImage's `AppRun` exec'd a non-existent\n  `limboo` and failed to start at all, and the deb/rpm shipped a\n  `.desktop` entry pointing at `/opt/Limboo/limboo` plus a dangling\n  `/usr/bin/limboo` symlink. Windows and macOS were unaffected. The application\n  itself was never broken — only the launchers around it."
-      }
-    ],
-    "contributors": [],
-    "pullRequests": [],
-    "mergedBranches": [],
-    "assets": [],
-    "signing": [],
-    "stats": {
-      "commits": null,
-      "filesChanged": null,
-      "additions": null,
-      "deletions": null
-    },
-    "links": {
-      "release": "https://github.com/limboo-ai/limboo/releases/tag/v1.5.1",
-      "compare": "https://github.com/limboo-ai/limboo/compare/v1.5.0...v1.5.1",
-      "tag": "https://github.com/limboo-ai/limboo/releases/tag/v1.5.1",
-      "milestone": null
-    },
-    "checksumManifest": "SHA256SUMS",
-    "provenanceRepo": "limboo-ai/limboo",
-    "markdown": "### Fixed\n\n- **Linux packages could not launch.** `electron-builder.yml` set no\n  `linux.executableName`, so electron-builder derived every Linux launcher path\n  from the package name (`limboo`, lowercase) while Electron Forge — which owns\n  packaging and hands the result over via `--prepackaged` — produced the binary\n  as `Limboo`. On a case-sensitive filesystem that mismatch broke all three\n  Linux artifacts in v1.5.0: the AppImage's `AppRun` exec'd a non-existent\n  `limboo` and failed to start at all, and the deb/rpm shipped a\n  `.desktop` entry pointing at `/opt/Limboo/limboo` plus a dangling\n  `/usr/bin/limboo` symlink. Windows and macOS were unaffected. The application\n  itself was never broken — only the launchers around it."
   }
 ];
 
 /** Every released version, newest first. */
 export const RELEASE_INDEX: ReleaseIndexEntry[] = [
+  {
+    "version": "1.10.0",
+    "date": "2026-07-27",
+    "channel": "stable",
+    "summary": "Plan and Ask are read-only modes, and they enforced that by refusing anything\nthey could not prove safe. Because nothing could prove a third-party tool safe,\nboth modes blocked every MCP server you had connected — and the agent's own\nresearch subagents — in every project, with no prompt and no way to allow them.\nRead-only now means read-only rather than unusable. The plan itself also leaves\nthe side drawer and appears in the conversation, where the work is.",
+    "detailed": true
+  },
   {
     "version": "1.9.0",
     "date": "2026-07-27",
@@ -563,7 +635,7 @@ export const RELEASE_INDEX: ReleaseIndexEntry[] = [
     "date": "2026-07-25",
     "channel": "stable",
     "summary": "",
-    "detailed": true
+    "detailed": false
   },
   {
     "version": "1.5.0",

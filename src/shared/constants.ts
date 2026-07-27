@@ -983,7 +983,7 @@ export function clamp(value: number, min: number, max: number): number {
 /* ------------------------------------------------------------------ */
 
 /** Bumped whenever the workspace DB schema changes incompatibly. */
-export const WORKSPACE_SCHEMA_VERSION = 15;
+export const WORKSPACE_SCHEMA_VERSION = 16;
 
 /** Input caps the main process enforces on renderer-supplied session values. */
 export const SESSION_LIMITS = {
