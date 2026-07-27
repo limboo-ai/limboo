@@ -8,7 +8,13 @@
  */
 import { useMemo, useState } from 'react';
 import { Plus, X } from 'lucide-react';
-import type { McpCategory, McpServerInfo, McpServerInput, McpTransport } from '@shared/types';
+import type {
+  McpCategory,
+  McpPlanAccess,
+  McpServerInfo,
+  McpServerInput,
+  McpTransport,
+} from '@shared/types';
 import { cn } from '@/renderer/lib/cn';
 import { ActionButton, SecretInput, SegmentedControl, Select, StackedField, TextInput, Toggle } from '../controls';
 
@@ -94,6 +100,7 @@ export function McpServerForm({
   const [envText, setEnvText] = useState(nonSecretPairs(initial?.env, '='));
   const [headersText, setHeadersText] = useState(nonSecretPairs(initial?.headers, ': '));
   const [trust, setTrust] = useState(initial?.trust ?? 'ask');
+  const [planAccess, setPlanAccess] = useState<McpPlanAccess>(initial?.planAccess ?? 'annotated');
   const [startup, setStartup] = useState(initial?.startup ?? 'on-demand');
   const [claude, setClaude] = useState(initial?.providers.claude ?? true);
   const [cursor, setCursor] = useState(initial?.providers.cursor ?? true);
@@ -127,6 +134,7 @@ export function McpServerForm({
       displayName: displayName.trim() || name.trim(),
       transport,
       trust,
+      planAccess,
       startup,
       providers: { claude, cursor },
       timeoutMs,
@@ -294,6 +302,51 @@ export function McpServerForm({
             { value: 'trusted', label: 'Trusted' },
           ]}
         />
+      </StackedField>
+      <StackedField
+        label="Plan & Ask access"
+        hint="Plan and Ask are read-only modes. Choose which of this server's tools may still run in them."
+      >
+        <SegmentedControl
+          value={planAccess}
+          onChange={setPlanAccess}
+          options={[
+            { value: 'block', label: 'Blocked' },
+            { value: 'annotated', label: 'Read-only tools' },
+            { value: 'all', label: 'Whole server' },
+          ]}
+        />
+        {planAccess === 'annotated' && (
+          <p className="mt-1.5 text-[11px] leading-relaxed text-faint">
+            Only tools this server declares read-only. Servers declare that themselves — one can
+            claim read-only and still write.
+          </p>
+        )}
+        {/* Annotations are optional in the MCP spec and plenty of servers ship
+            none, in which case this setting silently allows nothing. Say so,
+            rather than leaving the user to wonder why the tools are still
+            blocked. Requires a successful probe, so it keys off cached tools. */}
+        {planAccess === 'annotated' &&
+          !!initial &&
+          initial.runtime.tools.length > 0 &&
+          !initial.runtime.tools.some((t) => t.readOnly) && (
+            <p className="mt-1.5 text-[11px] leading-relaxed text-warning">
+              This server declares no read-only tools, so nothing is allowed through. Choose Whole
+              server if you know its tools only read.
+            </p>
+          )}
+        {planAccess === 'all' && (
+          <p className="mt-1.5 text-[11px] leading-relaxed text-warning">
+            You are asserting every tool on this server is read-only. Limboo cannot verify that.
+            App-data, workspace-secret and workspace-boundary guards still apply.
+          </p>
+        )}
+        {planAccess !== 'block' && trust !== 'trusted' && (
+          <p className="mt-1.5 text-[11px] leading-relaxed text-faint">
+            Ask mode will prompt for each call. Claude's Plan mode blocks these tools before Limboo
+            sees them, so it also needs Trust set to Trusted.
+          </p>
+        )}
       </StackedField>
       <StackedField label="Startup">
         <SegmentedControl

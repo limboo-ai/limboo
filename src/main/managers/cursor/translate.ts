@@ -7,6 +7,7 @@
  */
 import type { CursorAssistantEvent, CursorEvent, CursorToolCallEvent } from './types';
 import { isReadOnlyShellCommand } from '../agent/readOnlyCommands';
+import { MCP_SERVER_NAME_RE } from '@shared/constants';
 
 /**
  * Disambiguate `--stream-partial-output` assistant events (official contract):
@@ -187,8 +188,48 @@ function reshapeArgs(name: string, args: Record<string, unknown>): Record<string
 
 /** Best-effort human name for an unmapped union key: strip suffix, capitalize. */
 function genericToolName(key: string): string {
+  // An already-qualified MCP name is an IDENTITY, not a label — capitalizing it
+  // to `Mcp__server__tool` breaks every `mcp__` prefix match downstream (the
+  // permission gate's trusted-server and plan-readable lookups both key off it)
+  // and renders a mangled chip.
+  if (key.startsWith('mcp__')) return key;
   const base = key.replace(/ToolCall$/, '') || key;
   return base.charAt(0).toUpperCase() + base.slice(1);
+}
+
+/**
+ * Recover the `mcp__<server>__<tool>` identity from a hook payload.
+ *
+ * The streamed event path builds this name itself, but the hook path receives
+ * whatever the CLI puts in `tool_name`, which may be already-qualified, split
+ * across a separate server field, or dot/underscore separated. Without this the
+ * name reaches the permission gate as an opaque string and every MCP lookup
+ * misses.
+ *
+ * Both segments are charset-validated before interpolation: this is
+ * provider-supplied data feeding a prefix-matched security decision, and a
+ * segment containing `__` could forge a different server's namespace.
+ */
+function mcpHookToolName(rawName: string, payload: Record<string, unknown>): string | null {
+  if (rawName.startsWith('mcp__')) return rawName;
+  const safe = (s: string | undefined): string | null =>
+    s && MCP_SERVER_NAME_RE.test(s) ? s : null;
+
+  const server = safe(
+    strField(payload, 'server_name') ?? strField(payload, 'serverName') ?? strField(payload, 'server'),
+  );
+  if (server) {
+    const tool = safe(strField(payload, 'tool_name') ?? strField(payload, 'toolName')) ?? safe(rawName);
+    if (tool) return `mcp__${server}__${tool}`;
+  }
+  // `mcp.server.tool` / `mcp_server_tool` — split the first two segments only.
+  const m = /^mcp[_.]([^_.]+)[_.](.+)$/i.exec(rawName);
+  if (m) {
+    const s = safe(m[1]);
+    const t = safe(m[2]);
+    if (s && t) return `mcp__${s}__${t}`;
+  }
+  return null;
 }
 
 export interface MappedToolResult {
@@ -320,6 +361,12 @@ export function mapHookEvent(
         rawInput && typeof rawInput === 'object' && !Array.isArray(rawInput)
           ? (rawInput as Record<string, unknown>)
           : {};
+      // MCP first: an `mcp__server__tool` identity must survive verbatim to the
+      // gate, and reshapeArgs only knows the Claude-shaped tools — running it
+      // over MCP args would be a no-op at best and could drop the `path` key the
+      // workspace guard reads.
+      const mcpName = mcpHookToolName(rawName, payload);
+      if (mcpName) return { name: mcpName, input: args, observeOnly: false };
       const name =
         HOOK_TOOL_NAME_MAP[rawName.toLowerCase()] ??
         TOOL_NAME_MAP[rawName] ??

@@ -237,6 +237,12 @@ export const MCP_LIMITS = {
   probeTimeout: { min: 1_000, max: 120_000, default: 15_000 },
   /** Max tools cached per server. */
   maxTools: 500,
+  /**
+   * Max fully-qualified MCP tool names spliced into a plan run's `allowedTools`.
+   * That list exists only to get past the Agent SDK's own plan-mode block, so it
+   * stays small and bounded — see `McpManager.planAllowedToolsFor`.
+   */
+  maxPlanAllowedTools: 256,
   /** A single MCP client stdio line beyond this is dropped, never buffered. */
   clientLineMax: 4_194_304,
   /** Max log lines kept in the per-server ring buffer. */

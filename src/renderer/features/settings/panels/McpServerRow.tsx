@@ -162,6 +162,13 @@ export function McpServerRow({ server }: { server: McpServerInfo }) {
                 {server.providers.cursor && <Badge>Cursor</Badge>}
                 {server.source !== 'user' && <Badge muted>imported</Badge>}
                 {server.workspaceId ? <Badge muted>workspace</Badge> : <Badge muted>global</Badge>}
+                {/* Only when it differs from "denied in the read-only modes" —
+                    the default state earns no badge. */}
+                {server.planAccess !== 'block' && (
+                  <Badge muted>
+                    {server.planAccess === 'all' ? 'plan: all tools' : 'plan: read-only'}
+                  </Badge>
+                )}
                 {server.runtime.latencyMs != null && server.runtime.status === 'connected' && (
                   <Badge muted>{server.runtime.latencyMs}ms</Badge>
                 )}
@@ -169,15 +176,25 @@ export function McpServerRow({ server }: { server: McpServerInfo }) {
 
               {toolCount > 0 && (
                 <div className="flex flex-wrap gap-1">
-                  {server.runtime.tools.slice(0, 24).map((t) => (
-                    <span
-                      key={t.name}
-                      title={t.description}
-                      className="rounded border border-line bg-elevated px-1.5 py-0.5 font-mono text-[10px] text-muted"
-                    >
-                      {t.name}
-                    </span>
-                  ))}
+                  {server.runtime.tools.slice(0, 24).map((t) => {
+                    // Under 'annotated' the read-only claim is what decides
+                    // plan/ask reach, so surface which tools carry it — a step
+                    // up the gray ramp, not a second colour. Meaningless under
+                    // 'block' (nothing runs) and 'all' (everything does).
+                    const marked = server.planAccess === 'annotated' && t.readOnly === true;
+                    return (
+                      <span
+                        key={t.name}
+                        title={marked ? `${t.description ?? t.name} · declared read-only` : t.description}
+                        className={cn(
+                          'rounded border bg-elevated px-1.5 py-0.5 font-mono text-[10px]',
+                          marked ? 'border-line-strong text-fg' : 'border-line text-muted',
+                        )}
+                      >
+                        {t.name}
+                      </span>
+                    );
+                  })}
                   {toolCount > 24 && <span className="text-[10px] text-faint">+{toolCount - 24} more</span>}
                 </div>
               )}

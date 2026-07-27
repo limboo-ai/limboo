@@ -35,6 +35,7 @@ interface DbServerRow {
   enabled: number;
   startup: string;
   trust: string;
+  plan_access: string;
   timeout_ms: number;
   restart_policy: string;
   providers_json: string;
@@ -84,8 +85,14 @@ function parseFieldMap(json: string): Record<string, McpFieldValue> {
 
 function parseTools(json: string): McpToolInfo[] {
   return parseArray(json)
-    .filter((t): t is { name: string; description?: string } => !!t && typeof t === 'object' && typeof (t as { name?: unknown }).name === 'string')
-    .map((t) => ({ name: t.name, description: typeof t.description === 'string' ? t.description : undefined }))
+    .filter((t): t is { name: string; description?: unknown; readOnly?: unknown } => !!t && typeof t === 'object' && typeof (t as { name?: unknown }).name === 'string')
+    .map((t) => ({
+      name: t.name,
+      description: typeof t.description === 'string' ? t.description : undefined,
+      // Strict identity, never a truthy coercion: this flag feeds a permission
+      // decision, so a hand-edited row holding "false" must not read as true.
+      ...(t.readOnly === true ? { readOnly: true as const } : {}),
+    }))
     .slice(0, MCP_LIMITS.maxTools);
 }
 
@@ -114,6 +121,11 @@ export function rowToConfig(row: DbServerRow): McpServerConfig {
     enabled: row.enabled === 1,
     startup: row.startup as McpStartup,
     trust: row.trust as McpTrust,
+    // Whitelisted rather than cast: this column feeds the plan/ask permission
+    // gate, so an unrecognized value must land on the most restrictive setting
+    // instead of being trusted into the type.
+    planAccess:
+      row.plan_access === 'annotated' || row.plan_access === 'all' ? row.plan_access : 'block',
     timeoutMs: row.timeout_ms,
     restartPolicy: row.restart_policy as McpRestartPolicy,
     providers: parseProviders(row.providers_json),
@@ -135,6 +147,18 @@ export function listServers(db: Database.Database, workspaceId: string | null): 
        ORDER BY updated_at DESC`,
     )
     .all(workspaceId) as DbServerRow[];
+  return rows.map(rowToConfig);
+}
+
+/**
+ * Every server row regardless of scope.
+ *
+ * Used only on a permission DENY path, to tell "no such server" apart from
+ * "that server belongs to another workspace" so the message can say which.
+ * Never use this to make an ALLOW decision — `listServers` is the scoped view.
+ */
+export function listAllServers(db: Database.Database): McpServerConfig[] {
+  const rows = db.prepare('SELECT * FROM mcp_servers').all() as DbServerRow[];
   return rows.map(rowToConfig);
 }
 
@@ -165,16 +189,26 @@ export function nameTaken(
   return !!row && row.id !== exceptId;
 }
 
+/**
+ * Insert or update a server row.
+ *
+ * `tools_json` is written on INSERT only — the UPDATE branch deliberately leaves
+ * it alone. It is owned by `setToolsCache` (a probe result), not by the config
+ * the user just edited, and clobbering it on every save would drop the cached
+ * `readOnly` hints that `planAccess: 'annotated'` reads. That would make an
+ * enabled server fail closed in plan/ask after each edit until the next probe
+ * landed — and stay closed if the probe failed.
+ */
 export function upsertServer(db: Database.Database, cfg: McpServerConfig): void {
   db.prepare(
     `INSERT INTO mcp_servers (
        id, workspace_id, name, display_name, transport, command, args_json, env_json,
-       cwd, url, headers_json, enabled, startup, trust, timeout_ms, restart_policy,
+       cwd, url, headers_json, enabled, startup, trust, plan_access, timeout_ms, restart_policy,
        providers_json, allow_private_network, category, icon, source, tools_json,
        created_at, updated_at
      ) VALUES (
        @id, @workspace_id, @name, @display_name, @transport, @command, @args_json, @env_json,
-       @cwd, @url, @headers_json, @enabled, @startup, @trust, @timeout_ms, @restart_policy,
+       @cwd, @url, @headers_json, @enabled, @startup, @trust, @plan_access, @timeout_ms, @restart_policy,
        @providers_json, @allow_private_network, @category, @icon, @source, @tools_json,
        @created_at, @updated_at
      )
@@ -182,9 +216,10 @@ export function upsertServer(db: Database.Database, cfg: McpServerConfig): void 
        workspace_id = @workspace_id, name = @name, display_name = @display_name,
        transport = @transport, command = @command, args_json = @args_json, env_json = @env_json,
        cwd = @cwd, url = @url, headers_json = @headers_json, enabled = @enabled,
-       startup = @startup, trust = @trust, timeout_ms = @timeout_ms, restart_policy = @restart_policy,
+       startup = @startup, trust = @trust, plan_access = @plan_access,
+       timeout_ms = @timeout_ms, restart_policy = @restart_policy,
        providers_json = @providers_json, allow_private_network = @allow_private_network,
-       category = @category, icon = @icon, source = @source, tools_json = @tools_json,
+       category = @category, icon = @icon, source = @source,
        updated_at = @updated_at`,
   ).run({
     id: cfg.id,
@@ -201,6 +236,7 @@ export function upsertServer(db: Database.Database, cfg: McpServerConfig): void 
     enabled: cfg.enabled ? 1 : 0,
     startup: cfg.startup,
     trust: cfg.trust,
+    plan_access: cfg.planAccess,
     timeout_ms: cfg.timeoutMs,
     restart_policy: cfg.restartPolicy,
     providers_json: JSON.stringify(cfg.providers),

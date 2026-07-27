@@ -41,6 +41,26 @@ export function initializeParams(): Record<string, unknown> {
   };
 }
 
+/**
+ * Read the MCP `annotations.readOnlyHint` for one tool entry.
+ *
+ * Per the spec these hints are asserted by the SERVER about itself and clients
+ * must treat them as untrusted — so this is captured as information, and the
+ * permission gate decides what (if anything) to do with it.
+ *
+ * A tool qualifies only when it claims `readOnlyHint: true` AND does not also
+ * claim `destructiveHint: true`. The spec's default for `destructiveHint` is
+ * `true`, but a server that explicitly sets both is describing something
+ * self-contradictory, and the safe reading of a contradiction is "not read-only".
+ * `idempotentHint` / `openWorldHint` are irrelevant to this decision.
+ */
+function readOnlyHintOf(tool: object): boolean {
+  const ann = (tool as { annotations?: unknown }).annotations;
+  if (!ann || typeof ann !== 'object' || Array.isArray(ann)) return false;
+  const a = ann as { readOnlyHint?: unknown; destructiveHint?: unknown };
+  return a.readOnlyHint === true && a.destructiveHint !== true;
+}
+
 /** Defensively parse the tools array from a `tools/list` result. */
 export function parseToolList(result: unknown, max: number): McpToolInfo[] {
   const raw =
@@ -53,7 +73,13 @@ export function parseToolList(result: unknown, max: number): McpToolInfo[] {
     const name = (t as { name?: unknown }).name;
     if (typeof name !== 'string' || !name) continue;
     const description = (t as { description?: unknown }).description;
-    out.push({ name, description: typeof description === 'string' ? description : undefined });
+    out.push({
+      name,
+      description: typeof description === 'string' ? description : undefined,
+      // Omit the key entirely when unclaimed, so the cached JSON stays small and
+      // "absent" and "false" are the same thing on read.
+      ...(readOnlyHintOf(t) ? { readOnly: true as const } : {}),
+    });
     if (out.length >= max) break;
   }
   return out;

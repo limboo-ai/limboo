@@ -524,6 +524,7 @@ function migrate(database: Database.Database): void {
       enabled               INTEGER NOT NULL DEFAULT 1,
       startup               TEXT NOT NULL DEFAULT 'on-demand',
       trust                 TEXT NOT NULL DEFAULT 'ask',
+      plan_access           TEXT NOT NULL DEFAULT 'annotated',
       timeout_ms            INTEGER NOT NULL DEFAULT 60000,
       restart_policy        TEXT NOT NULL DEFAULT 'on-failure',
       providers_json        TEXT NOT NULL DEFAULT '{"claude":true,"cursor":true}',
@@ -656,6 +657,15 @@ function migrate(database: Database.Database): void {
     type: 'TEXT',
     notNull: true,
     default: '',
+  });
+  // How far a server's tools reach inside the read-only plan/ask session modes,
+  // which otherwise deny every non-read tool outright (McpPlanAccess). Existing
+  // rows adopt 'annotated': only tools the server itself declares read-only —
+  // and even those still prompt unless the server is also marked trusted.
+  addColumnIfMissing(database, 'mcp_servers', 'plan_access', {
+    type: 'TEXT',
+    notNull: true,
+    default: 'annotated',
   });
 
   const current = database
