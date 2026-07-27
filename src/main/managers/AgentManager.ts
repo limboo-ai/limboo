@@ -307,22 +307,41 @@ const RESOURCE_READ_TOOLS = new Set(['ReadMcpResource', 'ReadMcpResourceDir']);
  * previous single message always blamed the `planAccess` setting, which is wrong
  * — and actively misleading — when the server is unknown, belongs to another
  * workspace, or is simply not trusted.
+ *
+ * `not-annotated` no longer reaches here: an otherwise-usable server that simply
+ * never declared a tool read-only now PROMPTS mid-run instead of being refused,
+ * so there is no denial to explain. Only `blocked` — where the user already said
+ * no — still points at the setting.
  */
 function mcpDenyReason(verdict: McpPlanVerdict, toolName: string): string {
   if (verdict.ok) return '';
+  const server = mcpVerdictServer(verdict);
   switch (verdict.reason) {
     case 'mcp-disabled':
       return 'MCP is disabled in Settings › MCP.';
     case 'unknown-server':
       return `No configured MCP server matches ${toolName}.`;
     case 'out-of-scope':
-      return `The MCP server "${verdict.server}" is not configured for this session's workspace.`;
+      return `The MCP server "${server}" is not configured for this session's workspace.`;
     case 'blocked':
+      return `"${server}" is set to Blocked for these modes. To allow it, open Settings › MCP, expand ${server}, and change "Plan & Ask access".`;
     case 'not-annotated':
-      return `If this tool only reads, allow it under Settings › MCP › ${verdict.server} › "Plan & Ask access".`;
+      return `If this tool only reads, allow it under Settings › MCP › ${server} › "Plan & Ask access".`;
     default:
       return '';
   }
+}
+
+/**
+ * The server a verdict names, or null for the two that name none.
+ *
+ * Uses `in` rather than switching on `reason`: this project compiles with
+ * `strictNullChecks` off, under which TypeScript will not narrow a discriminated
+ * union by its boolean `ok` tag, so `verdict.server` does not typecheck at any
+ * of the call sites. The `in` operator narrows regardless.
+ */
+function mcpVerdictServer(verdict: McpPlanVerdict | null): string | null {
+  return verdict && 'server' in verdict ? verdict.server : null;
 }
 
 /**
@@ -1893,6 +1912,10 @@ export class AgentManager {
         });
       }
       const options = this.buildOptions(sessionId, cwd, abort, agent, permMode, injectedContext);
+      // Limboo's own in-process servers. They carry no registry row, so they are
+      // invisible to McpManager and have to be tracked here for the plan-mode
+      // allowlist below.
+      const ownMcpServers: string[] = [];
       // Expose a live, read-only view of the Local Memory System so the agent can
       // actually list/search the developer's memories on demand (the injected
       // <project-memory> block is only a one-shot snapshot).
@@ -1901,6 +1924,7 @@ export class AgentManager {
           ...(options.mcpServers ?? {}),
           limboo_memory: createMemoryMcpServer(sdk, this.memory, this.workspace),
         };
+        ownMcpServers.push('limboo_memory');
       }
       // Expose read-only Search Engine tools so the agent can query the local index
       // on demand to decide what to explore before its own Read/Grep/Glob run.
@@ -1909,6 +1933,7 @@ export class AgentManager {
           ...(options.mcpServers ?? {}),
           limboo_search: createSearchMcpServer(sdk, this.search, this.workspace),
         };
+        ownMcpServers.push('limboo_search');
       }
       // User-configured MCP servers from the provider-independent registry. Both
       // providers consume the SAME registry; for Claude they ride
@@ -1923,23 +1948,31 @@ export class AgentManager {
           options.mcpServers = { ...(options.mcpServers ?? {}), ...inj.servers };
           this.recordStatus(sessionId, `Loading ${mcpNames.length} MCP server(s)…`, mcpNames.join(', '));
         }
-        // The ONE exception to the rule directly above. Under permissionMode
-        // 'plan' the SDK auto-denies every mcp__* tool BEFORE canUseTool runs,
-        // so our own plan-mode relaxation can never be reached — read-only MCP
-        // tools are unusable while planning no matter what we decide. (Ask mode
-        // is unaffected: buildOptions maps it to 'default'.)
-        //
-        // allowedTools entries run with no prompt, so membership requires an
-        // explicit human decision: either the user declared the whole server
-        // read-only (planAccess 'all' — their own assertion, made out of band in
-        // Settings), or a TRUSTED server declared the individual tool read-only
-        // (planAccess 'annotated'). See McpManager.planAllowedToolsFor for why
-        // those two cases differ. Nothing else is listed, so a run never skips
-        // an approval the user has not already given.
-        if (permMode === 'plan') {
-          const planAllow = this.mcp.planAllowedToolsFor(sessionId, this.mcpScopeFor(sessionId));
-          if (planAllow.length > 0) options.allowedTools = planAllow;
-        }
+      }
+      // The ONE exception to the rule directly above: a plan-mode pre-approval
+      // list, so tools already cleared for read-only use never stall a planning
+      // run on a prompt.
+      //
+      // allowedTools entries run with no prompt, so membership requires an
+      // explicit human decision: either the user declared the whole server
+      // read-only (planAccess 'all' — their own assertion, made out of band in
+      // Settings), or a TRUSTED server declared the individual tool read-only
+      // (planAccess 'annotated'). See McpManager.planAllowedToolsFor for why
+      // those two cases differ. Nothing else is listed, so a run never skips an
+      // approval the user has not already given.
+      //
+      // Limboo's own memory/search servers lead the list, and NOT inside the
+      // `if (this.mcp)` above — they have no registry row, so planAllowedToolsFor
+      // cannot see them, and gating them on an unrelated manager being wired left
+      // the app's own retrieval tools unusable in every planning run. They are
+      // already allowed unconditionally in decideToolUseCore, so listing them
+      // pre-approves nothing that gate would have refused.
+      if (permMode === 'plan') {
+        const planAllow = [
+          ...ownMcpServers.map((name) => `mcp__${name}__*`),
+          ...(this.mcp?.planAllowedToolsFor(sessionId, this.mcpScopeFor(sessionId)) ?? []),
+        ];
+        if (planAllow.length > 0) options.allowedTools = planAllow;
       }
       this.diag('lifecycle', 'debug', 'Handshake — query opened', undefined, sessionId);
       // Attachments ride the SDK prompt only (the persisted transcript keeps the
@@ -3516,12 +3549,37 @@ export class AgentManager {
 
       const planPermitted = planReadableMcp || planSafeBuiltin || planReadableResource;
 
+      // A KNOWN, enabled, in-scope MCP server whose only fault is that it never
+      // declared this tool read-only. `readOnlyHint` is optional in the MCP spec
+      // and most servers ship none, so the 'annotated' default otherwise allows
+      // nothing — and the denial pointed at a setting buried two clicks inside a
+      // per-server edit form, which is not a remedy the user can act on mid-run.
+      //
+      // So ASK instead of refusing. This is not an allow: the call falls through
+      // to the same interactive prompt a 'command'-risk tool gets in default
+      // mode, behind the same workspace/app-data/secret guards below. The user
+      // makes the read-only judgement the server declined to make, in the one
+      // place they are already looking.
+      //
+      // Deliberately narrow: 'blocked' means the user already said no, and
+      // 'mcp-disabled' / 'unknown-server' / 'out-of-scope' are not questions a
+      // prompt can settle. Those stay hard denials.
+      const planPromptableMcpServer =
+        mcpVerdict?.ok === false && mcpVerdict.reason === 'not-annotated'
+          ? (mcpVerdictServer(mcpVerdict) ?? 'MCP')
+          : null;
+
       // Read-only contract (defense in depth): plan runs propose before touching
       // the repo, ask runs never touch it at all. The SDK/provider already leans
       // read-only in these modes, but we also refuse any write/mutating command
       // here so a misbehaving tool can never slip through. Kept AHEAD of the
       // auto/remembered auto-approvals below — nothing bypasses this gate.
-      if ((permMode === 'plan' || permMode === 'ask') && effectiveRisk !== 'read' && !planPermitted) {
+      const planBlocked =
+        (permMode === 'plan' || permMode === 'ask') &&
+        effectiveRisk !== 'read' &&
+        !planPermitted &&
+        !planPromptableMcpServer;
+      if (planBlocked) {
         const label = permMode === 'plan' ? 'planning' : 'ask mode';
         this.pushActivity(sessionId, 'permission', `Blocked ${toolName} during ${label}`, undefined, 'warning');
         const base =
@@ -3556,14 +3614,44 @@ export class AgentManager {
         return { behavior: 'allow', updatedInput: input };
       }
 
+      // The un-annotated MCP tool from the gate above: ASK, and ask every time.
+      //
+      // This deliberately jumps the queue ahead of trust, `permissionMode:
+      // 'auto'`, `autoApproveReads` and the remembered-choice cache. Each of
+      // those is a standing "stop asking me" that the user set for ordinary
+      // runs; none of them is a statement that a tool nobody has vouched for is
+      // safe to run inside a read-only mode. Plan and Ask stay read-only by
+      // default, and the only way past is an explicit decision about THIS call.
+      // A server that should not need asking has a setting for that — Plan &
+      // Ask access › Whole server — which is a deliberate act, out of band.
+      if ((permMode === 'plan' || permMode === 'ask') && planPromptableMcpServer) {
+        const label = permMode === 'plan' ? 'planning' : 'ask mode';
+        const request: PermissionRequest = {
+          id: newId(),
+          sessionId,
+          tool: toolName,
+          risk,
+          summary: `${summarizeTool(toolName, input, risk)} — during ${label}`,
+          detail:
+            `${permissionDetail(toolName, input)}\n\n` +
+            `${permMode === 'plan' ? 'Planning' : 'Ask'} is a read-only mode, and the ` +
+            `"${planPromptableMcpServer}" server has not declared this tool read-only, so Limboo ` +
+            `cannot confirm it only reads. Allow it if you know it is safe here. To stop being ` +
+            `asked, set this server's Plan & Ask access under Settings › MCP.`,
+          createdAt: Date.now(),
+        };
+        if (gate) gate.prompted = true;
+        return this.promptForApproval(sessionId, input, request, signal);
+      }
+
       // User-configured MCP servers marked "trusted" auto-approve — the single
       // permission authority both providers share for external tools. Placed
       // AFTER the plan/ask read-only gate and the path guard, so trust ALONE
       // never reopens a plan run: a tool only reaches here during plan/ask if
       // the server's separate `planAccess` setting already declared it
-      // read-only. Trust then decides prompt-vs-silent, not allowed-vs-denied.
-      // Untrusted MCP tools fall through to the prompt below like any other
-      // 'command'-risk tool.
+      // read-only (the un-annotated case returned above, prompting). Trust then
+      // decides prompt-vs-silent, not allowed-vs-denied. Untrusted MCP tools
+      // fall through to the prompt below like any other 'command'-risk tool.
       if (this.mcp && toolName.startsWith('mcp__')) {
         for (const prefix of this.mcp.trustedToolMatchers(sessionId, mcpScope)) {
           if (toolName.startsWith(prefix)) return { behavior: 'allow', updatedInput: input };

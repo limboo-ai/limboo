@@ -108,7 +108,7 @@ function validatePairs(
 
 export function prepareServer(
   input: McpServerInput,
-  opts: { defaultTrust: McpTrust },
+  opts: { defaultTrust: McpTrust; defaultPlanAccess: McpPlanAccess },
 ): PreparedServer {
   if (!input || typeof input !== 'object') throw new Error('Invalid server payload.');
 
@@ -160,9 +160,14 @@ export function prepareServer(
   const trust: McpTrust = input.trust === 'trusted' || input.trust === 'ask' ? input.trust : opts.defaultTrust;
   // Whitelist-only, so an imported/marketplace definition can never widen its
   // own plan/ask reach — 'all' is reachable from the settings form and nowhere
-  // else.
+  // else. An OMITTED value takes the user's own default; a value the definition
+  // supplied is still whitelisted rather than trusted.
   const planAccess: McpPlanAccess =
-    input.planAccess === 'block' || input.planAccess === 'all' ? input.planAccess : 'annotated';
+    input.planAccess === 'block' || input.planAccess === 'all'
+      ? input.planAccess
+      : input.planAccess === 'annotated'
+        ? 'annotated'
+        : opts.defaultPlanAccess;
   const startup: McpStartup = input.startup === 'eager' ? 'eager' : 'on-demand';
   const restartPolicy: McpRestartPolicy = input.restartPolicy === 'never' ? 'never' : 'on-failure';
   const category: McpCategory =

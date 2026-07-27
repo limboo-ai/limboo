@@ -164,13 +164,6 @@ export function PlanTasksPanel() {
             onChange={(v) => setPlan('notifyOnPhaseComplete', v)}
           />
         </Field>
-        <Field
-          id="planArchiveCompleted"
-          label="Archive on completion"
-          hint="Archive a plan automatically once its implementation completes. Default off."
-        >
-          <Toggle checked={plan.archiveCompleted} onChange={(v) => setPlan('archiveCompleted', v)} />
-        </Field>
       </Section>
 
       <Section

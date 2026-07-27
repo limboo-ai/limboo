@@ -39,9 +39,19 @@ import { useLayoutStore } from '@/renderer/stores/useLayoutStore';
 import { useSettingsStore } from '@/renderer/stores/useSettingsStore';
 import { ApprovalControls, PlanMetaRow, STATUS_BADGE, usePlanActions } from './parts';
 
+/**
+ * Statuses at which the plan is over. A plan row is never deleted — `rejectPlan`
+ * and the implement-run completion only rewrite `status`, and `getSnapshot`
+ * rehydrates it on every boot — so gating on `plan != null` alone left a dead
+ * card pinned above the composer for the life of the session, collapsing to a
+ * bare header once there was nothing left to act on. The card belongs to work in
+ * progress; the finished plan stays reachable in the Tasks drawer.
+ */
+const FINISHED = new Set<SessionPlan['status']>(['completed', 'rejected']);
+
 export function PlanCard({ sessionId }: { sessionId: string }) {
   const plan = useAgentStore((s) => s.bySession[sessionId]?.plan) ?? null;
-  if (!plan) return null;
+  if (!plan || FINISHED.has(plan.status)) return null;
   return <PlanCardBody sessionId={sessionId} plan={plan} />;
 }
 

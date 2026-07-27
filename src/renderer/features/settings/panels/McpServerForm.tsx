@@ -318,33 +318,39 @@ export function McpServerForm({
         />
         {planAccess === 'annotated' && (
           <p className="mt-1.5 text-[11px] leading-relaxed text-faint">
-            Only tools this server declares read-only. Servers declare that themselves — one can
-            claim read-only and still write.
+            Tools this server declares read-only run without interruption. Anything it has not
+            declared asks you first, per call — it is not blocked. Servers declare this themselves,
+            and one can claim read-only and still write.
           </p>
         )}
         {/* Annotations are optional in the MCP spec and plenty of servers ship
-            none, in which case this setting silently allows nothing. Say so,
-            rather than leaving the user to wonder why the tools are still
-            blocked. Requires a successful probe, so it keys off cached tools. */}
+            none. That used to mean this setting silently allowed nothing; the
+            gate now prompts instead, so say what actually happens. Requires a
+            successful probe, so it keys off cached tools. */}
         {planAccess === 'annotated' &&
           !!initial &&
           initial.runtime.tools.length > 0 &&
           !initial.runtime.tools.some((t) => t.readOnly) && (
-            <p className="mt-1.5 text-[11px] leading-relaxed text-warning">
-              This server declares no read-only tools, so nothing is allowed through. Choose Whole
-              server if you know its tools only read.
+            <p className="mt-1.5 text-[11px] leading-relaxed text-faint">
+              This server declares no read-only tools, so Plan and Ask will ask you before every
+              call. Choose Whole server if you know its tools only read.
             </p>
           )}
+        {planAccess === 'block' && (
+          <p className="mt-1.5 text-[11px] leading-relaxed text-faint">
+            Refused outright in Plan and Ask, with no prompt. Other modes are unaffected.
+          </p>
+        )}
         {planAccess === 'all' && (
           <p className="mt-1.5 text-[11px] leading-relaxed text-warning">
             You are asserting every tool on this server is read-only. Limboo cannot verify that.
             App-data, workspace-secret and workspace-boundary guards still apply.
           </p>
         )}
-        {planAccess !== 'block' && trust !== 'trusted' && (
+        {planAccess === 'annotated' && trust !== 'trusted' && (
           <p className="mt-1.5 text-[11px] leading-relaxed text-faint">
-            Ask mode will prompt for each call. Claude's Plan mode blocks these tools before Limboo
-            sees them, so it also needs Trust set to Trusted.
+            Because this server is not Trusted, Limboo treats its read-only claims as unverified, so
+            Plan and Ask ask you about those tools too.
           </p>
         )}
       </StackedField>

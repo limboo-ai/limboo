@@ -1,7 +1,7 @@
 import type { AppSettings, WorkspaceConfig } from './types';
 
 /** Bumped whenever the {@link AppSettings} shape changes incompatibly. */
-export const SETTINGS_VERSION = 21;
+export const SETTINGS_VERSION = 22;
 
 /**
  * The agent providers Limboo can run (Claude Code = Anthropic via the Agent
@@ -742,7 +742,6 @@ export const DEFAULT_SETTINGS: AppSettings = {
       showEstimates: true,
       showReasoning: true,
       highlightRisk: true,
-      archiveCompleted: false,
       showTaskDurations: true,
       showCheckpointsOnTasks: true,
       retainPlanHistory: true,
@@ -901,6 +900,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
     heartbeatInterval: MCP_LIMITS.heartbeatInterval.default,
     probeTimeout: MCP_LIMITS.probeTimeout.default,
     defaultTrust: 'ask',
+    defaultPlanAccess: 'annotated',
     allowPrivateNetwork: false,
     autoImport: {
       cursor: true,

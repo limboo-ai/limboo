@@ -33,12 +33,29 @@ import {
   Activity,
   type LucideIcon,
 } from 'lucide-react';
-import type { McpCategory, McpLogLine, McpProbeResult, McpServerInfo } from '@shared/types';
+import type {
+  McpCategory,
+  McpLogLine,
+  McpPlanAccess,
+  McpProbeResult,
+  McpServerInfo,
+} from '@shared/types';
 import { cn } from '@/renderer/lib/cn';
 import { mcpStatusMeta } from '@/renderer/features/agent/status';
 import { useMcpStore } from '@/renderer/stores/useMcpStore';
 import { ActionButton, Toggle } from '../controls';
 import { McpServerForm } from './McpServerForm';
+
+/**
+ * What each `planAccess` value means in the read-only modes, in the words the
+ * permission prompt and the settings form use. "Blocked" is the only one that
+ * refuses outright; the other two differ in whether Limboo has to ask first.
+ */
+const PLAN_ACCESS_COPY: Record<McpPlanAccess, string> = {
+  block: 'Blocked — refused in Plan and Ask, with no prompt.',
+  annotated: 'Read-only tools run; anything else asks you first.',
+  all: 'Whole server — every tool runs, asserted read-only by you.',
+};
 
 const CATEGORY_ICON: Record<McpCategory, LucideIcon> = {
   'version-control': GitBranch,
@@ -162,17 +179,28 @@ export function McpServerRow({ server }: { server: McpServerInfo }) {
                 {server.providers.cursor && <Badge>Cursor</Badge>}
                 {server.source !== 'user' && <Badge muted>imported</Badge>}
                 {server.workspaceId ? <Badge muted>workspace</Badge> : <Badge muted>global</Badge>}
-                {/* Only when it differs from "denied in the read-only modes" —
-                    the default state earns no badge. */}
-                {server.planAccess !== 'block' && (
-                  <Badge muted>
-                    {server.planAccess === 'all' ? 'plan: all tools' : 'plan: read-only'}
-                  </Badge>
-                )}
                 {server.runtime.latencyMs != null && server.runtime.status === 'connected' && (
                   <Badge muted>{server.runtime.latencyMs}ms</Badge>
                 )}
               </div>
+
+              {/* Plan & Ask access, in words, on the row itself.
+                  This used to be a `plan: read-only` badge shown only when the
+                  value was NOT 'block' — so the one state that actually stops
+                  tools running was the one state that rendered nothing, and the
+                  setting behind it lived two clicks deep inside Edit. State a
+                  user has to act on has to be legible before they go looking. */}
+              <p className="text-[11px] leading-relaxed text-muted">
+                <span className="text-faint">Plan &amp; Ask access: </span>
+                {PLAN_ACCESS_COPY[server.planAccess]}{' '}
+                <button
+                  type="button"
+                  onClick={() => setEditing(true)}
+                  className="underline decoration-line-strong underline-offset-2 hover:text-fg"
+                >
+                  Change
+                </button>
+              </p>
 
               {toolCount > 0 && (
                 <div className="flex flex-wrap gap-1">

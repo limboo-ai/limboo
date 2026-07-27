@@ -179,7 +179,11 @@ export class McpManager {
     if (countServers(db) >= MCP_LIMITS.maxServers) {
       throw new Error(`Too many MCP servers (max ${MCP_LIMITS.maxServers}).`);
     }
-    const prepared = prepareServer(input, { defaultTrust: this.settings.getAll().mcp.defaultTrust });
+    const s = this.settings.getAll().mcp;
+    const prepared = prepareServer(input, {
+      defaultTrust: s.defaultTrust,
+      defaultPlanAccess: s.defaultPlanAccess,
+    });
     if (nameTaken(db, prepared.fields.workspaceId, prepared.fields.name)) {
       throw new Error(`A server named "${prepared.fields.name}" already exists in this scope.`);
     }
@@ -210,7 +214,13 @@ export class McpManager {
     if (!existing) throw new Error('Server not found.');
     const prepared = prepareServer(
       { ...input, workspaceId: existing.workspaceId ?? undefined },
-      { defaultTrust: this.settings.getAll().mcp.defaultTrust },
+      {
+        defaultTrust: this.settings.getAll().mcp.defaultTrust,
+        // An edit that omits the field keeps THIS server's setting, not the
+        // global default — changing the default must never silently rewrite the
+        // posture of servers already configured.
+        defaultPlanAccess: existing.planAccess,
+      },
     );
     if (nameTaken(db, prepared.fields.workspaceId, prepared.fields.name, id)) {
       throw new Error(`A server named "${prepared.fields.name}" already exists in this scope.`);
@@ -313,7 +323,10 @@ export class McpManager {
       if (MCP_RESERVED_NAMES.has(c.input.name)) continue;
       if (nameTaken(db, null, c.input.name)) continue;
       try {
-        const prepared = prepareServer({ ...c.input, enabled: false }, { defaultTrust: s.defaultTrust });
+        const prepared = prepareServer(
+          { ...c.input, enabled: false },
+          { defaultTrust: s.defaultTrust, defaultPlanAccess: s.defaultPlanAccess },
+        );
         const id = randomUUID();
         const now = Date.now();
         upsertServer(db, {
@@ -519,11 +532,11 @@ export class McpManager {
   /**
    * Fully-qualified tool names to put in a Claude PLAN run's `options.allowedTools`.
    *
-   * This exists only to get past the Agent SDK's own plan-mode block, which
-   * auto-denies `mcp__*` before `canUseTool` is ever consulted. Entries here
-   * "execute automatically without asking the user for approval" (the SDK's own
-   * words), so membership requires an explicit human decision — one of exactly
-   * two, mirroring the MCP spec's trusted/untrusted split:
+   * A pre-approval, so a planning run never stalls on a prompt for a tool the
+   * user has already cleared for read-only use. Entries here "execute
+   * automatically without asking the user for approval" (the SDK's own words),
+   * so membership requires an explicit human decision — one of exactly two,
+   * mirroring the MCP spec's trusted/untrusted split:
    *
    *   planAccess 'all'       — the USER asserted, per server and out of band,
    *                            that this server only reads. Their machine,
@@ -536,13 +549,15 @@ export class McpManager {
    *                            is trusted. So this case DOES require
    *                            `trust: 'trusted'`.
    *
-   * 'block' never qualifies. Nothing else reaches this list, so a run can never
-   * silently skip a prompt the user did not already answer.
+   * 'block' never qualifies, and a server that qualifies for neither is not
+   * denied by its absence here — it reaches `decideToolUse`, which prompts. So a
+   * run can never silently skip a prompt the user did not already answer, and an
+   * un-annotated server is asked about rather than refused.
    *
-   * Exact names, never a `mcp__<server>__*` wildcard: a wildcard would readmit
-   * that server's WRITE tools past the SDK's block. The single exception is a
-   * server the user declared read-only wholesale and which has no cached tools
-   * to enumerate.
+   * Exact names, never a `mcp__<server>__*` wildcard: a wildcard would
+   * pre-approve that server's WRITE tools too. The single exception is a server
+   * the user declared read-only wholesale and which has no cached tools to
+   * enumerate.
    */
   planAllowedToolsFor(sessionId: string, scope?: string | null): string[] {
     const s = this.settings.getAll().mcp;

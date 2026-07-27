@@ -495,6 +495,9 @@ export class SettingsManager {
       clamp(mcp.probeTimeout, MCP_LIMITS.probeTimeout.min, MCP_LIMITS.probeTimeout.max),
     );
     if (!['ask', 'trusted'].includes(mcp.defaultTrust)) mcp.defaultTrust = 'ask';
+    if (!['block', 'annotated', 'all'].includes(mcp.defaultPlanAccess)) {
+      mcp.defaultPlanAccess = 'annotated';
+    }
     mcp.allowPrivateNetwork = !!mcp.allowPrivateNetwork;
     mcp.autoImport.cursor = !!mcp.autoImport.cursor;
     mcp.autoImport.claude = !!mcp.autoImport.claude;

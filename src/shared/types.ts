@@ -186,8 +186,6 @@ export interface AppSettings {
       showReasoning: boolean;
       /** Highlight high-risk steps. */
       highlightRisk: boolean;
-      /** Archive a plan once its implementation completes. */
-      archiveCompleted: boolean;
       /** Show per-task execution durations once implementation runs. */
       showTaskDurations: boolean;
       /** Surface a Git-checkpoint hint next to tasks during execution. */
@@ -699,6 +697,15 @@ export interface AppSettings {
      * - `trusted`: the server's tools are auto-approved (still path-guarded).
      */
     defaultTrust: 'ask' | 'trusted';
+    /**
+     * Default Plan & Ask access for a newly added server — the per-server
+     * `planAccess` starting point, so someone running a fleet of read-only
+     * servers sets the posture once instead of per server.
+     *
+     * Applies only when the incoming definition omits `planAccess`; an imported
+     * or marketplace definition still cannot widen its own reach.
+     */
+    defaultPlanAccess: McpPlanAccess;
     /**
      * Allow probing/using remote MCP servers that resolve to private, loopback,
      * or link-local addresses. Off by default (SSRF hardening); a per-server

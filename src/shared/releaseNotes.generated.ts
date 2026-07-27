@@ -22,6 +22,62 @@ export interface ReleaseNotesEntry {
 /** Newest first. */
 export const RELEASE_NOTES: ReleaseNotesEntry[] = [
   {
+    version: '1.11.0',
+    date: '2026-07-27',
+    markdown: `1.10.0 set out to stop Plan and Ask blocking the MCP servers you had connected.
+It gave every server a **Plan & Ask access** setting and then defaulted it to
+"only the tools this server declares read-only" — but declaring that is optional,
+and most servers declare nothing. So most servers stayed blocked, and the refusal
+sent you to a control buried inside a per-server edit form that search could not
+find. An un-annotated tool now asks you, in the run, with a button. Opening the
+Tasks drawer also stopped crashing, and a finished plan no longer sits above the
+composer forever.
+
+### Fixed
+
+- **The Tasks drawer crashed on any plan with a finished or not-yet-started
+  step.** A missing icon reference threw as the step was drawn, taking the whole
+  drawer down with it. Only steps that were running or had failed escaped it,
+  which is why it survived 1.10.0.
+- **Most MCP servers were still blocked in Plan and Ask.** Read-only annotations
+  are optional in the MCP protocol and few servers ship them, so the default
+  setting allowed nothing at all — the same dead end 1.10.0 meant to close, one
+  layer further in. A tool from a known, connected server that has simply not
+  declared itself read-only now **asks for approval during the run**, the same
+  way any other command does, instead of being refused with a pointer to
+  Settings. Blocked still means blocked, with no prompt.
+- **Limboo's own memory and search tools were unusable while planning.** They are
+  the tools the agent uses to recall what it learned about your project and to
+  find its way around it, and they were left out of the permissions a planning
+  run is given — so every plan started with less about your project than it had
+  available.
+- **The plan card stayed above the composer forever.** A plan record is never
+  deleted, so once a session had run one, a card for it sat pinned over the
+  composer for the life of that session — collapsing, once it was approved or
+  rejected, to a header with nothing under it. It now shows while a plan is being
+  written, while it waits for you, and while it is being carried out, and goes
+  away when it is done. Finished plans stay in the Tasks drawer.
+
+### Added
+
+- **A default Plan & Ask access for new servers**, under Settings › MCP, beside
+  Default trust — so a fleet of read-only servers is a decision made once rather
+  than per server. Changing it never rewrites servers already configured.
+- **Plan & Ask access is findable.** It is now in settings search under *plan*,
+  *ask*, *read-only*, *approve* and *blocked* — searching any of those used to
+  land on the unrelated Plan & Tasks section — and each server states its current
+  access in words on its own row, instead of only inside Edit.
+
+### Changed
+
+- **A server marked Trusted is still asked about in Plan and Ask** when it has
+  not declared a tool read-only. Trust decides whether a permitted tool is
+  silent, never whether a read-only mode is a read-only mode.
+- **Settings no longer offers "Archive on completion".** The switch had never
+  been connected to anything, and with finished plans now hidden by rule it would
+  read as the control for that.`,
+  },
+  {
     version: '1.10.0',
     date: '2026-07-27',
     markdown: `Plan and Ask are read-only modes, and they enforced that by refusing anything
@@ -385,125 +441,6 @@ and an in-app **What's New** tab so an update can finally tell you what changed.
   capped before filtering (an oversized array was previously walked in full),
   export results are byte-capped, and edge reads are limited instead of unbounded
   table scans.`,
-  },
-  {
-    version: '1.6.0',
-    date: '2026-07-25',
-    markdown: `Repairs in-app updating, which has never worked on macOS and could fail to
-install or restart anywhere; adds code signing and a Microsoft Store channel;
-and extends the release to every architecture, including Arch/Manjaro packages
-and arm64 builds for all three platforms.
-
-### Fixed
-
-- **"Restart & install" did nothing.** Clicking it could leave the app running on
-  the old version, or quit without ever coming back. Four separate causes:
-  - The install request was gated on the UI stage being \`downloaded\`, but the
-    hourly poll re-emitted \`update-available\` for the already-downloaded version
-    and moved the stage off it. The click then returned with no log, no error and
-    no feedback of any kind. Staged updates are now tracked by version
-    independently of the UI stage, polling is suspended while an update is
-    staged, and every refusal is logged and surfaced to the user.
-  - **The restart lost a race with itself.** \`quitAndInstall\` spawns the
-    replacement process synchronously but defers \`app.quit()\` to the next tick,
-    so the new instance hit \`requestSingleInstanceLock()\` while the old one still
-    held it and quit itself. The lock is now released before the handoff, and
-    \`second-instance\` events are ignored while an update is in flight.
-  - **A throwing disposer could keep the app alive.** \`before-quit\` ran thirteen
-    \`dispose()\` calls with no error containment; one throw aborted the rest and
-    was swallowed by the global \`uncaughtException\` handler, leaving the process
-    up with an installer waiting on it. Each disposer is now isolated, and a
-    watchdog forces the exit if the process is still running four seconds after
-    the handoff.
-  - Windows now installs silently (\`--updated /S --force-run\`). Without \`/S\` the
-    assisted NSIS wizard re-ran from the first page, which reads as "nothing
-    happened".
-- **macOS auto-update was impossible, and the "Intel" downloads were arm64
-  builds.** \`scripts/dist.mjs\` passed the Forge output *directory* to
-  \`electron-builder --prepackaged\`, but electron-builder treats that value as the
-  \`.app\` bundle path on macOS. The published update zips were rooted at
-  \`Limboo-darwin-arm64/\` instead of \`Limboo.app/\`, which Squirrel.Mac cannot
-  install — they downloaded and checksummed perfectly and then failed, every
-  time. The same misconfiguration made electron-builder wrap that one
-  single-architecture directory once per architecture listed in
-  \`electron-builder.yml\`, so \`Limboo-1.5.1-mac.zip\` ("Intel") and
-  \`Limboo-1.5.1-arm64-mac.zip\` were byte-identical. Fixed by pointing
-  \`--prepackaged\` at the bundle on darwin and removing every explicit \`arch:\`
-  list, so the architecture comes only from the CI matrix.
-  **Users on v1.5.1 or earlier must download the new \`.dmg\` once, manually** —
-  those builds cannot auto-update to this release.
-- **Linux \`.deb\` / \`.rpm\` installs never received updates.** Self-update was
-  disabled unless \`APPIMAGE\` was set, though electron-updater has supported
-  installing deb, rpm and pacman packages through the system package manager for
-  some time. The app now selects its updater explicitly — \`APPIMAGE\` first, then
-  the \`package-type\` marker — which also fixes AppImages that shipped a stale
-  \`deb\`/\`rpm\` marker from electron-builder's shared staging directory and so
-  routed AppImage users to the wrong updater.
-
-### Added
-
-- **A code-signing pipeline.** Developer ID signing + notarization for macOS
-  (hardened runtime + entitlements) — which is also what makes macOS auto-update
-  possible at all, since Squirrel.Mac refuses to update an app it cannot verify —
-  and Authenticode for Windows, with Azure Trusted Signing wired and dormant
-  beside a self-signed route. Note that a self-signed certificate does **not**
-  remove the SmartScreen warning; it is documented as such. The whole path is
-  opt-in from environment credentials (\`scripts/signing.cjs\`), so builds without
-  them — **including this release** — are unsigned and behave exactly as before.
-  Because signing runs in Forge rather than electron-builder — \`--prepackaged\`
-  skips the pack step where electron-builder would sign — the split is documented
-  in [code signing](docs/ci/code-signing.md).
-- **A Microsoft Store (MSIX) channel**, the only warning-free Windows route that
-  does not require buying a certificate. Store builds disable self-update, since
-  the Store owns updates there. See
-  [microsoft-store.md](docs/operations/microsoft-store.md).
-- **Wider platform coverage.** Linux gains \`pacman\` (Arch/Manjaro) and \`tar.gz\`
-  targets, and every platform now publishes both x64 and arm64. The
-  architectures GitLab's SaaS runners cannot build — macOS Intel, arm64 Linux,
-  arm64 Windows — are produced by a new tag-triggered
-  \`release-supplement.yml\` workflow that uploads into the same release.
-- **Release gates for the failures above.**
-  \`ci/scripts/verify-artifacts.mjs\` asserts the macOS zip root, that no two
-  artifacts in an update feed share a hash, that every file a feed references
-  exists, and that debug output stays out of the publish set.
-  \`ci/scripts/verify-signing.mjs\` gained a Gatekeeper assessment and enforces the
-  Windows \`publisherName\` invariant.
-  \`ci/scripts/merge-update-metadata.mjs\` merges the per-runner update feeds, so a
-  supplementary upload adds an architecture instead of deleting one.
-- [auto-update.md](docs/operations/auto-update.md) — the per-platform update
-  mechanism and the invariants that must not be broken.
-- Documentation subsystem: landing \`README\`, a structured \`docs/\` site (getting
-  started, concepts, guides, reference, architecture, operations), community-health
-  files (\`LICENSE\`, \`CONTRIBUTING\`, \`CODE_OF_CONDUCT\`, \`SECURITY\`, \`ROADMAP\`,
-  \`SUPPORT\`, \`GOVERNANCE\`, \`AUTHORS\`, \`CITATION.cff\`), and \`.github/\` automation
-  (CI, CodeQL, Dependabot, issue/PR templates).
-
-### Security
-
-- Windows update-signature verification is pinned off
-  (\`win.verifyUpdateCodeSignature: false\`) while the self-signed route is in use,
-  and enforced in CI. Left at its default, electron-builder derives
-  \`publisherName\` from the certificate CN and writes it into \`app-update.yml\`;
-  electron-updater would then demand a trusted Authenticode chain that a
-  self-signed certificate can never satisfy, breaking every Windows update with
-  no recovery short of a manual reinstall.
-
-### Changed
-
-- **Integrated Terminal** — pinned \`node-pty\` to the \`1.2.0-beta\` line,
-  Microsoft's in-progress rewrite of the native addon on Node-API
-  (\`node-addon-api\`) instead of NAN. The compiled binary is ABI-stable across
-  Node.js *and* Electron major versions, so the per-platform prebuilt bundled
-  in the npm package works as-is — no \`node-gyp\` rebuild, no Visual Studio
-  Build Tools requirement, for any Electron version including future ones.
-  \`forge.config.ts\`'s \`rebuildConfig.ignoreModules\` excludes \`node-pty\` from
-  Electron Forge's native-rebuild pass, since \`@electron/rebuild\` doesn't know
-  the bundled prebuilt is already correct and would otherwise try (and fail
-  without the toolchain) to recompile it. No terminal behavior change. (An
-  earlier attempt at this used \`@homebridge/node-pty-prebuilt-multiarch\`, a
-  NAN-based fork — verified afterward to have no published prebuilt past
-  roughly Electron 29's ABI, so it didn't actually fix the problem; superseded
-  by this change.) See [installation](docs/getting-started/installation.md).`,
   },
 ];
 

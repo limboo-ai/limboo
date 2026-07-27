@@ -148,6 +148,21 @@ export function McpPanel() {
           />
         </Field>
         <Field
+          id="mcpDefaultPlanAccess"
+          label="Default Plan & Ask access"
+          hint="Plan and Ask are read-only modes. This is the starting point for a newly added server; each server can override it. Tools a server has not declared read-only ask you before running — they are not blocked."
+        >
+          <SegmentedControl
+            value={mcp.defaultPlanAccess}
+            onChange={(v) => set('defaultPlanAccess', v)}
+            options={[
+              { value: 'block', label: 'Blocked' },
+              { value: 'annotated', label: 'Read-only tools' },
+              { value: 'all', label: 'Whole server' },
+            ]}
+          />
+        </Field>
+        <Field
           id="mcpAllowPrivate"
           label="Allow private / loopback hosts"
           hint="Off blocks remote servers resolving to private IPs (SSRF hardening). The cloud-metadata IP is always blocked."

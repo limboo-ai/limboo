@@ -7,6 +7,61 @@ All notable changes to Limboo are documented here. The format is based on
 
 ## [Unreleased]
 
+## [1.11.0] - 2026-07-27
+
+1.10.0 set out to stop Plan and Ask blocking the MCP servers you had connected.
+It gave every server a **Plan & Ask access** setting and then defaulted it to
+"only the tools this server declares read-only" — but declaring that is optional,
+and most servers declare nothing. So most servers stayed blocked, and the refusal
+sent you to a control buried inside a per-server edit form that search could not
+find. An un-annotated tool now asks you, in the run, with a button. Opening the
+Tasks drawer also stopped crashing, and a finished plan no longer sits above the
+composer forever.
+
+### Fixed
+
+- **The Tasks drawer crashed on any plan with a finished or not-yet-started
+  step.** A missing icon reference threw as the step was drawn, taking the whole
+  drawer down with it. Only steps that were running or had failed escaped it,
+  which is why it survived 1.10.0.
+- **Most MCP servers were still blocked in Plan and Ask.** Read-only annotations
+  are optional in the MCP protocol and few servers ship them, so the default
+  setting allowed nothing at all — the same dead end 1.10.0 meant to close, one
+  layer further in. A tool from a known, connected server that has simply not
+  declared itself read-only now **asks for approval during the run**, the same
+  way any other command does, instead of being refused with a pointer to
+  Settings. Blocked still means blocked, with no prompt.
+- **Limboo's own memory and search tools were unusable while planning.** They are
+  the tools the agent uses to recall what it learned about your project and to
+  find its way around it, and they were left out of the permissions a planning
+  run is given — so every plan started with less about your project than it had
+  available.
+- **The plan card stayed above the composer forever.** A plan record is never
+  deleted, so once a session had run one, a card for it sat pinned over the
+  composer for the life of that session — collapsing, once it was approved or
+  rejected, to a header with nothing under it. It now shows while a plan is being
+  written, while it waits for you, and while it is being carried out, and goes
+  away when it is done. Finished plans stay in the Tasks drawer.
+
+### Added
+
+- **A default Plan & Ask access for new servers**, under Settings › MCP, beside
+  Default trust — so a fleet of read-only servers is a decision made once rather
+  than per server. Changing it never rewrites servers already configured.
+- **Plan & Ask access is findable.** It is now in settings search under *plan*,
+  *ask*, *read-only*, *approve* and *blocked* — searching any of those used to
+  land on the unrelated Plan & Tasks section — and each server states its current
+  access in words on its own row, instead of only inside Edit.
+
+### Changed
+
+- **A server marked Trusted is still asked about in Plan and Ask** when it has
+  not declared a tool read-only. Trust decides whether a permitted tool is
+  silent, never whether a read-only mode is a read-only mode.
+- **Settings no longer offers "Archive on completion".** The switch had never
+  been connected to anything, and with finished plans now hidden by rule it would
+  read as the control for that.
+
 ## [1.10.0] - 2026-07-27
 
 Plan and Ask are read-only modes, and they enforced that by refusing anything
