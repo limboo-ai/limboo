@@ -9,9 +9,9 @@
  * read-only invocation from the allowlist below, the answer is `false`.
  *
  * The classifier only ever RELAXES risk from `command` to `read`; it is
- * consulted AFTER the app-data guard (which string-matches the whole command
- * against userData/limboo.db), so a read of app internals stays blocked
- * regardless of what this module says.
+ * consulted AFTER the crown-jewel guard (which string-matches the whole command
+ * against the absolute DB/config/secrets paths), so a read of those stays
+ * blocked regardless of what this module says.
  */
 
 /** Whole-command rejects: substitution, expansion, redirection, background.

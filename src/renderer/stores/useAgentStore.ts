@@ -38,6 +38,14 @@ function emptySnapshot(): AgentSessionSnapshot {
   return { messages: [], activity: [], changes: [], tasks: [], toolCalls: [], plan: null };
 }
 
+/**
+ * Sessions with an approval in flight. Deliberately module state, not store
+ * state: nothing renders from it (the buttons gate on the run phase), it exists
+ * only to keep a double-click — or a command-palette invoke racing the button —
+ * from issuing two approvals for one plan.
+ */
+const approvalsInFlight = new Set<string>();
+
 const IDLE_REQUEST: RequestState = {
   sessionId: null,
   phase: 'idle',
@@ -580,19 +588,32 @@ export const useAgentStore = create<AgentStoreState>((set, get) => {
     approvePlan: (sessionId, execMode) => {
       const api = window.limboo?.agent;
       if (!api?.approvePlan) return;
+      if (approvalsInFlight.has(sessionId)) return;
+      approvalsInFlight.add(sessionId);
       // Flip the composer out of Plan mode immediately — mirror main's coercion
       // (approving never starts another planning pass) so the composer shows the
-      // exact mode the implementation run will use.
+      // exact mode the implementation run will use. The invoke below only
+      // settles when the whole run does, so this cannot wait on it.
+      const previousMode = get().composerModeBySession[sessionId];
       const mode: SessionPermissionMode =
         !execMode || execMode === 'plan' ? 'default' : execMode;
       get().setComposerMode(sessionId, mode);
-      api.approvePlan(sessionId, execMode).catch((err: unknown) => {
-        useUIStore.getState().addToast({
-          title: 'Could not start implementation',
-          description: err instanceof Error ? err.message : String(err),
-          tone: 'danger',
+      api
+        .approvePlan(sessionId, execMode)
+        .catch((err: unknown) => {
+          // The run never started: main has already restored the plan to
+          // 'ready', so put the composer back too rather than leaving it in an
+          // implement mode with nothing running.
+          if (previousMode) get().setComposerMode(sessionId, previousMode);
+          useUIStore.getState().addToast({
+            title: 'Could not start implementation',
+            description: err instanceof Error ? err.message : String(err),
+            tone: 'danger',
+          });
+        })
+        .finally(() => {
+          approvalsInFlight.delete(sessionId);
         });
-      });
     },
 
     rejectPlan: (sessionId) => {

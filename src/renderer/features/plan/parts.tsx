@@ -8,7 +8,7 @@
  * status reads. Presentational + pure helpers only — no store subscriptions
  * beyond the toast used by the copy action, and no business logic.
  */
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { CheckCircle2 } from 'lucide-react';
 import type { PlanMeta, PlanStatus, SessionPermissionMode, SessionPlan } from '@shared/types';
 import { cn } from '@/renderer/lib/cn';
@@ -71,20 +71,35 @@ export function usePlanActions(
 /* Approval                                                            */
 /* ------------------------------------------------------------------ */
 
+/**
+ * `busy` = the run that produced this plan is still tearing down. The plan is
+ * published to the renderer from inside that run, so the controls appear a beat
+ * before the session is actually idle; acting in that window used to fail with
+ * "the agent is already working on this session".
+ */
 export function ApprovalControls({
   settings,
+  busy = false,
   onApprove,
   onRegenerate,
   onReject,
 }: {
   settings: { requireSecondaryConfirm: boolean };
+  busy?: boolean;
   onApprove: (mode: SessionPermissionMode) => void;
   onRegenerate: () => void;
   onReject: () => void;
 }) {
   const [confirming, setConfirming] = useState<SessionPermissionMode | null>(null);
 
+  // Drop a half-finished secondary confirmation if the session goes busy again,
+  // so the next click can't fire an approval the user staged a run ago.
+  useEffect(() => {
+    if (busy) setConfirming(null);
+  }, [busy]);
+
   const approve = (mode: SessionPermissionMode) => {
+    if (busy) return;
     if (settings.requireSecondaryConfirm && confirming !== mode) {
       setConfirming(mode);
       return;
@@ -93,32 +108,52 @@ export function ApprovalControls({
     onApprove(mode);
   };
 
+  const regenerate = () => {
+    if (busy) return;
+    onRegenerate();
+  };
+
+  const DISABLED = 'disabled:cursor-not-allowed disabled:opacity-50';
+
   return (
     <div className="flex flex-col gap-2 rounded-md border border-accent/40 bg-accent/10 px-3 py-2.5">
       <p className="text-[12px] text-muted">
-        Review the plan above. Approving exits Plan Mode and begins implementation against this
-        outline — choose how much to review as it works.
+        {busy
+          ? 'Finishing the planning run — the controls unlock in a moment.'
+          : 'Review the plan above. Approving exits Plan Mode and begins implementation against this outline — choose how much to review as it works.'}
       </p>
       <div className="flex flex-wrap items-center gap-2">
         <button
           type="button"
+          disabled={busy}
           onClick={() => approve('default')}
-          className="flex items-center gap-1.5 rounded-md bg-accent px-3 py-1.5 text-[12px] font-semibold text-base transition-opacity hover:opacity-90"
+          className={cn(
+            'flex items-center gap-1.5 rounded-md bg-accent px-3 py-1.5 text-[12px] font-semibold text-base transition-opacity hover:opacity-90',
+            DISABLED,
+          )}
         >
           <CheckCircle2 size={13} />
           {confirming === 'default' ? 'Confirm — start now' : 'Approve & ask before edits'}
         </button>
         <button
           type="button"
+          disabled={busy}
           onClick={() => approve('acceptEdits')}
-          className="rounded-md border border-accent/50 bg-accent/15 px-2.5 py-1.5 text-[12px] font-medium text-accent transition-colors hover:bg-accent/25"
+          className={cn(
+            'rounded-md border border-accent/50 bg-accent/15 px-2.5 py-1.5 text-[12px] font-medium text-accent transition-colors hover:bg-accent/25',
+            DISABLED,
+          )}
         >
           {confirming === 'acceptEdits' ? 'Confirm — accept edits' : 'Approve & accept edits'}
         </button>
         <button
           type="button"
-          onClick={onRegenerate}
-          className="rounded-md border border-line bg-surface-2 px-2.5 py-1.5 text-[12px] text-muted transition-colors hover:bg-elevated hover:text-fg"
+          disabled={busy}
+          onClick={regenerate}
+          className={cn(
+            'rounded-md border border-line bg-surface-2 px-2.5 py-1.5 text-[12px] text-muted transition-colors hover:bg-elevated hover:text-fg',
+            DISABLED,
+          )}
         >
           Keep planning
         </button>

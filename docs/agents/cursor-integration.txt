@@ -371,8 +371,9 @@ Cursor's declarative format: at run start, the adapter materializes a
 session-scoped .cursor/cli.json inside the session worktree (written through
 the guarded FileSystemManager writer path so the workspace-boundary checks
 apply), containing a deny-first rule set derived from Limboo's policy —
-always-deny rules for the app-data guard (touchesAppData,
-AgentManager.ts:2236) and workspace escape, allow rules matching what the
+always-deny rules for the crown-jewel guard (touchesCrownJewel — the DB,
+config and secrets store, NOT the whole userData root, whose worktrees
+subtree is the agent's own cwd) and workspace escape, allow rules matching what the
 user's permissionMode would auto-approve (e.g. Read(**) when autoApproveReads,
 Write(**) only under acceptEdits/auto) — and only passes --force when the
 effective posture is the equivalent of Limboo's 'auto'. For the interactive
@@ -489,7 +490,9 @@ the session's effective root (the WorktreeManager-resolved checkout) as a
 writable path, the attachment staging directory (userData/attachments/
 <sessionId>) as read-only (mirroring the attachment read carve-out that
 canUseTool implements for Claude at AgentManager.ts:2220-2231), block
-userData itself (the touchesAppData guard made kernel-enforced), and keep
+Limboo's crown jewels — the DB, config files and secrets store, i.e. the
+touchesCrownJewel guard made kernel-enforced (NOT the userData root, which
+holds the worktree the agent works in) — and keep
 --network aligned with settings.agent.webSearch. A settings toggle under
 settings.agent (per-provider section) lets power users relax it. Nothing in
 the renderer changes; this is pure run-spec construction.

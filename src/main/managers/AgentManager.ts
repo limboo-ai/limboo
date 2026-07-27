@@ -93,6 +93,7 @@ import { supportsApproveMcps } from './cursor/exec';
 import { mapHookEvent } from './cursor/translate';
 import { withSessionSandboxJson } from './cursor/sandbox';
 import {
+  crownJewelPaths,
   mapClaudeSandbox,
   resolveSandboxConfig,
   type EffectiveSandbox,
@@ -215,6 +216,15 @@ const IDLE_REQUEST: RequestState = {
  */
 const DELTA_FLUSH_CHARS = 24;
 const DELTA_FLUSH_MS = 16;
+
+/**
+ * How long a plan approval waits for the run that produced the plan to finish
+ * tearing down (see {@link AgentManager.waitForRunSettle}). The wait is normally
+ * a few milliseconds — an SDK interrupt unwinding — so this is only a ceiling on
+ * how long a genuinely wedged run can hold the click hostage before the user
+ * gets the "already working" refusal back. Internal timing, not a user setting.
+ */
+const RUN_SETTLE_TIMEOUT_MS = 8_000;
 
 /* ------------------------------------------------------------------ */
 /* Git commit-message sub-agent — an isolated, tool-less one-shot run. */
@@ -499,6 +509,14 @@ interface SessionRuntime {
 interface ActiveRun {
   abort: AbortController;
   query: { close?: () => void } | null;
+  /**
+   * Resolves once `send()`'s `finally` has torn this run down and removed it
+   * from {@link AgentManager.runs}. A captured plan is published to the renderer
+   * from INSIDE the still-live run, so an Approve click legitimately arrives
+   * while the entry is still here — {@link AgentManager.waitForRunSettle} awaits
+   * this instead of rejecting the user outright.
+   */
+  settled: Promise<void>;
   /** Whether this run is a read-only plan run or a normal implement run. */
   mode: AgentMode;
   /** Terminal SDK result for the active attempt (drives outcome classification). */
@@ -1313,6 +1331,38 @@ export class AgentManager {
     this.pushEvent({ kind: 'activity', sessionId, item: this.activity(sessionId, 'status', 'Run stopped', undefined, 'warning') });
   }
 
+  /**
+   * Await the teardown of an in-flight run for this session, then confirm it is
+   * idle. A captured plan is published from INSIDE the still-live run — Claude's
+   * ExitPlanMode interrupt has not finished unwinding the SDK, and Cursor's
+   * promise has not settled — so the Approve/Keep-planning click a user makes the
+   * instant the plan appears legitimately lands while `runs` still holds the
+   * entry. Waiting for the settle is the correct answer there; rejecting it (as
+   * `send`'s own guard does) surfaced as a spurious "the agent is already working
+   * on this session".
+   *
+   * Falls back to the same refusal if the run is genuinely still going after the
+   * timeout — a busy session must still say no.
+   */
+  private async waitForRunSettle(sessionId: string): Promise<void> {
+    const run = this.runs.get(sessionId);
+    if (!run) return;
+    let timer: NodeJS.Timeout | undefined;
+    try {
+      await Promise.race([
+        run.settled,
+        new Promise<void>((resolve) => {
+          timer = setTimeout(resolve, RUN_SETTLE_TIMEOUT_MS);
+        }),
+      ]);
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
+    if (this.runs.has(sessionId)) {
+      throw new Error('The agent is already working on this session.');
+    }
+  }
+
   /** Forget a session entirely (transcript, activity, runtime state). */
   clearSession(sessionId: string): void {
     this.stop(sessionId);
@@ -1613,9 +1663,17 @@ export class AgentManager {
 
     const cfg = this.settings.getAll().agent.connection;
     const abort = new AbortController();
+    // Deferred settled in the `finally` below, after the map entry is gone.
+    // Definite assignment: a Promise executor runs synchronously, so this is
+    // bound before the constructor returns, let alone before anything awaits it.
+    let markSettled!: () => void;
+    const settled = new Promise<void>((resolve) => {
+      markSettled = resolve;
+    });
     this.runs.set(sessionId, {
       abort,
       query: null,
+      settled,
       mode: isPlan ? 'plan' : 'implement',
       attachmentIds: attachmentIds && attachmentIds.length > 0 ? attachmentIds : undefined,
     });
@@ -1641,6 +1699,10 @@ export class AgentManager {
     } finally {
       const captured = this.runs.get(sessionId)?.planCaptured;
       this.runs.delete(sessionId);
+      // Release waiters immediately after the map entry is gone, so anyone who
+      // wakes on it observes an idle session. Kept ahead of the teardown work
+      // below (and outside its failure modes) so a throw can never strand them.
+      markSettled();
       this.emitHook(sessionId, 'run-finished', { summary: 'Run finished' });
       // Re-anchor the session's repository snapshot — the agent may have
       // changed the repo. Fire-and-forget; never delays run teardown.
@@ -2473,10 +2535,10 @@ export class AgentManager {
     }
 
     // Declarative posture (documented CLI feature — the enforced layer): the
-    // deny-first cli.json now wraps EVERY run (the app-data Read/Write guard
+    // deny-first cli.json now wraps EVERY run (the crown-jewel Read/Write guard
     // matters even propose-only), with allow rules translated from the
     // standing posture. Deny beats allow, so the merge only tightens.
-    const denyRules = sessionDenyRules(app.getPath('userData'));
+    const denyRules = sessionDenyRules(crownJewelPaths());
     const allowRules = [
       ...sessionAllowRules({
         autoApproveReads: agent.autoApproveReads && agent.permissionMode !== 'approve-all',
@@ -2955,6 +3017,16 @@ export class AgentManager {
    * the plan in context. The only transition that lets the agent touch the repo.
    */
   async approvePlan(sessionId: string, execMode: SessionPermissionMode = 'default'): Promise<void> {
+    if (this.loadPlan(sessionId)?.status !== 'ready') {
+      throw new Error('There is no plan ready to approve for this session.');
+    }
+    // The plan run that produced this plan is usually still unwinding — wait for
+    // it BEFORE mutating anything, so a timeout leaves the plan 'ready' and the
+    // Approve button retryable rather than stranding the session.
+    await this.waitForRunSettle(sessionId);
+    // Re-read: the settling run republishes the plan on its way out (the
+    // planning→rejected settle in send's finally), so the pre-wait snapshot may
+    // be stale. Bail without mutating if it moved off 'ready'.
     const plan = this.loadPlan(sessionId);
     if (!plan || plan.status !== 'ready') {
       throw new Error('There is no plan ready to approve for this session.');
@@ -2964,6 +3036,8 @@ export class AgentManager {
     const mode: SessionPermissionMode =
       execMode === 'plan' || execMode === 'ask' ? 'default' : execMode;
     const approved: SessionPlan = { ...plan, status: 'implementing', approvedAt: Date.now() };
+    // Committed BEFORE the send on purpose: runCursorOnce re-reads this row to
+    // decide whether the implement pass runs with --force.
     this.savePlan(approved);
     this.pushEvent({ kind: 'plan', sessionId, plan: approved });
     this.pushActivity(sessionId, 'status', 'Plan approved — implementing', undefined, 'success');
@@ -2975,7 +3049,23 @@ export class AgentManager {
       providerForModel(this.settings.getAll().agent.model) === 'cursor'
         ? 'The plan is approved — implement it now, applying the proposed changes exactly as planned, working through the steps in order.'
         : 'The plan is approved. Implement it now, working through the steps in order and tracking your progress with the TodoWrite tool. Ask for approval before any change you are unsure about.';
-    await this.send(sessionId, prompt, mode);
+    try {
+      await this.send(sessionId, prompt, mode);
+    } catch (err) {
+      // The approval never took effect — put the plan back so Approve renders
+      // again. Without this the session is stranded: 'implementing' hides the
+      // controls forever AND makes every later Cursor run silently --force.
+      this.savePlan(plan);
+      this.pushEvent({ kind: 'plan', sessionId, plan });
+      this.pushActivity(
+        sessionId,
+        'status',
+        'Could not start implementing — plan restored',
+        err instanceof Error ? err.message : undefined,
+        'warning',
+      );
+      throw err;
+    }
   }
 
   /** Pin / unpin the current plan so it is preserved even after a new plan begins. */
@@ -3000,6 +3090,9 @@ export class AgentManager {
 
   /** Discard the current plan and run a fresh planning pass (optionally guided). */
   async regeneratePlan(sessionId: string, extra?: string): Promise<void> {
+    // Same race as approvePlan: "Keep planning" is offered the instant the plan
+    // renders, while the run that produced it is still tearing down.
+    await this.waitForRunSettle(sessionId);
     const plan = this.loadPlan(sessionId);
     // Preserve the outgoing plan as a revision before the new pass overwrites it,
     // so iterative planning cycles can be compared/restored.
@@ -3417,12 +3510,12 @@ export class AgentManager {
         );
       }
 
-      // Attachment carve-out (before the app-data guard, which would otherwise
-      // block the staging dir inside userData): READ tools may open files inside
-      // THIS session's own attachments dir — the userData staging dir (Claude)
-      // or the per-run in-workspace mirror (Cursor). Writes/edits there stay
-      // denied below, and Bash referencing userData is still blocked by
-      // touchesAppData.
+      // Attachment carve-out: READ tools may open files inside THIS session's own
+      // attachments dir — the userData staging dir (Claude) or the per-run
+      // in-workspace mirror (Cursor) — without a prompt. Both live outside the
+      // workspace root, so this short-circuits the path guard below; the crown-jewel
+      // guard no longer covers the staging dir (it denies only the DB/config/secrets),
+      // but the ordering is kept so the allow stays ahead of every gate.
       {
         const attachmentTarget = filePathOf(input);
         if (attachmentTarget && classifyTool(toolName) === 'read') {
@@ -3438,15 +3531,24 @@ export class AgentManager {
         }
       }
 
-      // App-data guard (defense in depth): the agent must never reach Limboo's own
-      // store directly — the memory tools are the only sanctioned read path. This is
-      // checked before any auto-allow so a Bash `sqlite3 …/limboo.db` can't slip past.
-      if (touchesAppData(toolName, input)) {
-        this.pushActivity(sessionId, 'permission', `Blocked ${toolName} on Limboo app data`, undefined, 'danger');
+      // Crown-jewel guard (defense in depth): the agent must never reach Limboo's own
+      // database, config, or safeStorage secrets directly — the memory tools are the
+      // only sanctioned read path. Checked before any auto-allow so a Bash
+      // `sqlite3 …/limboo.db` can't slip past. Scoped to those specific paths, NOT
+      // the whole userData root — the session worktree and attachment staging dir
+      // live under it (see protectedPaths / sandbox/policy.ts).
+      if (touchesCrownJewel(toolName, input)) {
+        this.pushActivity(
+          sessionId,
+          'permission',
+          `Blocked ${toolName} on Limboo's database/settings`,
+          undefined,
+          'danger',
+        );
         return {
           behavior: 'deny',
           message:
-            "Reading Limboo's own app data (the local database/settings) is not allowed — use the memory tools instead.",
+            "Limboo's own database, settings, and stored secrets are off limits — use the memory tools instead.",
         };
       }
 
@@ -4306,51 +4408,94 @@ function shortPath(p: string): string {
 }
 
 /**
- * Limboo's own data directory (the `userData` root holding `limboo.db`,
- * `settings.json`, `window-state.json`, logs and safeStorage material). The agent
- * must never read or write inside it: the Local Memory System (the
- * `mcp__limboo_memory__*` tools) is the *only* sanctioned read path into that DB,
- * and direct access would bypass scoping and leak other workspaces' memories and
- * app internals. Resolved once (lazily, so a non-Electron test context can't crash).
+ * Limboo's **crown jewels** — the safeStorage `secrets/` store, the SQLite DB (and
+ * its WAL/SHM siblings), and the `settings.json` / `window-state.json` config
+ * files. These are the only parts of `userData` the agent must never reach: the
+ * Local Memory System (the `mcp__limboo_memory__*` tools) is the sole sanctioned
+ * read path into the DB, and a direct write to the live store would corrupt the
+ * running app.
+ *
+ * This is deliberately NOT the whole `userData` root. The session worktree
+ * (default `{userData}/worktrees/…`) and the attachment staging dir
+ * (`{userData}/attachments/…`) legitimately live under it and ARE the agent's
+ * working directories — a blanket root deny fought the agent's own cwd and
+ * hard-blocked every edit in a default-rooted worktree. Same narrowing, same
+ * reason, as the OS sandbox floor: `crownJewelPaths()` in sandbox/policy.ts is
+ * the shared source, so Layer 1 and Layer 3 can never drift.
+ *
+ * Resolved once (lazily, so a non-Electron test context can't crash).
  */
-let protectedRoot: string | null | undefined;
-function appDataRoot(): string | null {
-  if (protectedRoot === undefined) {
+let crownJewels: string[] | undefined;
+function protectedPaths(): string[] {
+  if (crownJewels === undefined) {
     try {
-      protectedRoot = fs.realpathSync(app.getPath('userData'));
-    } catch {
+      const base = crownJewelPaths();
+      // The DB's WAL/SHM siblings are the same secret by another name; derive
+      // them here rather than widening the Layer 3 sandbox floor's contract.
+      const db = base.find((p) => p.endsWith('limboo.db'));
+      const named = db ? [...base, `${db}-wal`, `${db}-shm`] : base;
+      // Cover the realpath of the userData root too (a symlinked `~/.config`
+      // is common), so a resolved target still matches. NOT `isInside` per
+      // jewel: that realpaths its root argument and therefore silently fails
+      // open for a jewel that does not exist yet — `secrets/` and
+      // `window-state.json` are both absent on a fresh install, and those are
+      // exactly the ones a first write must not be allowed to create.
+      const raw = app.getPath('userData');
+      let real = raw;
       try {
-        protectedRoot = app.getPath('userData');
+        real = fs.realpathSync(raw);
       } catch {
-        protectedRoot = null;
+        /* not yet created — the lexical path is the only truth we have */
       }
+      const variants = new Set<string>();
+      for (const jewel of named) {
+        variants.add(path.resolve(jewel));
+        if (real !== raw) variants.add(path.resolve(real, path.relative(raw, jewel)));
+      }
+      crownJewels = [...variants];
+    } catch {
+      crownJewels = [];
     }
   }
-  return protectedRoot;
+  return crownJewels;
+}
+
+/** Resolve a path through symlinks where possible, else lexically. */
+function resolveLoosely(target: string): string {
+  const abs = path.resolve(target);
+  try {
+    return fs.realpathSync(abs);
+  } catch {
+    return abs;
+  }
 }
 
 /**
- * True when a tool call would touch Limboo's own app data — either a path-bearing
- * tool resolving inside `userData` (defense in depth) or a `Bash`/command tool whose
- * command string references the data dir or the SQLite DB by name. Heuristic for
- * shell, but deliberately broad: there is no legitimate reason for the agent to
- * reach the app's private store.
+ * True when a tool call would touch one of the crown jewels — either a path-bearing
+ * tool resolving to (or inside) one, or a `Bash`/command tool whose command string
+ * names one by absolute path. The shell check is intentionally absolute-path only:
+ * a bare-name match blocked innocent commands like `grep limboo.db src/` that never
+ * leave the workspace.
  */
-function touchesAppData(toolName: string, input: Record<string, unknown>): boolean {
-  const root = appDataRoot();
-  if (!root) return false;
+function touchesCrownJewel(toolName: string, input: Record<string, unknown>): boolean {
+  const jewels = protectedPaths();
+  if (jewels.length === 0) return false;
 
   const file = filePathOf(input);
-  if (file && isInside(root, file)) return true;
+  if (file) {
+    // Compare both the raw and the symlink-resolved form: the raw catches a
+    // not-yet-existing jewel, the resolved catches a symlink aimed at one.
+    const abs = path.resolve(file);
+    const real = resolveLoosely(file);
+    const hit = (t: string) =>
+      jewels.some((jewel) => t === jewel || t.startsWith(jewel + path.sep));
+    if (hit(abs) || hit(real)) return true;
+  }
 
   if (toolName === 'Bash') {
     const cmd = String(input.command ?? '');
     if (!cmd) return false;
-    // The absolute userData path, or the DB / config dir by name (covers WAL/SHM
-    // siblings and `sqlite3 .../limboo.db` style access regardless of cwd).
-    if (cmd.includes(root)) return true;
-    if (/limboo\.db\b/i.test(cmd)) return true;
-    if (/[\\/]limboo[\\/](limboo\.db|settings\.json|window-state\.json)/i.test(cmd)) return true;
+    if (jewels.some((jewel) => cmd.includes(jewel))) return true;
   }
   return false;
 }
@@ -4398,7 +4543,7 @@ function isSshNonSecret(base: string): boolean {
  * declarative `ask` rules in cursor/permissions.ts; the caller turns a hit into a
  * human-approval prompt (not a hard block) for BOTH providers — Cursor's
  * absolute-path glob normalization is unreliable, so this app-level guard is the
- * dependable catch (defense in depth, like touchesAppData).
+ * dependable catch (defense in depth, like touchesCrownJewel).
  */
 function touchesSensitiveFile(toolName: string, input: Record<string, unknown>): boolean {
   const sshDir = path.join(os.homedir(), '.ssh');
