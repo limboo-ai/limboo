@@ -83,8 +83,10 @@ export function ComposerBanner() {
     tone = 'accent';
     Icon = ClipboardCheck;
     title = 'Plan ready for your review';
-    body = `${agentName} proposed an implementation plan. Review it in the Tasks panel, then approve to begin — nothing changes until you do.`;
-    action = { label: 'Review plan', onClick: () => runCommand('drawer.toggleTasks') };
+    // The plan itself now renders inline just above this banner, so point at the
+    // full panel (outline, revisions, filters) rather than at the plan text.
+    body = `${agentName} proposed an implementation plan, shown above. Approve it to begin — nothing changes until you do.`;
+    action = { label: 'Open full panel', onClick: () => runCommand('drawer.toggleTasks') };
   } else if (outcome === 'context-overflow') {
     tone = 'warning';
     Icon = AlertTriangle;
