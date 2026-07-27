@@ -293,6 +293,7 @@ function PlanView({
       {ready && (
         <ApprovalControls
           settings={settings}
+          busy={running}
           onApprove={(mode) => sessionId && approvePlan(sessionId, mode)}
           onRegenerate={() => sessionId && regeneratePlan(sessionId)}
           onReject={() => sessionId && rejectPlan(sessionId)}

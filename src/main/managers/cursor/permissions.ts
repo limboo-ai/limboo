@@ -4,13 +4,14 @@
  * Cursor's declarative permission system is the INVERSE of Claude's callback
  * one: allow/deny rule lists, deny beats allow, and in print mode `--force`
  * allows everything not explicitly denied. Limboo therefore materializes a
- * deny-first cli.json for EVERY run (the app-data guard applies even to
+ * deny-first cli.json for EVERY run (the crown-jewel guard applies even to
  * propose-only runs) and translates the user's standing posture into allow
  * rules; `--force` is only ever issued together with this rule set. The file
  * is written just for the run and the pre-run bytes are restored in `finally`
  * (see sessionFile.ts). Self-deny rules prevent the agent from editing its
  * own gates (cli.json / hooks.json / mcp.json) mid-run.
  */
+import path from 'node:path';
 import { readOnlyShellRuleSpecs } from '../agent/readOnlyCommands';
 import { copySafeKeys, safeParseObject, withSessionFile } from './sessionFile';
 
@@ -32,12 +33,17 @@ function absRulePath(p: string): string {
 }
 
 /**
- * The minimal deny-first rule set for any Cursor run. Mirrors the app-data
- * guard the Claude path enforces in canUseTool (touchesAppData) plus
+ * The minimal deny-first rule set for any Cursor run. Mirrors the crown-jewel
+ * guard the Claude path enforces in canUseTool (touchesCrownJewel) plus
  * repo-integrity, self-gate, and destructive-shell basics.
+ *
+ * `jewels` are absolute OS paths — pass `crownJewelPaths()`. They are the DB,
+ * config files, and safeStorage store ONLY, never the whole `userData` root:
+ * deny beats allow in Cursor's grammar, and the session worktree defaults to
+ * `{userData}/worktrees/…`, so a blanket root deny silently blocked every edit
+ * the agent made in its own working directory.
  */
-export function sessionDenyRules(userDataPath: string): string[] {
-  const userData = absRulePath(userDataPath);
+export function sessionDenyRules(jewels: string[]): string[] {
   return [
     // Repo integrity: never let a force run rewrite git internals or its own gates.
     'Write(.git/**)',
@@ -48,17 +54,22 @@ export function sessionDenyRules(userDataPath: string): string[] {
     // Limboo's reserved workspace namespace (per-run attachment staging).
     'Write(.limboo/**)',
     'Write(**/.limboo/**)',
-    // App data: Limboo's own database/settings/secrets are never a tool target.
-    // Absolute rule path (`//…`) — a single leading slash would be read as
-    // project-relative and never match (see absRulePath).
-    `Read(${userData}/**)`,
-    `Write(${userData}/**)`,
-    // Named belt-and-suspenders denies for the two the design note calls out by
-    // name (both already inside the userData tree above, but explicit here).
-    // Limboo's own app data stays HARD-denied — the memory tools are the only
-    // sanctioned path in; workspace secrets (below) are ask-for-approval instead.
-    `Read(${userData}/secrets/**)`,
-    `Read(${userData}/limboo.db)`,
+    // Crown jewels: Limboo's own database, config, and safeStorage store are
+    // never a tool target — the memory tools are the only sanctioned path in
+    // (workspace secrets, below, are ask-for-approval instead). Both verbs per
+    // jewel: writes used to ride a blanket `Write(userData/**)` rule, which also
+    // swallowed the worktree. Absolute rule paths (`//…`) — a single leading
+    // slash would be read as project-relative and never match (see absRulePath).
+    ...jewels.flatMap((jewel) => {
+      const p = absRulePath(jewel);
+      const rules = [`Read(${p})`, `Write(${p})`];
+      // The DB's WAL/SHM siblings are the same secret under another name.
+      if (jewel.endsWith('.db')) rules.push(`Read(${p}-*)`, `Write(${p}-*)`);
+      // A directory jewel (`secrets/`) also needs the recursive form; a file
+      // jewel is matched exactly (a `settings.json/**` rule can never match).
+      else if (!path.extname(jewel)) rules.push(`Read(${p}/**)`, `Write(${p}/**)`);
+      return rules;
+    }),
     // Destructive-shell basics (deny-first; everything else rides --force).
     'Shell(rm)',
     'Shell(rmdir)',

@@ -22,8 +22,9 @@
  * session worktree (default `{userData}/worktrees/…`) and the attachment staging
  * dir (`{userData}/attachments/…`) legitimately live under `userData` and MUST
  * stay usable; a blanket `userData` deny would fight the agent's own working dir.
- * Layer 1's `touchesAppData` guard still denies `userData` broadly at the
- * authorization layer, so the crown-jewel OS deny is pure defense-in-depth.
+ * Layer 1's `touchesCrownJewel` guard (AgentManager) and Cursor's declarative
+ * `sessionDenyRules` both deny this SAME set at the authorization layer — they
+ * consume `crownJewelPaths()` directly — so the three layers cannot drift.
  * The user-configurable knobs only ever *widen* writes (extra paths, screened
  * against the floor) or tighten the network — they can never re-expose a crown
  * jewel or escape the worktree.

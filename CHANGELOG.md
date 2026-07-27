@@ -7,6 +7,47 @@ All notable changes to Limboo are documented here. The format is based on
 
 ## [Unreleased]
 
+## [1.12.0] - 2026-07-27
+
+Sessions run in a git worktree, and Limboo puts that worktree inside its own
+application data folder. A safety rule meant to keep the agent out of Limboo's
+database read the whole folder as off limits — so in a worktree session the
+agent was refused the moment it tried to write its first file, in what was
+actually its own working directory. Approving a plan could fail for a reason
+that was never true, and leave the session unable to try again. The plan card
+also stops appearing before there is a plan to read.
+
+### Fixed
+
+- **The agent could not write anything in a worktree session.** Every file it
+  tried to create was refused as "Limboo's own app data", because sessions check
+  out into a folder that lives inside Limboo's data directory. The rule now
+  covers only what it was written to protect — the database, your settings, and
+  the encrypted secret store — and the rest of that directory, including the
+  worktree the agent works in, is ordinary ground. Cursor runs were blocked by a
+  second copy of the same rule and are fixed with it.
+- **Commands were refused for mentioning a filename.** Anything containing the
+  text `limboo.db` was blocked wherever it ran, so a plain search of your own
+  source could be denied. Only the real, full path to the database is protected
+  now.
+- **Approving a plan could fail with "the agent is already working on this
+  session".** The plan appears while the run that wrote it is still finishing, so
+  a quick click arrived a fraction of a second early and was turned away.
+  Approving now waits for that run to finish instead of refusing, and the buttons
+  are held until it has.
+- **A failed approval left the plan unusable.** The plan was marked as being
+  carried out before the work had actually started, so when it did not start,
+  the approval buttons never came back and the session could not be recovered.
+  The plan is restored when the run fails to begin.
+
+### Changed
+
+- **The plan card waits for the plan.** It used to appear as soon as planning
+  started, showing a title and an "Analyzing the repository" line above the
+  composer while the agent's actual reasoning streamed past it further up. It now
+  appears with the proposal it is asking you to approve. Progress while planning
+  reads where the rest of the run does — in the conversation.
+
 ## [1.11.0] - 2026-07-27
 
 1.10.0 set out to stop Plan and Ask blocking the MCP servers you had connected.

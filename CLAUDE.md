@@ -999,7 +999,7 @@ an active coding agent". Full research/design doc:
     `beforeReadFile`/`afterFileEdit`; payloads map via
     `translate.ts mapHookEvent` into `AgentManager.decideToolUse` — the
     decision core **extracted from `makeCanUseTool`**, so Claude's callback
-    and Cursor's hooks share one implementation (risk sets, app-data +
+    and Cursor's hooks share one implementation (risk sets, crown-jewel +
     workspace path guards, plan read-only, auto-approvals, remembered
     choices, the same PermissionRequest dialog). Duplicate concurrent hook
     events share one decision. **Hooks only ever tighten** — official docs
@@ -1082,8 +1082,11 @@ jail is the kernel-enforced net beneath it.
   `window-state.json` (`crownJewelPaths()`) — are always denied read+write. The
   floor is those SPECIFIC paths, NOT the whole `userData` root, because the
   worktree (`{userData}/worktrees`) and attachments (`{userData}/attachments`)
-  live under it and must stay usable; Layer 1's `touchesAppData` still denies
-  `userData` broadly at the authorization layer. User knobs only widen writes
+  live under it and must stay usable. **All three layers deny exactly this set**
+  — Layer 1's `touchesCrownJewel` (AgentManager) and Cursor's declarative
+  `sessionDenyRules` both consume `crownJewelPaths()` directly, so they cannot
+  drift. (Layer 1 used to deny the whole `userData` root, which hard-blocked
+  every edit the agent made inside a default-rooted worktree.) User knobs only widen writes
   (`allowWritePaths`, each screened against the floor via `screenExtraWritePath`
   — a path into a crown jewel / `/` / `$HOME` is dropped) or tighten the network;
   `excludedCommands` (Claude-only) lists commands that run outside the jail.
