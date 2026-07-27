@@ -26,6 +26,7 @@ import { useWorkspaceStore } from '@/renderer/stores/useWorkspaceStore';
 import { useVoiceStore } from '@/renderer/stores/useVoiceStore';
 import { useUIStore } from '@/renderer/stores/useUIStore';
 import { useAttachmentStore, draftAttachments } from '@/renderer/stores/useAttachmentStore';
+import { useComposerStore } from '@/renderer/stores/useComposerStore';
 import { useFileDragActive } from '@/renderer/hooks/usePreventFileDrop';
 import { useTypewriter } from '@/renderer/hooks/useTypewriter';
 import { agentDisplayName, lifecycleMeta, phaseLabel } from '@/renderer/features/agent/status';
@@ -70,10 +71,20 @@ const ASK_PLACEHOLDERS = [
 ];
 
 export function Composer({ disabled = false }: { disabled?: boolean }) {
-  const [value, setValue] = useState('');
   const ref = useRef<HTMLTextAreaElement>(null);
 
   const sessionId = useSessionStore((s) => s.selectedId);
+  // The draft lives in a store rather than local state: the message action
+  // toolbar (Quote / Reference in Prompt) and "Open in New Session" all write
+  // into the composer from outside this subtree. See `useComposerStore`.
+  const value = useComposerStore((s) => (sessionId ? s.draftBySession[sessionId] ?? '' : ''));
+  const setDraft = useComposerStore((s) => s.setDraft);
+  const clearDraft = useComposerStore((s) => s.clearDraft);
+  const focusTick = useComposerStore((s) => s.focusTick);
+  const focusSessionId = useComposerStore((s) => s.focusSessionId);
+  const setValue = (text: string) => {
+    if (sessionId) setDraft(sessionId, text);
+  };
   const lifecycle = useAgentStore((s) => s.lifecycle);
   // This session's own run phase — sessions can run concurrently, so "is THIS
   // composer's session busy" must never be read off a single global field (that
@@ -220,17 +231,29 @@ export function Composer({ disabled = false }: { disabled?: boolean }) {
     el.style.overflowY = el.scrollHeight > MAX_HEIGHT ? 'auto' : 'hidden';
   };
 
-  // Keep the height correct when the value is cleared programmatically.
+  // The value now changes from outside this component too (Quote / Reference),
+  // so the textarea has to be re-measured on every change, not only when it is
+  // cleared — an appended quote used to land in a one-row box.
   useEffect(() => {
-    if (value === '') autoGrow();
+    autoGrow();
   }, [value]);
+
+  // Something outside the composer asked for focus (Quote, Reference in Prompt).
+  // Keyed on the monotonic tick so two requests in a row both land.
+  useEffect(() => {
+    if (!focusTick || !sessionId || focusSessionId !== sessionId) return;
+    const el = ref.current;
+    if (!el) return;
+    el.focus();
+    el.setSelectionRange(el.value.length, el.value.length);
+  }, [focusTick, focusSessionId, sessionId]);
 
   const submit = () => {
     const text = value.trim();
     // Attachments-only sends are allowed (main substitutes a review prompt).
     if ((!text && readyDraftIds.length === 0) || blocked || !sessionId) return;
     void send(sessionId, text, mode, readyDraftIds.length > 0 ? readyDraftIds : undefined);
-    setValue('');
+    clearDraft(sessionId);
     if (ref.current) {
       ref.current.style.height = 'auto';
       ref.current.style.overflowY = 'hidden';

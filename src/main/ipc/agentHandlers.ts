@@ -13,6 +13,8 @@ import type {
   AgentSessionSnapshot,
   AgentState,
   ClarificationDecision,
+  ConversationRevertPreview,
+  ConversationRevertResult,
   PermissionDecision,
   PlanRevision,
   SessionPermissionMode,
@@ -32,6 +34,13 @@ function assertNoPollutingKeys(obj: Record<string, unknown>): void {
 function assertSessionId(value: unknown): string {
   if (typeof value !== 'string' || value.length === 0 || value.length > 200) {
     throw new Error('Expected a valid session id');
+  }
+  return value;
+}
+
+function assertMessageId(value: unknown): string {
+  if (typeof value !== 'string' || value.length === 0 || value.length > 200) {
+    throw new Error('Expected a valid message id');
   }
   return value;
 }
@@ -167,6 +176,24 @@ export function registerAgentHandlers(agent: AgentManager): void {
       }
       agent.restorePlanRevision(id, revisionId);
     },
+  );
+
+  /* -------------------------------------------------------- conversation revert */
+
+  // Both channels take ids and nothing else. The checkpoint, its commit, and the
+  // repository root are resolved in main from the session's own rows — a renderer
+  // that supplied a ref or a path would be supplying the blast radius of a
+  // destructive operation, which is exactly what must not cross this boundary.
+  handle<[string, string], ConversationRevertPreview>(
+    IpcChannels.agentRevertPreview,
+    (_event, sessionId, messageId) =>
+      agent.revertPreview(assertSessionId(sessionId), assertMessageId(messageId)),
+  );
+
+  handle<[string, string], ConversationRevertResult>(
+    IpcChannels.agentRevertToMessage,
+    (_event, sessionId, messageId) =>
+      agent.revertToMessage(assertSessionId(sessionId), assertMessageId(messageId)),
   );
 
   handle<[string, string?], void>(

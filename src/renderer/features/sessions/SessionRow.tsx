@@ -85,9 +85,13 @@ export function SessionRow({
         e.preventDefault();
         setMenu({ x: e.clientX, y: e.clientY });
       }}
+      // The active row is marked by its SEAT and its TYPOGRAPHY — the same
+      // convention DocumentTabs and WorktreeTabs use. It used to carry a left
+      // accent bar as well, which made "selected" a third visual language in a
+      // shell that had already standardised on two.
       className={cn(
-        'group relative flex w-full cursor-default items-start gap-2.5 border-l-2 px-3 py-2 text-left transition-colors',
-        active ? 'border-accent bg-surface-2' : 'border-transparent hover:bg-surface-2',
+        'group relative flex w-full cursor-default items-start gap-2.5 px-3 py-2 text-left transition-colors',
+        active ? 'bg-surface-2' : 'hover:bg-surface-2',
       )}
     >
       <span className="mt-0.5 shrink-0" title={awaitingInput ? 'Waiting for your input' : undefined}>
@@ -119,7 +123,14 @@ export function SessionRow({
               className="min-w-0 flex-1 rounded border border-line-strong bg-surface px-1 py-0.5 text-[13px] font-medium text-fg outline-none focus:border-accent"
             />
           ) : (
-            <span className="flex-1 truncate text-[13px] font-medium text-fg">{session.title}</span>
+            <span
+              className={cn(
+                'flex-1 truncate text-[13px] text-fg',
+                active ? 'font-semibold' : 'font-medium',
+              )}
+            >
+              {session.title}
+            </span>
           )}
           {session.archived && <Archive size={11} className="shrink-0 text-faint" />}
           {session.pinned && <Pin size={11} className="shrink-0 text-faint" />}

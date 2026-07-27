@@ -105,6 +105,12 @@ export const IpcChannels = {
   agentListPlanRevisions: 'agent:listPlanRevisions',
   agentRestorePlanRevision: 'agent:restorePlanRevision',
 
+  // Conversation revert — a session-level rollback to the checkpoint guarding a
+  // turn. `Preview` measures and never mutates; `Revert` is the confirmed act.
+  // Both take ids only: the renderer never supplies a path, ref, or commit.
+  agentRevertPreview: 'agent:revertPreview',
+  agentRevertToMessage: 'agent:revertToMessage',
+
   // File System Layer (Phase 4) — read + watch + index foundation.
   fsIndex: 'fs:index',
   fsGetTree: 'fs:getTree',

@@ -337,6 +337,18 @@ export class SettingsManager {
       plan.defaultMode = plan.defaultMode === ('implement' as unknown) ? 'default' : 'plan';
     }
     plan.historyLimit = Math.round(clamp(plan.historyLimit, 1, 100));
+    // 22 -> 23: the Tasks panel dropped the derived phase/task outline, so the
+    // knobs that only ever configured it have no surface left. `deepMerge` keeps
+    // unknown keys from a persisted file, so drop them explicitly rather than
+    // letting dead settings ride along forever.
+    for (const dead of [
+      'streamIncrementally',
+      'autoExpandTasks',
+      'autoCollapseCompleted',
+      'showTaskDurations',
+    ]) {
+      delete (plan as unknown as Record<string, unknown>)[dead];
+    }
 
     // Resume Pipeline — clamp the numeric knobs and coerce the toggles
     // (renderer-supplied values bound git work on every session activation).

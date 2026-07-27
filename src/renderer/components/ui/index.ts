@@ -1,4 +1,5 @@
 export { IconButton } from './IconButton';
+export { CopyButton } from './CopyButton';
 export { DiffStat } from './DiffStat';
 export { ResizeHandle } from './ResizeHandle';
 export { EmptyState } from './EmptyState';

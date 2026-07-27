@@ -22,9 +22,9 @@
  * "Stable", "Running now", "Windows: self-signed" are sentences, and wrapping a
  * sentence in a coloured capsule adds emphasis without adding information.
  */
-import { useEffect, useRef, useState, type ReactNode } from 'react';
-import { Check, Copy } from 'lucide-react';
+import { useState, type ReactNode } from 'react';
 import { isEmbeddedAvatar, isForgeUrl, type ReleaseChannel } from '@shared/release';
+import { CopyButton } from '@/renderer/components/ui';
 import { cn } from '@/renderer/lib/cn';
 
 /**
@@ -169,48 +169,10 @@ export function Avatar({
 }
 
 /**
- * Copy-to-clipboard with a settled confirmation. The timer is cleared on
- * unmount — a section can be collapsed while the tick is still showing.
+ * The release document's copy affordance is the shared primitive — re-exported
+ * here so existing imports keep working while there is only one implementation.
  */
-export function CopyButton({
-  value,
-  label,
-  className,
-}: {
-  value: string;
-  label: string;
-  className?: string;
-}) {
-  const [done, setDone] = useState(false);
-  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  useEffect(() => () => {
-    if (timer.current) clearTimeout(timer.current);
-  }, []);
-
-  return (
-    <button
-      type="button"
-      title={label}
-      aria-label={label}
-      onClick={(e) => {
-        e.stopPropagation();
-        void window.limboo?.system?.clipboardWrite(value);
-        setDone(true);
-        if (timer.current) clearTimeout(timer.current);
-        timer.current = setTimeout(() => setDone(false), 1200);
-      }}
-      className={cn(
-        'shrink-0 rounded p-1 text-faint transition-colors hover:bg-surface-2 hover:text-fg',
-        'focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent',
-        done && 'text-success',
-        className,
-      )}
-    >
-      {done ? <Check size={12} /> : <Copy size={12} />}
-    </button>
-  );
-}
+export { CopyButton };
 
 /** One label/value fact. Values that are absent render an em dash, never blank. */
 export function Field({

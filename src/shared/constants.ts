@@ -1,7 +1,7 @@
 import type { AppSettings, WorkspaceConfig } from './types';
 
 /** Bumped whenever the {@link AppSettings} shape changes incompatibly. */
-export const SETTINGS_VERSION = 22;
+export const SETTINGS_VERSION = 23;
 
 /**
  * The agent providers Limboo can run (Claude Code = Anthropic via the Agent
@@ -734,15 +734,11 @@ export const DEFAULT_SETTINGS: AppSettings = {
     },
     plan: {
       defaultMode: 'plan',
-      streamIncrementally: true,
-      autoExpandTasks: true,
-      autoCollapseCompleted: false,
       requireSecondaryConfirm: false,
       defaultExportFormat: 'md',
       showEstimates: true,
       showReasoning: true,
       highlightRisk: true,
-      showTaskDurations: true,
       showCheckpointsOnTasks: true,
       retainPlanHistory: true,
       historyLimit: 20,

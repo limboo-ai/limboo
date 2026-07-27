@@ -1,21 +1,23 @@
 /**
- * Plan panel — the Task tab's rich view of Plan Mode. It is the orchestration
- * surface for the whole Explore → Plan → Approve → Execute lifecycle:
+ * Plan panel — the Task tab's canonical view of Plan Mode, and the single source
+ * of truth for execution once a plan is approved. It carries exactly two
+ * sections:
  *
- *   • planning      → "analyzing the repository" placeholder while the agent reads
- *                     (read-only); the derived outline streams in as the plan grows.
- *   • ready         → the rendered plan + a hierarchical, expandable task outline +
- *                     a toolbar and an approval menu. Nothing runs until approved.
- *   • implementing  → the outline becomes a live execution dashboard: tasks tick
- *                     through pending → active → completed, with waiting/failed
- *                     states derived from the run.
- *   • completed     → the finished plan + outline, preserved for audit.
+ *   • **Implementation plan** — the plan document itself (rendered Markdown, or
+ *     raw behind the toolbar toggle).
+ *   • **Live progress** — the agent's streamed TodoWrite checklist, ticking
+ *     through pending → active → completed while the run executes.
  *
- * The hierarchy (phases + per-task files/notes) is DERIVED from the plan Markdown
- * — the harness only streams flat TodoWrite items — via {@link parsePlanOutline}
- * and cross-referenced with live task status via {@link applyRuntime}. Everything
- * is driven by the active session's agent snapshot; no mock data. Theme tokens
- * only — no new colors.
+ * There used to be a third: a derived phase/task outline parsed out of the plan
+ * Markdown and fuzzy-matched against the live todos. It restated the plan the
+ * section above it already showed, and the match was lossy enough that "Live
+ * progress" had to exist as its fallback — two lists of the same work, disagreeing.
+ * The outline is gone; the checklist is no longer a fallback but the section, and
+ * the toolbar's search/filter operate on it.
+ *
+ * Everything is driven by the active session's agent snapshot; no mock data.
+ * Theme tokens only, and one loader — {@link HelixLoader}, the same indicator the
+ * conversation stream uses while the agent works.
  */
 import { useEffect, useMemo, useState } from 'react';
 import {
@@ -29,29 +31,21 @@ import {
   FileText,
   Filter,
   History,
-  Loader2,
-  ListChecks,
   Pin,
   PinOff,
   Printer,
   RefreshCw,
-  Rows3,
   Search,
   TriangleAlert,
 } from 'lucide-react';
 import type { PlanRevision, SessionPlan, TaskItem } from '@shared/types';
-import { EmptyState, IconButton, Spinner, SuccessCheck } from '@/renderer/components/ui';
+import { EmptyState, HelixLoader, IconButton } from '@/renderer/components/ui';
 import { cn } from '@/renderer/lib/cn';
-import {
-  applyRuntime,
-  parsePlanOutline,
-  type OutlinePhase,
-  type OutlineTask,
-  type TaskExecStatus,
-} from '@/renderer/lib/planOutline';
+import { applyRuntime, parsePlanOutline, type TaskExecStatus } from '@/renderer/lib/planOutline';
 import { RUNNING_PHASES } from '@/renderer/features/sessions/useSessionRunning';
 import { useSessionStore } from '@/renderer/stores/useSessionStore';
 import { useAgentStore } from '@/renderer/stores/useAgentStore';
+import { useGitStore } from '@/renderer/stores/useGitStore';
 import { useSettingsStore } from '@/renderer/stores/useSettingsStore';
 import { useLayoutStore } from '@/renderer/stores/useLayoutStore';
 import { Markdown } from '@/renderer/features/workspace/Markdown';
@@ -85,7 +79,7 @@ export function PlanPanel() {
   if (!plan) {
     return (
       <div className="flex flex-col gap-3">
-        <TaskChecklist tasks={tasks} />
+        <LiveProgress sessionId={sessionId} tasks={tasks} />
       </div>
     );
   }
@@ -118,11 +112,10 @@ function PlanView({
   const [search, setSearch] = useState('');
   const [searchOpen, setSearchOpen] = useState(false);
   const [filter, setFilter] = useState<TaskFilter>('all');
-  const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
   const [historyOpen, setHistoryOpen] = useState(false);
 
-  // Collapse the plan body automatically once implementation starts so the live
-  // outline is what the eye lands on.
+  // Collapse the plan body automatically once implementation starts so live
+  // progress is what the eye lands on.
   useEffect(() => {
     if (plan.status === 'implementing') setBodyOpen(false);
   }, [plan.status]);
@@ -131,17 +124,16 @@ function PlanView({
   const ready = plan.status === 'ready';
   const badge = STATUS_BADGE[plan.status];
 
-  // Derive the phase/task outline from the plan Markdown and overlay live status.
+  // The outline is no longer rendered, but it still backs the JSON export and
+  // the pre-todo tally (the plan's own bullet count before any todo streams).
   const outline = useMemo(() => {
     const parsed = parsePlanOutline(plan.markdown);
     return applyRuntime(parsed, { tasks, awaitingPermission, failed, running });
   }, [plan.markdown, tasks, awaitingPermission, failed, running]);
 
-  const hasOutline = outline.taskCount > 0;
-
   // Real-time headline tally, computed straight from the live TodoWrite list so it
-  // advances even when the fuzzy outline↔todo match fails (which otherwise froze
-  // the count at 0). Falls back to the outline only when no todos have streamed.
+  // advances even when no plan bullets were parsed. Falls back to the outline only
+  // when no todos have streamed.
   const live = useMemo(() => {
     let completed = 0;
     let active = 0;
@@ -162,11 +154,6 @@ function PlanView({
     plan,
     outline,
   );
-  const setAllCollapsed = (value: boolean) => {
-    const next: Record<string, boolean> = {};
-    for (const p of outline.phases) next[p.id] = value;
-    setCollapsed(next);
-  };
 
   return (
     <div className="flex flex-col gap-3">
@@ -177,10 +164,8 @@ function PlanView({
             {plan.pinned && <Pin size={11} className="shrink-0 text-accent" />}
             {plan.title}
           </p>
-          <span className={cn('text-[11px] font-medium', badge.cls)}>
-            {(planning || progress.active > 0) && (
-              <Loader2 size={10} className="mr-1 inline animate-spin" />
-            )}
+          <span className={cn('flex items-center gap-1 text-[11px] font-medium', badge.cls)}>
+            {(planning || progress.active > 0) && <HelixLoader size={12} label={badge.label} />}
             {badge.label}
             {hasProgress && ` · ${progress.completed}/${progress.total}`}
             {progress.active > 0 && (
@@ -204,7 +189,7 @@ function PlanView({
             </IconButton>
             <IconButton
               size="sm"
-              label="Search tasks"
+              label="Search live progress"
               active={searchOpen}
               onClick={() => setSearchOpen((v) => !v)}
             >
@@ -217,9 +202,6 @@ function PlanView({
               onClick={() => setFilter((f) => (f === 'all' ? 'pending' : f === 'pending' ? 'done' : 'all'))}
             >
               <Filter size={13} />
-            </IconButton>
-            <IconButton size="sm" label="Collapse all phases" onClick={() => setAllCollapsed(true)}>
-              <Rows3 size={13} />
             </IconButton>
             <IconButton
               size="sm"
@@ -247,7 +229,7 @@ function PlanView({
           autoFocus
           value={search}
           onChange={(e) => setSearch(e.target.value)}
-          placeholder="Filter tasks…"
+          placeholder="Filter live progress…"
           className="w-full rounded-md border border-line bg-surface-2 px-2.5 py-1.5 text-[12px] text-fg placeholder:text-faint focus:border-line-strong focus:outline-none"
         />
       )}
@@ -260,12 +242,12 @@ function PlanView({
       {/* Planning placeholder */}
       {planning && (
         <div className="flex items-center gap-2 rounded-md border border-line bg-surface-2 px-3 py-2.5 text-[12px] text-muted">
-          <Spinner size={12} />
+          <HelixLoader size={14} label="Analyzing the repository" />
           Analyzing the repository — reading files and dependencies (read-only)…
         </div>
       )}
 
-      {/* Plan body (markdown) */}
+      {/* Implementation plan */}
       {!planning && plan.markdown && settings.showReasoning && (
         <div className="rounded-md border border-line bg-surface-2/50">
           <button
@@ -300,47 +282,8 @@ function PlanView({
         />
       )}
 
-      {/* Prominent completion banner — a large self-drawing checkmark when the
-          whole plan run has finished, so "execution is done" is impossible to miss. */}
-      {plan.status === 'completed' && (
-        <div className="flex items-center gap-3 rounded-md border border-success/40 bg-success/10 px-3 py-3">
-          <SuccessCheck size={44} className="shrink-0" />
-          <div className="flex min-w-0 flex-col">
-            <span className="text-[13px] font-semibold text-success">Execution complete</span>
-            <span className="text-[11px] text-muted">
-              {hasProgress
-                ? `All ${progress.total} task${progress.total === 1 ? '' : 's'} finished.`
-                : 'The agent finished this plan.'}
-            </span>
-          </div>
-        </div>
-      )}
-
-      {/* Task outline (or the flat checklist fallback) */}
-      {hasOutline ? (
-        <OutlineTree
-          phases={outline.phases}
-          collapsed={collapsed}
-          onToggle={(id) => setCollapsed((c) => ({ ...c, [id]: !c[id] }))}
-          search={search}
-          filter={filter}
-          showDurations={settings.showTaskDurations}
-          onJump={(tab) => useLayoutStore.getState().setActiveTab(tab)}
-        />
-      ) : (
-        tasks.length > 0 && <TaskChecklist tasks={tasks} />
-      )}
-
-      {/* The fuzzy overlay can fail when the agent's TodoWrite labels don't
-          resemble the plan bullets — if fewer than half the live todos matched
-          the outline, ALSO show the raw checklist so live progress is never
-          invisible while (or after) the run executes. */}
-      {hasOutline &&
-        tasks.length > 0 &&
-        (plan.status === 'implementing' || plan.status === 'completed') &&
-        outline.matched < Math.ceil(tasks.length / 2) && (
-          <TaskChecklist tasks={tasks} title="Live progress" />
-        )}
+      {/* Live progress */}
+      <LiveProgress sessionId={sessionId} tasks={tasks} search={search} filter={filter} />
 
       {/* Revision history */}
       {historyOpen && sessionId && <HistorySection sessionId={sessionId} plan={plan} />}
@@ -349,184 +292,94 @@ function PlanView({
 }
 
 /* ------------------------------------------------------------------ */
-/* Approval                                                            */
+/* Live progress                                                       */
 /* ------------------------------------------------------------------ */
 
-/* ------------------------------------------------------------------ */
-/* Outline tree                                                        */
-/* ------------------------------------------------------------------ */
-
-const ACTIVE_STATES = new Set<TaskExecStatus>(['active', 'waiting', 'failed']);
-
-function OutlineTree({
-  phases,
-  collapsed,
-  onToggle,
-  search,
-  filter,
-  showDurations,
-  onJump,
+/**
+ * The agent's streamed checklist — the live half of the panel. Renders whenever
+ * todos exist, in every plan status, so execution is never invisible. Search and
+ * filter come from the toolbar above; the checkpoint footer is opt-in via
+ * `agent.plan.showCheckpointsOnTasks` and links to the point in the Git panel
+ * where a run can actually be rolled back.
+ */
+function LiveProgress({
+  sessionId,
+  tasks,
+  search = '',
+  filter = 'all',
 }: {
-  phases: OutlinePhase[];
-  collapsed: Record<string, boolean>;
-  onToggle: (id: string) => void;
-  search: string;
-  filter: TaskFilter;
-  showDurations: boolean;
-  onJump: (tab: 'changes' | 'terminal' | 'activity') => void;
+  sessionId: string | null;
+  tasks: TaskItem[];
+  search?: string;
+  filter?: TaskFilter;
 }) {
-  const q = search.trim().toLowerCase();
-  const matches = (t: OutlineTask): boolean => {
-    if (filter === 'pending' && t.status === 'completed') return false;
-    if (filter === 'done' && t.status !== 'completed') return false;
-    if (q && !t.title.toLowerCase().includes(q) && !t.notes.some((n) => n.toLowerCase().includes(q))) {
-      return false;
-    }
-    return true;
-  };
-
-  const visible = phases
-    .map((p) => ({ ...p, tasks: p.tasks.filter(matches) }))
-    .filter((p) => p.tasks.length > 0);
-
-  if (visible.length === 0) {
-    return <p className="px-1 py-2 text-[12px] text-faint">No tasks match the current filter.</p>;
-  }
-
-  return (
-    <div className="flex flex-col gap-2">
-      {visible.map((phase) => {
-        const done = phase.tasks.filter((t) => t.status === 'completed').length;
-        const isCollapsed = collapsed[phase.id];
-        return (
-          <div key={phase.id} className="rounded-md border border-line bg-surface-2/40">
-            <button
-              type="button"
-              onClick={() => onToggle(phase.id)}
-              className="flex w-full items-center gap-1.5 px-2 py-1.5 text-left"
-            >
-              {isCollapsed ? (
-                <ChevronRight size={12} className="text-faint" />
-              ) : (
-                <ChevronDown size={12} className="text-faint" />
-              )}
-              <ListChecks size={12} className="text-muted" />
-              <span className="min-w-0 flex-1 truncate text-[12px] font-medium text-fg">
-                {phase.title}
-              </span>
-              <span className="shrink-0 text-[10.5px] font-medium text-faint">
-                {done}/{phase.tasks.length}
-              </span>
-            </button>
-            {!isCollapsed && (
-              <ul className="flex flex-col gap-0.5 border-t border-line px-1.5 py-1">
-                {phase.tasks.map((task) => (
-                  <TaskRow key={task.id} task={task} showDurations={showDurations} onJump={onJump} />
-                ))}
-              </ul>
-            )}
-          </div>
-        );
-      })}
-    </div>
+  const showCheckpoints = useSettingsStore((s) => s.settings.agent.plan.showCheckpointsOnTasks);
+  const checkpoints = useGitStore((s) => s.checkpoints);
+  const mine = useMemo(
+    () => (sessionId ? checkpoints.filter((c) => c.sessionId === sessionId).length : 0),
+    [checkpoints, sessionId],
   );
-}
 
-const EXEC_LABEL: Record<TaskExecStatus, string> = {
-  pending: 'Pending',
-  active: 'Active',
-  completed: 'Completed',
-  waiting: 'Waiting for approval',
-  failed: 'Failed',
-};
+  const q = search.trim().toLowerCase();
+  const visible = useMemo(
+    () =>
+      tasks.filter((t) => {
+        const status = t.status ?? (t.done ? 'completed' : 'pending');
+        const done = status === 'completed' || t.done;
+        if (filter === 'pending' && done) return false;
+        if (filter === 'done' && !done) return false;
+        if (q && !t.label.toLowerCase().includes(q)) return false;
+        return true;
+      }),
+    [tasks, filter, q],
+  );
 
-function TaskRow({
-  task,
-  showDurations,
-  onJump,
-}: {
-  task: OutlineTask;
-  showDurations: boolean;
-  onJump: (tab: 'changes' | 'terminal' | 'activity') => void;
-}) {
-  const [open, setOpen] = useState(false);
-  const hasDetail = task.notes.length > 0 || task.files.length > 0;
+  if (tasks.length === 0) return null;
+
+  const done = tasks.filter((t) => t.done || t.status === 'completed').length;
+
   return (
-    <li className="rounded-md">
-      <div className="flex items-start gap-2 px-1 py-1">
-        <ExecMark status={task.status} />
+    <div className="flex flex-col gap-1.5">
+      <div className="flex items-center justify-between text-[10px] font-medium uppercase tracking-wider text-faint">
+        <span>Live progress</span>
+        <span>
+          {done}/{tasks.length}
+        </span>
+      </div>
+      {visible.length === 0 ? (
+        <p className="px-1 py-2 text-[12px] text-faint">No tasks match the current filter.</p>
+      ) : (
+        <ul className="flex flex-col gap-0.5">
+          {visible.map((task) => {
+            const status = task.status ?? (task.done ? 'completed' : 'pending');
+            return (
+              <li key={task.id} className="flex items-start gap-2 rounded-md px-1 py-1">
+                <ExecMark status={status === 'in_progress' ? 'active' : status} />
+                <span
+                  className={cn(
+                    'text-[12px] leading-snug',
+                    status === 'completed' && 'text-faint line-through',
+                    status === 'in_progress' && 'text-fg',
+                    status === 'pending' && 'text-muted',
+                  )}
+                >
+                  {task.label}
+                </span>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+      {showCheckpoints && mine > 0 && (
         <button
           type="button"
-          onClick={() => hasDetail && setOpen((v) => !v)}
-          className={cn(
-            'min-w-0 flex-1 text-left text-[12px] leading-snug',
-            task.status === 'completed' && 'text-faint line-through',
-            task.status === 'active' && 'text-fg',
-            task.status === 'waiting' && 'text-warning',
-            task.status === 'failed' && 'text-danger',
-            task.status === 'pending' && 'text-muted',
-          )}
+          onClick={() => useLayoutStore.getState().setActiveTab('git')}
+          className="self-start px-1 text-[10.5px] text-faint transition-colors hover:text-accent"
         >
-          <span className="mr-1 text-faint">{task.order}.</span>
-          {task.title}
-          {ACTIVE_STATES.has(task.status) && (
-            <span className="ml-1.5 text-[10px] font-medium uppercase tracking-wide text-faint">
-              {EXEC_LABEL[task.status]}
-            </span>
-          )}
+          {mine} checkpoint{mine === 1 ? '' : 's'} captured — review or roll back
         </button>
-        {hasDetail && (
-          <button
-            type="button"
-            onClick={() => setOpen((v) => !v)}
-            className="mt-0.5 shrink-0 text-faint transition-colors hover:text-muted"
-            aria-label={open ? 'Collapse task' : 'Expand task'}
-          >
-            {open ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
-          </button>
-        )}
-      </div>
-      {open && hasDetail && (
-        <div className="ml-6 flex flex-col gap-1.5 pb-1.5 pr-1">
-          {task.notes.length > 0 && (
-            <ul className="flex flex-col gap-0.5">
-              {task.notes.map((n, i) => (
-                <li key={i} className="text-[11.5px] leading-snug text-muted">
-                  · {n}
-                </li>
-              ))}
-            </ul>
-          )}
-          {task.files.length > 0 && (
-            <div className="flex flex-wrap items-center gap-1">
-              {task.files.map((f) => (
-                <span
-                  key={f}
-                  className="rounded border border-line bg-surface-2 px-1.5 py-0.5 font-mono text-[10.5px] text-muted"
-                  title={f}
-                >
-                  {f}
-                </span>
-              ))}
-            </div>
-          )}
-          <div className="flex items-center gap-2 text-[10.5px]">
-            <button type="button" onClick={() => onJump('changes')} className="text-accent hover:underline">
-              Jump to changes
-            </button>
-            <button type="button" onClick={() => onJump('terminal')} className="text-accent hover:underline">
-              Terminal
-            </button>
-            <button type="button" onClick={() => onJump('activity')} className="text-accent hover:underline">
-              Activity
-            </button>
-            {showDurations && task.status === 'completed' && (
-              <span className="ml-auto text-faint">done</span>
-            )}
-          </div>
-        </div>
       )}
-    </li>
+    </div>
   );
 }
 
@@ -534,7 +387,7 @@ function ExecMark({ status }: { status: TaskExecStatus }) {
   if (status === 'active' || status === 'waiting') {
     return (
       <span className="mt-0.5 flex h-3.5 w-3.5 shrink-0 items-center justify-center">
-        <Spinner size={12} />
+        <HelixLoader size={12} label="Running" />
       </span>
     );
   }
@@ -637,44 +490,6 @@ function HistorySection({ sessionId, plan }: { sessionId: string; plan: SessionP
           {compare.markdown}
         </pre>
       )}
-    </div>
-  );
-}
-
-/* ------------------------------------------------------------------ */
-/* Shared bits                                                         */
-/* ------------------------------------------------------------------ */
-
-function TaskChecklist({ tasks, title = 'Checklist' }: { tasks: TaskItem[]; title?: string }) {
-  const done = tasks.filter((t) => t.done).length;
-  return (
-    <div className="flex flex-col gap-1.5">
-      <div className="flex items-center justify-between text-[10px] font-medium uppercase tracking-wider text-faint">
-        <span>{title}</span>
-        <span>
-          {done}/{tasks.length}
-        </span>
-      </div>
-      <ul className="flex flex-col gap-0.5">
-        {tasks.map((task) => {
-          const status = task.status ?? (task.done ? 'completed' : 'pending');
-          return (
-            <li key={task.id} className="flex items-start gap-2 rounded-md px-1 py-1">
-              <ExecMark status={status === 'in_progress' ? 'active' : status} />
-              <span
-                className={cn(
-                  'text-[12px] leading-snug',
-                  status === 'completed' && 'text-faint line-through',
-                  status === 'in_progress' && 'text-fg',
-                  status === 'pending' && 'text-muted',
-                )}
-              >
-                {task.label}
-              </span>
-            </li>
-          );
-        })}
-      </ul>
     </div>
   );
 }

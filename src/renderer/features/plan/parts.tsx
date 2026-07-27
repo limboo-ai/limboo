@@ -1,8 +1,10 @@
 /**
  * Shared plan pieces, used by BOTH surfaces the plan renders on:
  *
- *   • {@link PlanCard} — inline in the conversation stream (the primary view)
- *   • `activity/PlanPanel` — the Tasks drawer (the maximized view)
+ *   • `plan/PlanInline` — inline rows in the conversation stream (live planning
+ *     milestones, the ready proposal + approval, one settled line after that)
+ *   • `activity/PlanPanel` — the Tasks drawer: the plan document + live progress,
+ *     and the canonical execution surface once a plan is approved
  *
  * Extracted so the two can never drift on what "approve" means or how a plan's
  * status reads. Presentational + pure helpers only — no store subscriptions
@@ -12,6 +14,7 @@ import { useEffect, useState } from 'react';
 import { CheckCircle2 } from 'lucide-react';
 import type { PlanMeta, PlanStatus, SessionPermissionMode, SessionPlan } from '@shared/types';
 import { cn } from '@/renderer/lib/cn';
+import { downloadText, slugify as slugifyText } from '@/renderer/lib/download';
 import { outlineToJson, type PlanOutline } from '@/renderer/lib/planOutline';
 import { useUIStore } from '@/renderer/stores/useUIStore';
 import { useAgentStore } from '@/renderer/stores/useAgentStore';
@@ -76,16 +79,26 @@ export function usePlanActions(
  * published to the renderer from inside that run, so the controls appear a beat
  * before the session is actually idle; acting in that window used to fail with
  * "the agent is already working on this session".
+ *
+ * `variant` is presentation only — both surfaces run the same approve path, the
+ * same secondary-confirm rule and the same busy guard, which is the entire
+ * reason this component lives here rather than in each surface:
+ *
+ *   • `panel`  — the Tasks drawer: an accent block with full-weight buttons.
+ *   • `inline` — the conversation stream: borderless text controls that read as
+ *                a continuation of the transcript, not a card docked in it.
  */
 export function ApprovalControls({
   settings,
   busy = false,
+  variant = 'panel',
   onApprove,
   onRegenerate,
   onReject,
 }: {
   settings: { requireSecondaryConfirm: boolean };
   busy?: boolean;
+  variant?: 'panel' | 'inline';
   onApprove: (mode: SessionPermissionMode) => void;
   onRegenerate: () => void;
   onReject: () => void;
@@ -114,6 +127,45 @@ export function ApprovalControls({
   };
 
   const DISABLED = 'disabled:cursor-not-allowed disabled:opacity-50';
+
+  if (variant === 'inline') {
+    return (
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[12px]">
+        <button
+          type="button"
+          disabled={busy}
+          onClick={() => approve('default')}
+          className={cn('font-semibold text-accent transition-opacity hover:opacity-80', DISABLED)}
+        >
+          {confirming === 'default' ? 'Confirm — start now' : 'Approve'}
+        </button>
+        <button
+          type="button"
+          disabled={busy}
+          onClick={() => approve('acceptEdits')}
+          className={cn('text-accent transition-opacity hover:opacity-80', DISABLED)}
+        >
+          {confirming === 'acceptEdits' ? 'Confirm — accept edits' : 'Approve & accept edits'}
+        </button>
+        <button
+          type="button"
+          disabled={busy}
+          onClick={regenerate}
+          className={cn('text-muted transition-colors hover:text-fg', DISABLED)}
+        >
+          Keep planning
+        </button>
+        <button
+          type="button"
+          onClick={onReject}
+          className="text-faint transition-colors hover:text-danger"
+        >
+          Reject
+        </button>
+        {busy && <span className="text-faint">finishing the planning run…</span>}
+      </div>
+    );
+  }
 
   return (
     <div className="flex flex-col gap-2 rounded-md border border-accent/40 bg-accent/10 px-3 py-2.5">
@@ -203,28 +255,12 @@ export function PlanMetaRow({ meta, highlightRisk }: { meta: PlanMeta; highlight
 /* helpers                                                             */
 /* ------------------------------------------------------------------ */
 
+/** Plan-flavoured {@link slugifyText} — same rule, `plan` as the fallback stem. */
 export function slugify(s: string): string {
-  return (
-    s
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, '-')
-      .replace(/^-+|-+$/g, '')
-      .slice(0, 60) || 'plan'
-  );
+  return slugifyText(s, 'plan');
 }
 
-/** Trigger a client-side file download for the given text (no fs / IPC needed). */
-export function downloadText(filename: string, text: string): void {
-  const blob = new Blob([text], { type: 'text/plain;charset=utf-8' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = filename;
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  URL.revokeObjectURL(url);
-}
+export { downloadText };
 
 /**
  * Print just the plan via an offscreen iframe. A new BrowserWindow is denied by

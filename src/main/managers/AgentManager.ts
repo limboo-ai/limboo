@@ -41,6 +41,8 @@ import type {
   ClarificationOption,
   ClarificationQuestion,
   ClarificationRequest,
+  ConversationRevertPreview,
+  ConversationRevertResult,
   DiagnosticCategory,
   DiagnosticSeverity,
   FileChange,
@@ -523,6 +525,13 @@ interface ActiveRun {
   result?: { ok: boolean; text: string };
   /** Set true once an ExitPlanMode plan was captured (suppresses the failure throw). */
   planCaptured?: boolean;
+  /** Set once this run has taken its single automatic pre-write checkpoint. */
+  checkpointed?: boolean;
+  /**
+   * The user message that opened this run. Rides onto the automatic checkpoint
+   * so a checkpoint is addressable by the turn it guards, not just by time.
+   */
+  userMessageId?: string;
   /** Attachments riding this turn (manifest + vision blocks; reused on retry). */
   attachmentIds?: string[];
   /**
@@ -933,14 +942,20 @@ export class AgentManager {
    */
   private maybeAutoCheckpoint(sessionId: string): void {
     if (!this.git) return;
-    const run = this.runs.get(sessionId) as { checkpointed?: boolean } | undefined;
+    const run = this.runs.get(sessionId);
     if (!run || run.checkpointed) return;
     run.checkpointed = true;
     if (!this.settings.getAll().git.autoCheckpoint) return;
     const ws = this.workspace.getActive();
     if (!ws) return;
     void this.git
-      .createCheckpoint(ws.id, sessionId, 'Before agent changes', { auto: true })
+      // Anchored to the user turn that started this run: it is what lets the
+      // conversation offer "revert to before this message" without asking the
+      // user to match a timestamp against a list of checkpoints.
+      .createCheckpoint(ws.id, sessionId, 'Before agent changes', {
+        auto: true,
+        messageId: run.userMessageId,
+      })
       .then((cp) => {
         if (cp) {
           this.pushActivity(sessionId, 'status', 'Created checkpoint', cp.label, 'info');
@@ -1363,6 +1378,185 @@ export class AgentManager {
     }
   }
 
+  /* ---------------------------------------------------------------- */
+  /* Conversation revert                                              */
+  /* ---------------------------------------------------------------- */
+
+  /**
+   * Look up the anchor a revert to `messageId` would use, without touching
+   * anything. Everything the confirmation dialog states is measured here — a
+   * revert is close enough to irreversible that the user must be told the real
+   * numbers, not an estimate.
+   */
+  async revertPreview(sessionId: string, messageId: string): Promise<ConversationRevertPreview> {
+    const base: ConversationRevertPreview = {
+      sessionId,
+      messageId,
+      checkpoint: null,
+      messagesDropped: 0,
+      activityDropped: 0,
+      filesReverted: 0,
+      filesRemoved: 0,
+      resetsProviderSession: false,
+    };
+    if (this.runs.has(sessionId)) {
+      return { ...base, blocked: 'The agent is still working on this session.' };
+    }
+    const db = getDb();
+    const row = db
+      .prepare('SELECT created_at FROM agent_messages WHERE id = ? AND session_id = ?')
+      .get(messageId, sessionId) as { created_at: number } | undefined;
+    if (!row) return { ...base, blocked: 'That message is no longer in this session.' };
+
+    const messagesDropped = (
+      db
+        .prepare('SELECT COUNT(*) AS n FROM agent_messages WHERE session_id = ? AND created_at > ?')
+        .get(sessionId, row.created_at) as { n: number }
+    ).n;
+    const activityDropped = (
+      db
+        .prepare('SELECT COUNT(*) AS n FROM agent_activity WHERE session_id = ? AND created_at > ?')
+        .get(sessionId, row.created_at) as { n: number }
+    ).n;
+    const resetsProviderSession =
+      (
+        db
+          .prepare('SELECT COUNT(*) AS n FROM agent_provider_sessions WHERE session_id = ?')
+          .get(sessionId) as { n: number }
+      ).n > 0;
+
+    const checkpoint = this.git?.checkpointForMessage(sessionId, messageId, row.created_at) ?? null;
+    if (!checkpoint) {
+      return {
+        ...base,
+        messagesDropped,
+        activityDropped,
+        resetsProviderSession,
+        blocked:
+          'No checkpoint guards this turn, so the repository cannot be restored. Enable automatic checkpoints in Settings › Git.',
+      };
+    }
+    // Measure the repository side against the same diff the restore will act on,
+    // so the dialog's numbers are the operation's numbers rather than a guess.
+    // "added" here means "appeared since the checkpoint", i.e. what gets removed.
+    let filesReverted = 0;
+    let filesRemoved = 0;
+    try {
+      const counts = await this.git?.previewRestore(checkpoint.workspaceId, checkpoint.id);
+      filesReverted = counts?.filesReverted ?? 0;
+      filesRemoved = counts?.filesRemoved ?? 0;
+    } catch (err) {
+      logger.warn('revertPreview: could not measure the checkpoint', err);
+    }
+
+    return {
+      ...base,
+      checkpoint,
+      messagesDropped,
+      activityDropped,
+      resetsProviderSession,
+      filesReverted,
+      filesRemoved,
+    };
+  }
+
+  /**
+   * Roll the session back to just before `messageId`.
+   *
+   * This is a SESSION-level rollback, not a git revert: it restores the
+   * repository from the checkpoint that guards the turn, truncates the
+   * transcript after it, and invalidates the provider resume token so the next
+   * prompt opens a conversation that matches the repository again — leaving the
+   * agent "remembering" work that no longer exists is the failure mode that
+   * makes a half-revert worse than none.
+   *
+   * Nothing is erased from the audit trail: checkpoints are kept (including the
+   * safety checkpoint the restore takes of the pre-revert state), and the revert
+   * itself is recorded as a new immutable timeline event.
+   *
+   * Provider-neutral by construction — `agent_provider_sessions` is keyed by
+   * provider, so one delete covers Claude and Cursor alike.
+   */
+  async revertToMessage(sessionId: string, messageId: string): Promise<ConversationRevertResult> {
+    const preview = await this.revertPreview(sessionId, messageId);
+    const git = this.git;
+    if (preview.blocked || !preview.checkpoint || !git) {
+      return {
+        ok: false,
+        messagesDropped: 0,
+        activityDropped: 0,
+        error: preview.blocked ?? 'Nothing to revert to.',
+      };
+    }
+    const checkpoint = preview.checkpoint;
+
+    const restore = await git.restoreCheckpoint(checkpoint.workspaceId, checkpoint.id);
+    if (!restore.ok) {
+      return {
+        ok: false,
+        messagesDropped: 0,
+        activityDropped: 0,
+        error: restore.error ?? 'The repository could not be restored.',
+      };
+    }
+
+    const db = getDb();
+    const at = (
+      db.prepare('SELECT created_at FROM agent_messages WHERE id = ?').get(messageId) as {
+        created_at: number;
+      }
+    ).created_at;
+
+    // Truncate forward conversation state. Checkpoints and diagnostics are NOT
+    // touched — they are the record of what happened, which a rollback adds to
+    // rather than rewrites.
+    const truncate = db.transaction(() => {
+      db.prepare('DELETE FROM agent_messages WHERE session_id = ? AND created_at > ?').run(
+        sessionId,
+        at,
+      );
+      db.prepare('DELETE FROM agent_activity WHERE session_id = ? AND created_at > ?').run(
+        sessionId,
+        at,
+      );
+      db.prepare('DELETE FROM agent_provider_sessions WHERE session_id = ?').run(sessionId);
+      db.prepare('DELETE FROM agent_session_meta WHERE session_id = ?').run(sessionId);
+      // A plan captured after the anchor describes work that no longer exists.
+      db.prepare('DELETE FROM agent_plans WHERE session_id = ? AND created_at > ?').run(
+        sessionId,
+        at,
+      );
+    });
+    truncate();
+
+    // In-memory runtime state (tool rows, tasks, live changes) belongs to the
+    // truncated turns; dropping it lets the next snapshot rebuild cleanly.
+    this.runtimes.delete(sessionId);
+
+    const detail =
+      `${restore.filesReverted} file${restore.filesReverted === 1 ? '' : 's'} restored` +
+      (restore.filesRemoved > 0 ? `, ${restore.filesRemoved} removed` : '') +
+      `, ${preview.messagesDropped} message${preview.messagesDropped === 1 ? '' : 's'} dropped`;
+    this.pushActivity(
+      sessionId,
+      'status',
+      `Reverted to checkpoint — ${checkpoint.label}`,
+      detail.slice(0, ACTIVITY_LIMITS.detailMax),
+      'warning',
+    );
+
+    // Re-anchor the resume snapshot: the repository just moved under it, and a
+    // stale anchor would make the next activation report a phantom delta.
+    this.resume?.onCheckpointCreated(sessionId);
+
+    return {
+      ok: true,
+      restore,
+      messagesDropped: preview.messagesDropped,
+      activityDropped: preview.activityDropped,
+    };
+  }
+
   /** Forget a session entirely (transcript, activity, runtime state). */
   clearSession(sessionId: string): void {
     this.stop(sessionId);
@@ -1676,6 +1870,7 @@ export class AgentManager {
       settled,
       mode: isPlan ? 'plan' : 'implement',
       attachmentIds: attachmentIds && attachmentIds.length > 0 ? attachmentIds : undefined,
+      userMessageId: userMsg.id,
     });
     this.clearIdleTimer();
     this.setRequest(sessionId, {

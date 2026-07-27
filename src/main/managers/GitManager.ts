@@ -23,6 +23,7 @@ import type Database from 'better-sqlite3';
 import { IpcEvents } from '@shared/ipc-channels';
 import { GIT_LIMITS } from '@shared/constants';
 import type {
+  CheckpointRestoreResult,
   GitBlameLine,
   GitBranch,
   GitCheckoutResult,
@@ -676,6 +677,69 @@ export class GitManager {
   /* ------------------------------------------------------------ checkpoints */
 
   /**
+   * Write a tree object describing the FULL current working state — tracked
+   * changes and untracked files alike, `.gitignore` respected — using a
+   * throwaway index so the user's real index and worktree are never touched.
+   *
+   * This is the primitive every checkpoint comparison depends on. Only a tree
+   * built this way can be compared against a checkpoint tree to see untracked
+   * files: `git diff <commit>` consults the INDEX, so a file the agent created
+   * and never staged is invisible to it. Writing loose objects into `.git` is
+   * the only side effect — no ref, no commit, no row — so it is safe on a
+   * read-only path like the revert preview.
+   */
+  private async snapshotTree(root: string, tmpIndex: string): Promise<string | null> {
+    const env = { GIT_INDEX_FILE: tmpIndex };
+    const head = await gitText(root, ['rev-parse', '--verify', 'HEAD']);
+    if (head) await runGit(root, ['read-tree', 'HEAD'], { env });
+    const add = await runGit(root, ['add', '-A'], { env });
+    if (!add.ok) return null;
+    const treeRes = await runGit(root, ['write-tree'], { env });
+    return treeRes.ok ? treeRes.stdout.trim() : null;
+  }
+
+  /**
+   * What restoring `checkpointId` WOULD change, measured without touching
+   * anything. Same tree-to-tree comparison the restore itself performs, so the
+   * confirmation the user reads is the operation's own arithmetic.
+   */
+  async previewRestore(
+    workspaceId: string,
+    checkpointId: string,
+  ): Promise<{ filesReverted: number; filesRemoved: number }> {
+    const none = { filesReverted: 0, filesRemoved: 0 };
+    const root = await this.resolveRoot(workspaceId);
+    const cp = this.checkpointById(checkpointId);
+    if (!root || !cp) return none;
+    const tmpIndex = path.join(os.tmpdir(), `limboo-preview-${crypto.randomUUID()}.index`);
+    try {
+      const now = await this.snapshotTree(root, tmpIndex);
+      if (!now) return none;
+      const changed = await runGit(root, [
+        'diff',
+        '--name-status',
+        '-r',
+        '-z',
+        cp.commit,
+        now,
+      ]);
+      if (!changed.ok) return none;
+      const entries = parseNameStatus(changed.stdout);
+      const removed = entries.filter((f) => f.status === 'added').length;
+      return { filesReverted: entries.length - removed, filesRemoved: removed };
+    } catch (err) {
+      logger.warn('previewRestore failed', err);
+      return none;
+    } finally {
+      try {
+        if (fs.existsSync(tmpIndex)) fs.unlinkSync(tmpIndex);
+      } catch {
+        /* temp index cleanup is best-effort */
+      }
+    }
+  }
+
+  /**
    * Snapshot the working tree as a dedicated ref (no branch, never pushed). Uses
    * a throwaway temp index so the user's real index and worktree are untouched.
    */
@@ -693,13 +757,8 @@ export class GitManager {
     const env = { GIT_INDEX_FILE: tmpIndex };
     try {
       const head = await gitText(root, ['rev-parse', '--verify', 'HEAD']);
-      if (head) await runGit(root, ['read-tree', 'HEAD'], { env });
-      const add = await runGit(root, ['add', '-A'], { env });
-      if (!add.ok) throw new Error(add.stderr || 'git add (checkpoint) failed');
-
-      const treeRes = await runGit(root, ['write-tree'], { env });
-      if (!treeRes.ok) throw new Error(treeRes.stderr || 'git write-tree failed');
-      const tree = treeRes.stdout.trim();
+      const tree = await this.snapshotTree(root, tmpIndex);
+      if (!tree) throw new Error('git write-tree failed');
 
       const commitArgs = ['commit-tree', tree, '-m', `[limboo checkpoint] ${label}`];
       if (head) commitArgs.push('-p', head);
@@ -780,31 +839,199 @@ export class GitManager {
     return rows.map(rowToCheckpoint);
   }
 
-  /** Files changed between a checkpoint and the current working tree. */
+  /**
+   * The checkpoint that guards a given user turn.
+   *
+   * Prefers the one the run explicitly anchored to `messageId`; falls back to
+   * the newest checkpoint taken at or before the message, which covers sessions
+   * whose checkpoints predate message anchoring and runs where the agent wrote
+   * before the anchor was recorded. Returns null when there is nothing to
+   * restore — callers must refuse the revert rather than pick something near.
+   */
+  checkpointForMessage(sessionId: string, messageId: string, at: number): GitCheckpoint | null {
+    const anchored = this.db
+      .prepare(
+        'SELECT * FROM git_checkpoints WHERE session_id = ? AND message_id = ? ORDER BY created_at DESC LIMIT 1',
+      )
+      .get(sessionId, messageId) as CheckpointRow | undefined;
+    if (anchored) return rowToCheckpoint(anchored);
+    const nearest = this.db
+      .prepare(
+        'SELECT * FROM git_checkpoints WHERE session_id = ? AND created_at <= ? ORDER BY created_at DESC LIMIT 1',
+      )
+      .get(sessionId, at) as CheckpointRow | undefined;
+    return nearest ? rowToCheckpoint(nearest) : null;
+  }
+
+  /**
+   * Files changed between a checkpoint and the current working tree.
+   *
+   * Measured TREE-TO-TREE against a snapshot of now, for the reason spelled out
+   * on {@link snapshotTree}: `git diff <commit>` compares against the INDEX, so
+   * every file the agent created and never staged was missing from this list —
+   * the panel under-reported exactly the changes a user most wants to see.
+   *
+   * This view is read as a preview of what a restore would undo, so it has to be
+   * the same arithmetic {@link restoreCheckpoint} performs, over the same kind of
+   * tree. `added` here means "present now, absent at the checkpoint" — the paths
+   * a restore would delete.
+   */
   async diffCheckpoint(workspaceId: string, checkpointId: string): Promise<GitFileChange[]> {
     const root = await this.requireRoot(workspaceId);
     const cp = this.checkpointById(checkpointId);
     if (!cp) return [];
-    const res = await runGit(root, ['diff', '--name-status', '-r', '-z', cp.commit]);
-    return parseNameStatus(res.stdout).map((f) => ({ ...f, staged: false, unstaged: true }));
+    const tmpIndex = path.join(os.tmpdir(), `limboo-cpdiff-${crypto.randomUUID()}.index`);
+    try {
+      const now = await this.snapshotTree(root, tmpIndex);
+      if (!now) return [];
+      const res = await runGit(root, ['diff', '--name-status', '-r', '-z', cp.commit, now]);
+      if (!res.ok) return [];
+      return parseNameStatus(res.stdout).map((f) => ({ ...f, staged: false, unstaged: true }));
+    } catch (err) {
+      logger.warn('diffCheckpoint failed', err);
+      return [];
+    } finally {
+      try {
+        if (fs.existsSync(tmpIndex)) fs.unlinkSync(tmpIndex);
+      } catch {
+        /* temp index cleanup is best-effort */
+      }
+    }
   }
 
   /**
-   * Restore the working tree to a checkpoint. Auto-creates a safety checkpoint of
-   * the current state first, so a restore is itself recoverable. Note: files
-   * created *after* the checkpoint are not deleted (tracked files are reverted).
+   * Restore the working tree to a checkpoint — a TRUE tree reset.
+   *
+   * `git restore --source` rewinds the contents of paths that exist in the
+   * checkpoint, but says nothing about paths that do not: a file the agent
+   * CREATED after the checkpoint survived every restore, so "undo what just
+   * happened" reliably left orphans behind.
+   *
+   * Finding those paths is the subtle part. `git diff <commit>` compares the
+   * commit against the INDEX, so an untracked new file is invisible to it — the
+   * obvious `--diff-filter=A` against the working tree reports nothing at all
+   * (verified against real git). A checkpoint tree, though, is built with
+   * `add -A` in a temp index, so it contains untracked files too. The safety
+   * snapshot this method already takes is therefore a complete tree of NOW,
+   * built exactly the same way, and `diff <checkpoint> <safety>` is an exact
+   * TREE-TO-TREE comparison: it sees new untracked files at any depth, and it
+   * respects `.gitignore` on both sides for free.
+   *
+   * Deliberately NOT `git clean -fdx`: clean would also destroy untracked files
+   * that predate the checkpoint (scratch notes, local env files) and every
+   * ignored build directory. The blast radius is exactly the paths git can prove
+   * appeared after the checkpoint, each re-validated with {@link assertInsideRepo}
+   * before it is unlinked.
+   *
+   * The safety checkpoint doubles as the recovery point, so a restore is itself
+   * recoverable. If it cannot be taken, the restore is refused rather than run
+   * unmeasured and unrecoverable.
    */
-  async restoreCheckpoint(workspaceId: string, checkpointId: string): Promise<boolean> {
+  async restoreCheckpoint(
+    workspaceId: string,
+    checkpointId: string,
+  ): Promise<CheckpointRestoreResult> {
+    const empty: CheckpointRestoreResult = {
+      ok: false,
+      filesReverted: 0,
+      filesRemoved: 0,
+      head: null,
+      branch: null,
+      diverged: false,
+    };
     const root = await this.requireRoot(workspaceId);
     const cp = this.checkpointById(checkpointId);
-    if (!cp) return false;
-    await this.createCheckpoint(workspaceId, cp.sessionId, 'Before restore', { auto: true });
-    const res = await runGit(root, ['restore', '--source', cp.commit, '--staged', '--worktree', '--', '.']);
-    if (!res.ok) await runGit(root, ['checkout', cp.commit, '--', '.']);
+    if (!cp) return { ...empty, error: 'Checkpoint not found.' };
+
+    const safety = await this.createCheckpoint(workspaceId, cp.sessionId, 'Before restore', {
+      auto: true,
+    });
+    if (!safety) {
+      return {
+        ...empty,
+        error: 'Could not snapshot the current state, so the restore was not attempted.',
+      };
+    }
+
+    // Measure BEFORE touching anything, tree-to-tree (see the note above).
+    const changed = await runGit(root, [
+      'diff',
+      '--name-status',
+      '-r',
+      '-z',
+      cp.commit,
+      safety.commit,
+    ]);
+    const entries = changed.ok ? parseNameStatus(changed.stdout) : [];
+    // "added" = present now, absent at the checkpoint → must be removed to
+    // complete the reset. Everything else is content the restore rewinds.
+    const added = entries.filter((f) => f.status === 'added').map((f) => f.path);
+    const reverted = entries.length - added.length;
+
+    const res = await runGit(root, [
+      'restore',
+      '--source',
+      cp.commit,
+      '--staged',
+      '--worktree',
+      '--',
+      '.',
+    ]);
+    if (!res.ok) {
+      const fallback = await runGit(root, ['checkout', cp.commit, '--', '.']);
+      if (!fallback.ok) {
+        return { ...empty, error: fallback.stderr || res.stderr || 'git restore failed' };
+      }
+    }
+
+    let filesRemoved = 0;
+    const emptied = new Set<string>();
+    for (const rel of added) {
+      try {
+        // Never trust the path back into the filesystem unguarded, even though
+        // it came from git: this is the one place the restore deletes.
+        const safe = assertInsideRepo(root, rel);
+        if (safe.split('/').includes('.git')) continue;
+        await fs.promises.rm(path.join(root, safe), { force: true });
+        filesRemoved += 1;
+        const dir = path.posix.dirname(safe);
+        if (dir && dir !== '.') emptied.add(dir);
+      } catch (err) {
+        logger.warn(`restoreCheckpoint: could not remove ${rel}`, err);
+      }
+    }
+    // Directories the agent created only to hold those files would otherwise be
+    // left behind empty. Deepest-first, and only while genuinely empty — an
+    // rmdir on a non-empty directory fails, which is exactly the guard we want.
+    for (const dir of [...emptied].sort((a, b) => b.length - a.length)) {
+      let current = dir;
+      while (current && current !== '.') {
+        try {
+          await fs.promises.rmdir(path.join(root, assertInsideRepo(root, current)));
+        } catch {
+          break; // not empty, or gone — either way stop climbing.
+        }
+        current = path.posix.dirname(current);
+      }
+    }
+
+    const head = await gitText(root, ['rev-parse', '--verify', 'HEAD']);
+    const branch = await gitText(root, ['rev-parse', '--abbrev-ref', 'HEAD']);
+    const parent = await gitText(root, ['rev-parse', '--verify', `${cp.commit}^`]);
+
     this.notifyChanged(workspaceId);
     this.notifyCheckpoints(cp.sessionId);
     this.graph?.onCheckpoint(cp.sessionId, cp, 'restore');
-    return true;
+    return {
+      ok: true,
+      filesReverted: reverted,
+      filesRemoved,
+      head: head || null,
+      branch: branch && branch !== 'HEAD' ? branch : null,
+      // The checkpoint commit is parented on the HEAD of its moment, so HEAD
+      // having moved on since means history advanced under the restore.
+      diverged: !!head && !!parent && head !== parent,
+    };
   }
 
   async deleteCheckpoint(workspaceId: string, checkpointId: string): Promise<void> {
@@ -817,10 +1044,17 @@ export class GitManager {
     this.graph?.onCheckpoint(cp.sessionId, cp, 'delete');
   }
 
-  private checkpointById(id: string): CheckpointRow | undefined {
-    return this.db.prepare('SELECT * FROM git_checkpoints WHERE id = ?').get(id) as
+  /**
+   * Returns the decoded {@link GitCheckpoint}, not the raw row. Every caller
+   * reads `commit`/`sessionId` and the Work Graph sink is typed on
+   * `GitCheckpoint`, so handing back the row shape (`commit_hash`/`session_id`)
+   * silently produced `undefined` argv and `undefined` session ids.
+   */
+  private checkpointById(id: string): GitCheckpoint | undefined {
+    const row = this.db.prepare('SELECT * FROM git_checkpoints WHERE id = ?').get(id) as
       | CheckpointRow
       | undefined;
+    return row ? rowToCheckpoint(row) : undefined;
   }
 
   /** Drop the oldest checkpoints for a session beyond the configured cap. */

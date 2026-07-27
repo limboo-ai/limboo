@@ -10,6 +10,7 @@ import { dialog } from 'electron';
 import { IpcChannels } from '@shared/ipc-channels';
 import { GIT_LIMITS } from '@shared/constants';
 import type {
+  CheckpointRestoreResult,
   GenerateCommitMessageResult,
   GitBlameLine,
   GitBranch,
@@ -365,7 +366,7 @@ export function registerGitHandlers(git: GitManager, agent: AgentManager): void 
     },
   );
 
-  handle<[string, string], boolean>(
+  handle<[string, string], CheckpointRestoreResult>(
     IpcChannels.gitCheckpointRestore,
     (_e, wsId, checkpointId) => {
       assertId(wsId, 'workspaceId');

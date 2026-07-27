@@ -22,6 +22,8 @@ import type {
   AgentState,
   ChatMessage,
   ClarificationRequest,
+  ConversationRevertPreview,
+  ConversationRevertResult,
   CursorAuthState,
   FileChange,
   PermissionRequest,
@@ -125,6 +127,13 @@ interface AgentStoreState {
   setPlanPinned: (sessionId: string, pinned: boolean) => void;
   listPlanRevisions: (sessionId: string) => Promise<PlanRevision[]>;
   restorePlanRevision: (sessionId: string, revisionId: string) => void;
+  /** Measure what reverting to a message would do. Mutates nothing. */
+  revertPreview: (
+    sessionId: string,
+    messageId: string,
+  ) => Promise<ConversationRevertPreview | null>;
+  /** Roll the session back to the checkpoint guarding a message. */
+  revertToMessage: (sessionId: string, messageId: string) => Promise<boolean>;
 }
 
 export const useAgentStore = create<AgentStoreState>((set, get) => {
@@ -640,6 +649,50 @@ export const useAgentStore = create<AgentStoreState>((set, get) => {
 
     restorePlanRevision: (sessionId, revisionId) => {
       void window.limboo?.agent?.restorePlanRevision?.(sessionId, revisionId);
+    },
+
+    revertPreview: async (sessionId, messageId) => {
+      const api = window.limboo?.agent;
+      if (!api?.revertPreview) return null;
+      try {
+        return await api.revertPreview(sessionId, messageId);
+      } catch {
+        return null;
+      }
+    },
+
+    revertToMessage: async (sessionId, messageId) => {
+      const api = window.limboo?.agent;
+      const toast = useUIStore.getState().addToast;
+      if (!api?.revertToMessage) return false;
+      let result: ConversationRevertResult;
+      try {
+        result = await api.revertToMessage(sessionId, messageId);
+      } catch (err) {
+        toast({
+          title: 'Could not revert',
+          description: err instanceof Error ? err.message : String(err),
+          tone: 'danger',
+        });
+        return false;
+      }
+      if (!result.ok) {
+        toast({ title: 'Could not revert', description: result.error, tone: 'danger' });
+        return false;
+      }
+      // The transcript was truncated in main; rehydrate rather than trying to
+      // reconcile the deletion locally.
+      await get().loadSession(sessionId);
+      const removed = result.restore?.filesRemoved ?? 0;
+      toast({
+        title: 'Reverted to checkpoint',
+        description:
+          `${result.restore?.filesReverted ?? 0} file(s) restored` +
+          (removed > 0 ? `, ${removed} removed` : '') +
+          `, ${result.messagesDropped} message(s) dropped.`,
+        tone: 'success',
+      });
+      return true;
     },
   };
 });

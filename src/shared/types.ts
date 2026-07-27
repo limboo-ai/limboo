@@ -170,12 +170,6 @@ export interface AppSettings {
     plan: {
       /** Composer default permission mode when a session has no remembered mode. */
       defaultMode: SessionPermissionMode;
-      /** Stream the task checklist incrementally as the plan is built. */
-      streamIncrementally: boolean;
-      /** Auto-expand newly generated task rows in the panel. */
-      autoExpandTasks: boolean;
-      /** Collapse completed tasks automatically during implementation. */
-      autoCollapseCompleted: boolean;
       /** Require a second confirmation click before execution begins. */
       requireSecondaryConfirm: boolean;
       /** Default format used by the plan Download action. */
@@ -186,9 +180,7 @@ export interface AppSettings {
       showReasoning: boolean;
       /** Highlight high-risk steps. */
       highlightRisk: boolean;
-      /** Show per-task execution durations once implementation runs. */
-      showTaskDurations: boolean;
-      /** Surface a Git-checkpoint hint next to tasks during execution. */
+      /** Surface a Git-checkpoint hint under Live progress during execution. */
       showCheckpointsOnTasks: boolean;
       /** Keep previous plan revisions so iterations can be compared/restored. */
       retainPlanHistory: boolean;
@@ -1331,9 +1323,69 @@ export interface GitCheckpoint {
   commit: string;
   label: string;
   auto: boolean;
+  /**
+   * The user turn this checkpoint guards — set on the automatic checkpoint the
+   * agent takes before its first repository mutation of a run. It is what makes
+   * "revert to this message" resolvable without asking the user to match a
+   * timestamp against a checkpoint list.
+   */
   messageId?: string;
   files: string[];
   createdAt: number;
+}
+
+/**
+ * What a checkpoint restore actually did.
+ *
+ * Restoring used to return a bare boolean, which could not distinguish "reverted
+ * eleven files" from "the ref was already the working tree" — and could not
+ * report the files it deleted, now that a restore is a true tree reset rather
+ * than a content-only revert.
+ */
+export interface CheckpointRestoreResult {
+  ok: boolean;
+  /** Files whose contents were rolled back to the checkpoint. */
+  filesReverted: number;
+  /** Files created after the checkpoint and therefore removed. */
+  filesRemoved: number;
+  /** HEAD after the restore (the restore never moves HEAD; this is for display). */
+  head: string | null;
+  branch: string | null;
+  /** True when HEAD moved between the checkpoint and now (commit / rebase / pull). */
+  diverged: boolean;
+  /** Set when the restore could not run; the workspace is untouched. */
+  error?: string;
+}
+
+/**
+ * What reverting the conversation to a message WOULD do — rendered verbatim in
+ * the confirmation before anything is touched. Every count is measured, never
+ * estimated; `checkpoint` is null when no recoverable anchor exists, and the
+ * revert is refused rather than approximated.
+ */
+export interface ConversationRevertPreview {
+  sessionId: string;
+  messageId: string;
+  checkpoint: GitCheckpoint | null;
+  /** Messages that would be dropped from the transcript (this one survives). */
+  messagesDropped: number;
+  /** Activity rows that would be dropped alongside them. */
+  activityDropped: number;
+  filesReverted: number;
+  filesRemoved: number;
+  /** True when the session's provider resume token would be invalidated. */
+  resetsProviderSession: boolean;
+  /** Why the revert is unavailable, when it is. */
+  blocked?: string;
+}
+
+/** The outcome of an executed conversation revert. */
+export interface ConversationRevertResult {
+  ok: boolean;
+  restore?: CheckpointRestoreResult;
+  messagesDropped: number;
+  activityDropped: number;
+  error?: string;
 }
 
 /* ------------------------------------------------------------------ */

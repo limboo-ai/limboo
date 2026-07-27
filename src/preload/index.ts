@@ -21,7 +21,10 @@ import type {
   AttachmentMeta,
   AttachmentProgress,
   ClarificationDecision,
+  CheckpointRestoreResult,
   ClarificationRequest,
+  ConversationRevertPreview,
+  ConversationRevertResult,
   CommandId,
   CursorAuthState,
   CursorUpdateResult,
@@ -293,6 +296,12 @@ const agentApi = {
     ipcRenderer.invoke(IpcChannels.agentListPlanRevisions, sessionId),
   restorePlanRevision: (sessionId: string, revisionId: string): Promise<void> =>
     ipcRenderer.invoke(IpcChannels.agentRestorePlanRevision, sessionId, revisionId),
+  /** Measure what a revert to `messageId` would do. Mutates nothing. */
+  revertPreview: (sessionId: string, messageId: string): Promise<ConversationRevertPreview> =>
+    ipcRenderer.invoke(IpcChannels.agentRevertPreview, sessionId, messageId),
+  /** Roll the session back to the checkpoint guarding `messageId`. */
+  revertToMessage: (sessionId: string, messageId: string): Promise<ConversationRevertResult> =>
+    ipcRenderer.invoke(IpcChannels.agentRevertToMessage, sessionId, messageId),
   clearSession: (sessionId: string): Promise<void> =>
     ipcRenderer.invoke(IpcChannels.agentClearSession, sessionId),
   getDiagnostics: (sessionId?: string | null): Promise<AgentDiagnostic[]> =>
@@ -514,7 +523,10 @@ const gitApi = {
     ipcRenderer.invoke(IpcChannels.gitCheckpointList, sessionId),
   checkpointDiff: (workspaceId: string, checkpointId: string): Promise<GitFileChange[]> =>
     ipcRenderer.invoke(IpcChannels.gitCheckpointDiff, workspaceId, checkpointId),
-  checkpointRestore: (workspaceId: string, checkpointId: string): Promise<boolean> =>
+  checkpointRestore: (
+    workspaceId: string,
+    checkpointId: string,
+  ): Promise<CheckpointRestoreResult> =>
     ipcRenderer.invoke(IpcChannels.gitCheckpointRestore, workspaceId, checkpointId),
   checkpointDelete: (workspaceId: string, checkpointId: string): Promise<void> =>
     ipcRenderer.invoke(IpcChannels.gitCheckpointDelete, workspaceId, checkpointId),

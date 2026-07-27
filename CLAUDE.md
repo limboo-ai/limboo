@@ -230,7 +230,13 @@ and the workspace floats above it as one detached card:
   active tab toggles the drawer closed (`activeTab` in the layout store, nullable);
   the center expands when it is closed.
 - **Sessions** render as flat **message-style rows** (status dot + title + meta),
-  not cards. The active row uses a left accent bar + `bg-surface-2`.
+  not cards. **Active state is the SEAT plus the TYPOGRAPHY** — `bg-surface-2` and
+  a `font-semibold` title — the same convention `DocumentTabs` / `WorktreeTabs`
+  use. There is **no accent bar, underline, or coloured strip anywhere in the
+  navigation layer**: `SettingsNav`, `ActivityRail`, the Git/Terminal sub-tabs and
+  the session list all say "selected" with seat, weight, and accent *icons*. Do
+  not reintroduce a strip — a third visual language for one idea is the thing this
+  rule exists to prevent.
 - **No mock data.** Every region starts EMPTY and renders an `EmptyState` (Phase 1
   has no git/agent yet). Sessions come from `useSessionStore` (empty by default);
   Files/Changes/Tasks/Activity are placeholder empty states until later phases.
@@ -737,6 +743,80 @@ nodes for free. Full doc: `docs/architecture/subsystems/work-graph.md`.
   Layout runs in a Web Worker; rows virtualize above
   `settings.graph.virtualizeThreshold`. Settings under the **Work Graph**
   category (`settings.graph`, bounds in `GRAPH_LIMITS`).
+
+### The conversation timeline: message actions + conversation revert
+
+Every block in the stream is actionable, and Plan Mode has exactly two surfaces.
+All of it is provider-neutral — nothing below reads which adapter produced the
+message.
+
+- **Message actions** (`features/workspace/MessageActions.tsx`) — an icon-only
+  toolbar on every user and assistant message, revealed by `group-hover` **and**
+  `focus-within` (a toolbar reachable only by mouse is not reachable). Copy,
+  Copy as Markdown, Quote, Reference in Prompt, Select Text, View Raw, Export,
+  Open in New Session, Pin to Memory, Regenerate, Revert. Active state is the
+  **accent icon**, never a strip (§4b).
+  - **`ChatMessage.text` is already Markdown** — both providers stream Markdown
+    source and the renderer only ever parses it for display. So
+    `lib/messageMarkdown.ts` returns the SOURCE; it never serializes rendered
+    DOM back into Markdown, which is where this feature usually loses fence
+    languages and table alignment. Every copy reads `message.text` **at click
+    time**, so copying mid-stream captures what has arrived. Clipboard goes
+    through `system.clipboardWrite` (capped in `systemHandlers.ts`), never
+    `navigator.clipboard`.
+  - `CopyButton` lives in `components/ui` — one implementation, re-exported by
+    the release document's `parts.tsx`. `downloadText`/`slugify` likewise moved
+    to `lib/download.ts`.
+  - The composer draft lives in **`stores/useComposerStore.ts`**, not local
+    state, because Quote / Reference / Open-in-New-Session all write into it
+    from outside the composer's subtree. Drafts are per-session and deliberately
+    **not persisted**.
+  - `TurnView`'s memo comparator identity-checks `onRevertTurn`, so the owner
+    MUST pass a `useCallback`. An inline arrow re-renders every settled turn on
+    every streaming delta.
+- **Conversation revert** — a SESSION-level rollback, not a git revert.
+  `AgentManager.revertToMessage` restores the checkpoint guarding the turn,
+  truncates `agent_messages` / `agent_activity` after it, and deletes the
+  `agent_provider_sessions` row so the next prompt opens a conversation that
+  matches the repository again (one delete covers Claude and Cursor — the table
+  is provider-keyed). **Nothing is erased from the audit trail**: checkpoints
+  survive, and the revert is recorded as a new immutable timeline entry.
+  - The unlock was already in the schema: `git_checkpoints.message_id` was
+    plumbed end-to-end and never populated. `ActiveRun.userMessageId` now rides
+    onto the automatic pre-write checkpoint, and
+    `GitManager.checkpointForMessage` resolves it (falling back to the newest
+    checkpoint at-or-before the turn).
+  - **`GitManager.restoreCheckpoint` is a TRUE tree reset.** `git restore
+    --source` rewinds paths that exist in the checkpoint and says nothing about
+    paths that do not, so files the agent CREATED survived every restore. Those
+    are computed with `diff --diff-filter=A` and removed — each re-validated
+    through `assertInsideRepo` before it is unlinked. **Never `git clean -fdx`**:
+    clean would also destroy untracked files predating the checkpoint and every
+    ignored build dir. It returns `CheckpointRestoreResult`, not a boolean.
+  - IPC (`agent:revertPreview` / `agent:revertToMessage`) takes **ids only** —
+    no path, ref, or commit crosses the boundary, so there is nothing to spread
+    and no blast radius the renderer can choose. Preview measures against the
+    same diff the restore acts on; it never estimates. Refused while a run is
+    live, and refused outright when no checkpoint guards the turn.
+- **Plan Mode has two surfaces, and they divide by job**:
+  - `features/plan/PlanInline.tsx` — the STREAM. Rows at the stream's own
+    typographic weight, never a card: **Live Planning Progress** while the agent
+    reads (milestones DERIVED from the run's tool calls in
+    `features/plan/milestones.ts` — no new event kind, so both providers get it
+    free), a one-line proposal + inline approval when a plan is `ready`, and a
+    single settled line after that.
+  - `features/activity/PlanPanel.tsx` — the Tasks drawer, and the canonical
+    execution surface after approval. Exactly two sections: **Implementation
+    plan** and **Live progress**. The derived phase/task outline is gone — it
+    restated the plan above it, and its fuzzy match against live todos was lossy
+    enough that "Live progress" existed as its fallback. The checklist is now the
+    section, and the toolbar's search/filter operate on it.
+  - `ApprovalControls` in `features/plan/parts.tsx` is shared, with a
+    presentation-only `variant` — both surfaces run one approve path.
+  - **One loader.** `HelixLoader` is the in-flight indicator everywhere: the
+    generating row, the planning placeholder, the plan header, the per-task
+    marks. Do not reintroduce `Spinner`/`Loader2` in a plan surface, and there is
+    no large "Execution complete" checkmark banner.
 
 ### Workspace Documents + the Diff Review environment
 

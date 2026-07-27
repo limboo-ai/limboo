@@ -22,6 +22,67 @@ export interface ReleaseNotesEntry {
 /** Newest first. */
 export const RELEASE_NOTES: ReleaseNotesEntry[] = [
   {
+    version: '1.13.0',
+    date: '2026-07-28',
+    markdown: `The conversation stops being something you only read. Every message now carries
+its own actions on hover, and any turn can be rolled back — the workspace returns
+to how it was before the agent touched it, including deleting files it created,
+with the rollback recorded rather than hidden. Plan Mode also stops saying the
+same thing three times.
+
+### Added
+
+- **Actions on every message.** Hovering a message (or reaching it with the
+  keyboard) reveals a row of actions: copy, copy as Markdown, quote it into the
+  composer, reference it in your next prompt, select its text, view it raw,
+  export it, open it as a new session, pin it to memory, regenerate it, or revert
+  to it. Copying an answer that is still being written captures everything that
+  has arrived so far rather than making you wait.
+- **Revert a turn.** Reverting restores the workspace to the checkpoint taken
+  before that turn and drops the conversation after it, so the agent's memory and
+  your files agree again. You are shown exactly what will change first — files
+  restored, files removed, messages dropped — and a safety checkpoint of the
+  current state is taken before anything moves. Only the session's own worktree
+  is touched, so work running in parallel is unaffected.
+- **Live planning progress in the conversation.** While a plan is being written,
+  the stream now names what the agent is doing — reading the repository,
+  searching, indexing symbols, decomposing the requirements — with each finished
+  step settling into a checked line.
+
+### Changed
+
+- **Plan Mode reads once, not three times.** The large plan card is gone from the
+  conversation; the stream carries a single line and the approval buttons, and
+  the Task panel holds the plan itself. That panel is now just two sections —
+  Implementation plan and Live progress — instead of a plan, a duplicate outline
+  of the plan, and a checklist of the same tasks. Live progress is always shown
+  while work is running, rather than appearing only when the outline failed to
+  match.
+- **One in-progress indicator everywhere.** The planning placeholder, the plan
+  header, and each running task now use the same loader the agent uses while it
+  writes, instead of three different spinners and a large completion checkmark.
+- **Restoring a checkpoint now truly undoes the work.** Files the agent created
+  after the checkpoint used to survive a restore and be left behind; they are
+  removed now, and the restore reports how many files it restored and removed.
+  Untracked files that already existed are never touched.
+
+### Fixed
+
+- **Checkpoint comparisons could not see new files.** Both the "what changed
+  since this checkpoint" view and the restore itself compared against staged
+  changes only, so a file the agent created and never staged was invisible —
+  the diff under-reported it and a restore left it behind. Both now compare
+  against the full working state, including files that were never staged.
+- **The selected session no longer has a coloured bar.** It reads by its
+  background and a bolder title, matching the tabs elsewhere in the app.
+
+### Removed
+
+- Four Task-panel settings that no longer controlled anything visible ("stream
+  tasks as they appear", "auto-expand new tasks", "collapse completed tasks", and
+  "show task durations").`,
+  },
+  {
     version: '1.12.0',
     date: '2026-07-27',
     markdown: `Sessions run in a git worktree, and Limboo puts that worktree inside its own
@@ -277,88 +338,6 @@ appear with their real profile picture and name.
   the manifest.
 - **The privileged Linux install passes no shell.** The package manager is
   invoked with an argument vector rather than a quoted \`/bin/bash -c\` string.`,
-  },
-  {
-    version: '1.8.0',
-    date: '2026-07-26',
-    markdown: `Turns an update from a maintenance task into a workspace document. The release
-notes added in 1.7.0 were one blob of Markdown; they are now a structured release
-dashboard driven by a real release manifest that the CI pipeline publishes
-alongside the binaries — so the release page, the changelog and the app all
-describe a release from the same file.
-
-### Added
-
-- **A structured release document.** The What's New tab becomes a full release
-  view: version, codename, channel, git tag, commit, build number, platform and
-  Electron versions; every changelog section as its own collapsible, copyable,
-  filterable card ordered by consequence (breaking and security first);
-  contributors with commit counts; merged pull requests and branches; published
-  assets with sizes; and a verification block carrying the \`sha256sum -c\` and
-  \`gh attestation verify\` commands. A release-history list browses every version
-  the changelog knows and can diff any two bundled releases category by category.
-- **A published release manifest.** Every release now ships
-  \`release-manifest.json\` — the same structured notes the app carries, plus every
-  artifact's size and SHA-256 and the signing posture per platform. It is written
-  before \`SHA256SUMS\` so the checksum manifest covers it, and
-  \`ci/scripts/check-release-manifest.mjs\` proves the two describe the same
-  downloads before anything is published.
-- **Release notes are searchable and agent-reachable.** They federate into Global
-  Search as a \`release\` source, and the agent can answer "what changed in 1.7.0?"
-  through read-only \`list_releases\` / \`release_notes\` tools on the existing
-  \`limboo_search\` server. Both providers get them from one implementation.
-  Nothing is injected into a system prompt — Claude Code shipped a fix for
-  exactly that bug, where its release-notes view leaked the whole changelog into
-  every subsequent request.
-- **Export and copy.** A release can be copied as Markdown or written to a file
-  from the document or the command palette. Main owns the save dialog; the
-  renderer never supplies a path.
-
-### Changed
-
-- **A release tab is its label.** It carries no icon — every other tab in the
-  strip names an object you could point at on disk, and this one names a version,
-  so the version is the identity.
-- **The accent underline is gone from the document and worktree tab strips.** An
-  active tab is marked by its raised seat and a heavier label instead. A 2px
-  accent bar under a tab that already sits on a plate says the same thing twice,
-  and on pure black it reads as a second element rather than an emphasis of the
-  first. Worktree tabs also gained the focus ring they were missing.
-- **\`npm run gen:notes\` generates the manifest too**, and CI enforces that both
-  generated modules stay in sync with \`CHANGELOG.md\` (\`gen:notes --check\`).
-  Keeping them in sync was a checklist item with nothing behind it, so a
-  changelog edit could ship with stale in-app notes and nobody would find out
-  until after the release.
-
-### Fixed
-
-- **The release notes could reappear on every launch.** With no session selected
-  the notes render inline rather than as a tab, and acknowledgement is a tab
-  being closed — so nothing ever marked the version seen. That path now has its
-  own dismissal.
-- **The tab's document id was spelled by hand** in one place instead of derived
-  through \`documentId()\`, which exists precisely so the format cannot drift. A
-  mismatch there would have left the tab looking permanently closed, silently
-  reopening it forever.
-
-### Security
-
-- **Release metadata is compiled into the build, never fetched.** There is no
-  network path to widen and nothing to verify at runtime, which is also the only
-  design that works under the production CSP (\`connect-src 'self'\`). Contributor
-  avatars are drawn locally from initials rather than loaded from a forge.
-- **Every manifest URL is screened before it becomes a link** — https only, no
-  embedded credentials, and the host must be a forge host or a subdomain of one,
-  matched on a dot boundary so \`evil-github.com\` cannot pass. Unscreened URLs
-  render as plain text.
-- **The document never claims verification it cannot perform.** A build cannot
-  contain the hash of an installer produced from it, so asset digests live only
-  in the published manifest; the app shows where they are and how to check them
-  instead of printing a digest it cannot stand behind. Facts about the running
-  process are shown separately from claims about the published artifact.
-- **Markdown rendering is unchanged and still sanitized** (\`rehype-sanitize\`, no
-  raw HTML), the document performs no writes, and the export handler bounds its
-  input and owns its own path.`,
   },
 ];
 

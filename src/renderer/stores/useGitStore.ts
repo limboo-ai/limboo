@@ -396,7 +396,21 @@ export const useGitStore = create<GitState>((set, get) => ({
     const api = gitApi();
     const wsId = activeWs();
     if (!api || !wsId) return;
-    await guard('Could not restore checkpoint', () => api.checkpointRestore(wsId, checkpointId));
+    // A restore is now a true tree reset (it can DELETE files created since the
+    // checkpoint), so say what it actually did rather than succeeding silently.
+    const result = await guard('Could not restore checkpoint', () =>
+      api.checkpointRestore(wsId, checkpointId),
+    );
+    if (result?.ok) {
+      const removed = result.filesRemoved > 0 ? `, ${result.filesRemoved} removed` : '';
+      useUIStore.getState().addToast({
+        title: 'Checkpoint restored',
+        description: `${result.filesReverted} file${result.filesReverted === 1 ? '' : 's'} restored${removed}.`,
+        tone: 'success',
+      });
+    } else if (result?.error) {
+      useUIStore.getState().addToast({ title: 'Could not restore checkpoint', description: result.error, tone: 'danger' });
+    }
     await get().refresh();
   },
   deleteCheckpoint: async (checkpointId) => {

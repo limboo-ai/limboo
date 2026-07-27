@@ -13,7 +13,7 @@
  * full-width Markdown (with streaming-aware highlighted code blocks); the user's
  * turn renders as a compact right-aligned bubble.
  */
-import { memo, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Check, ChevronRight, CircleAlert } from 'lucide-react';
 import type { AgentActivityItem, AgentToolCall, AttachmentMeta, ChatMessage, PermissionRequest } from '@shared/types';
 import { Logo } from '@/renderer/components/brand/Logo';
@@ -31,7 +31,9 @@ import { MessageSkeleton, ThinkingPulse } from './MessageSkeleton';
 import { InlineApproval } from './InlineApproval';
 import { ToolDiff } from './ToolDiff';
 import { CodeBlock } from './CodeBlock';
-import { PlanCard } from '@/renderer/features/plan/PlanCard';
+import { MessageActions, selectNodeText } from './MessageActions';
+import { RevertDialog } from './RevertDialog';
+import { PlanInline } from '@/renderer/features/plan/PlanInline';
 
 /** Human label for a file-edit tool's change status, shown inline in the stream. */
 const CHANGE_WORD: Record<string, string> = {
@@ -198,6 +200,12 @@ export function ConversationView({ sessionId }: { sessionId: string }) {
   const approval = pending && pending.sessionId === sessionId ? pending : null;
   const lastKey = turns.length ? turns[turns.length - 1].key : null;
 
+  // The turn a revert was requested for. `useCallback` is load-bearing: TurnView's
+  // memo comparator identity-checks this prop, so an inline arrow would re-render
+  // every settled turn on each streaming delta.
+  const [revertTarget, setRevertTarget] = useState<ChatMessage | null>(null);
+  const onRevertTurn = useCallback((message: ChatMessage) => setRevertTarget(message), []);
+
   return (
     <div className="flex flex-col gap-6 pb-4">
       {turns.map((turn) => (
@@ -212,6 +220,7 @@ export function ConversationView({ sessionId }: { sessionId: string }) {
           // Pre-first-token shimmer for the in-flight turn, only while it has no
           // content of its own yet (tools / text supersede it).
           thinking={thinking && !approval && !clarifying && turn.key === lastKey}
+          onRevertTurn={onRevertTurn}
         />
       ))}
       {/* Approval / clarification arriving before any assistant content has a turn
@@ -236,12 +245,22 @@ export function ConversationView({ sessionId }: { sessionId: string }) {
       {/* The session's plan, at the tail of the transcript. A plan is session
           state rather than a turn (it is replaced, not appended), and "the most
           recent thing said" is where it belongs — right above the composer that
-          approves it. Renders nothing when the session has no plan. */}
-      <PlanCard sessionId={sessionId} />
+          approves it. Renders as inline rows at the stream's own weight (live
+          planning milestones / the ready proposal / one settled line), never a
+          card; the Tasks panel owns the plan document. Renders nothing when the
+          session has no plan. */}
+      <PlanInline sessionId={sessionId} />
       {/* Scroll anchor — a small bottom margin keeps the last line off the very
           edge when auto-scrolling (honored by scrollIntoView). The composer is
           docked in flow below the scroller, so no large reserve is needed. */}
       <div ref={bottomRef} style={{ scrollMarginBottom: '1rem' }} />
+      {revertTarget && (
+        <RevertDialog
+          sessionId={sessionId}
+          message={revertTarget}
+          onClose={() => setRevertTarget(null)}
+        />
+      )}
     </div>
   );
 }
@@ -267,12 +286,15 @@ const TurnView = memo(function TurnView({
   approval,
   waiting,
   thinking,
+  onRevertTurn,
 }: {
   sessionId: string;
   turn: Turn;
   approval: PermissionRequest | null;
   waiting?: boolean;
   thinking?: boolean;
+  /** Opens the revert confirmation for this turn's anchor message. */
+  onRevertTurn?: (message: ChatMessage) => void;
 }) {
   // The shimmer is the pre-first-token placeholder: only surface it while this
   // turn has produced no blocks of its own (a tool row or streamed text replaces it).
@@ -300,6 +322,24 @@ const TurnView = memo(function TurnView({
       {showSkeleton ? <MessageSkeleton /> : showGapPulse ? <ThinkingPulse /> : null}
     </>
   ) : null;
+
+  // Regenerate re-runs this turn's prompt in the session's current composer
+  // mode. It appends rather than replaces — pairing it with Revert is what makes
+  // "try that again" clean, and destroying a reply the user might still want is
+  // not something a single icon click should do.
+  const user = turn.user;
+  const onRegenerate = user
+    ? () => {
+        const store = useAgentStore.getState();
+        void store.send(sessionId, user.text, store.composerModeBySession[sessionId]);
+      }
+    : undefined;
+  const onRevert = user && onRevertTurn ? () => onRevertTurn(user) : undefined;
+
+  const userToolCalls = turn.blocks
+    .filter((b): b is Extract<Block, { kind: 'tool' }> => b.kind === 'tool')
+    .map((b) => b.call);
+
   return (
     // The anchor the ConversationRail scrolls to (and observes for the "current
     // turn" tick). `scroll-mt-4` keeps the prompt clear of the scroller's top
@@ -309,8 +349,25 @@ const TurnView = memo(function TurnView({
       data-turn-id={turn.key}
       className="flex scroll-mt-4 flex-col gap-4"
     >
-      {turn.user && <UserBubble message={turn.user} />}
-      {showAssistant && <AssistantBlock blocks={turn.blocks} trailing={trailing} />}
+      {user && (
+        <UserBubble
+          sessionId={sessionId}
+          message={user}
+          toolCalls={userToolCalls}
+          onRegenerate={onRegenerate}
+          onRevert={onRevert}
+        />
+      )}
+      {showAssistant && (
+        <AssistantBlock
+          sessionId={sessionId}
+          blocks={turn.blocks}
+          trailing={trailing}
+          prompt={user}
+          onRegenerate={onRegenerate}
+          onRevert={onRevert}
+        />
+      )}
     </div>
   );
 }, turnsEqual);
@@ -338,15 +395,25 @@ function sameBlocks(a: Block[], b: Block[]): boolean {
 
 /** memo comparator for {@link TurnView}: skip re-render when nothing this turn
  *  depends on changed by identity. This is what keeps streaming cheap. */
-function turnsEqual(
-  prev: { sessionId: string; turn: Turn; approval: PermissionRequest | null; waiting?: boolean; thinking?: boolean },
-  next: { sessionId: string; turn: Turn; approval: PermissionRequest | null; waiting?: boolean; thinking?: boolean },
-): boolean {
+interface TurnViewProps {
+  sessionId: string;
+  turn: Turn;
+  approval: PermissionRequest | null;
+  waiting?: boolean;
+  thinking?: boolean;
+  onRevertTurn?: (message: ChatMessage) => void;
+}
+
+function turnsEqual(prev: TurnViewProps, next: TurnViewProps): boolean {
   return (
     prev.sessionId === next.sessionId &&
     prev.approval === next.approval &&
     prev.waiting === next.waiting &&
     prev.thinking === next.thinking &&
+    // Identity-compared, so the owner MUST keep this callback stable (useCallback).
+    // An inline arrow here would defeat the whole memo and re-render every settled
+    // turn on each streaming delta.
+    prev.onRevertTurn === next.onRevertTurn &&
     prev.turn.key === next.turn.key &&
     prev.turn.user === next.turn.user &&
     sameBlocks(prev.turn.blocks, next.turn.blocks)
@@ -400,15 +467,45 @@ function WaitingForDecision() {
   );
 }
 
-function UserBubble({ message }: { message: ChatMessage }) {
+function UserBubble({
+  sessionId,
+  message,
+  toolCalls,
+  onRegenerate,
+  onRevert,
+}: {
+  sessionId: string;
+  message: ChatMessage;
+  toolCalls: AgentToolCall[];
+  onRegenerate?: () => void;
+  onRevert?: () => void;
+}) {
+  const [raw, setRaw] = useState(false);
+  const body = useRef<HTMLDivElement>(null);
   return (
-    <div className="flex flex-col items-end gap-1.5">
+    <div className="group flex flex-col items-end gap-1.5">
       {message.attachments && message.attachments.length > 0 && (
         <MessageAttachments sessionId={message.sessionId} attachments={message.attachments} />
       )}
-      <div className="max-w-[85%] whitespace-pre-wrap break-words rounded-2xl rounded-br-md border border-line bg-surface-2 px-4 py-2.5 text-[13.5px] leading-relaxed text-fg shadow-sm animate-fade-in">
+      <div
+        ref={body}
+        className={cn(
+          'max-w-[85%] whitespace-pre-wrap break-words rounded-2xl rounded-br-md border border-line bg-surface-2 px-4 py-2.5 text-[13.5px] leading-relaxed text-fg shadow-sm animate-fade-in',
+          raw && 'font-mono text-[11.5px] text-muted',
+        )}
+      >
         {message.text}
       </div>
+      <MessageActions
+        sessionId={sessionId}
+        message={message}
+        raw={raw}
+        onToggleRaw={() => setRaw((v) => !v)}
+        onSelectText={() => selectNodeText(body.current)}
+        onRegenerate={onRegenerate}
+        onRevert={onRevert}
+        toolCalls={toolCalls}
+      />
     </div>
   );
 }
@@ -443,16 +540,29 @@ function MessageAttachments({
  *  chronologically-interleaved sub-items (text, tool rows, status markers, and an
  *  optional trailing approval). */
 const AssistantBlock = memo(function AssistantBlock({
+  sessionId,
   blocks,
   trailing,
+  prompt = null,
+  onRegenerate,
+  onRevert,
 }: {
+  sessionId?: string;
   blocks: Block[];
   trailing?: ReactNode;
+  /** The user prompt this block answers — carried into exports and regenerate. */
+  prompt?: ChatMessage | null;
+  onRegenerate?: () => void;
+  onRevert?: () => void;
 }) {
   const streaming = blocks.some((b) => b.kind === 'text' && b.message.streaming);
   // Grouping is derived per render of an already-invalidated turn — settled
   // turns never reach this (TurnView's memo comparator short-circuits them).
   const items = useMemo(() => groupBlocks(blocks), [blocks]);
+  const toolCalls = useMemo(
+    () => blocks.filter((b): b is Extract<Block, { kind: 'tool' }> => b.kind === 'tool').map((b) => b.call),
+    [blocks],
+  );
   return (
     <div className="flex gap-3 animate-fade-in">
       <div className="mt-1 flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-surface-2">
@@ -460,7 +570,25 @@ const AssistantBlock = memo(function AssistantBlock({
       </div>
       <div className="flex min-w-0 flex-1 flex-col gap-3 pt-0.5">
         {items.map((it) => {
-          if (it.kind === 'text') return <AssistantText key={it.message.id} message={it.message} />;
+          if (it.kind === 'text') {
+            // Without a session there is nowhere for the actions to write
+            // (quote, new session, memory), so the plain body renders instead.
+            return sessionId ? (
+              <AssistantText
+                key={it.message.id}
+                sessionId={sessionId}
+                message={it.message}
+                prompt={prompt}
+                toolCalls={toolCalls}
+                onRegenerate={onRegenerate}
+                onRevert={onRevert}
+              />
+            ) : (
+              <div key={it.message.id}>
+                <Markdown text={it.message.text} streaming={it.message.streaming} />
+              </div>
+            );
+          }
           if (it.kind === 'marker') return <InlineMarkerRow key={it.item.id} item={it.item} />;
           return <ToolGroup key={it.key} calls={it.calls} />;
         })}
@@ -470,16 +598,53 @@ const AssistantBlock = memo(function AssistantBlock({
   );
 });
 
-function AssistantText({ message }: { message: ChatMessage }) {
+function AssistantText({
+  sessionId,
+  message,
+  prompt,
+  toolCalls,
+  onRegenerate,
+  onRevert,
+}: {
+  sessionId: string;
+  message: ChatMessage;
+  prompt: ChatMessage | null;
+  toolCalls: AgentToolCall[];
+  onRegenerate?: () => void;
+  onRevert?: () => void;
+}) {
+  const [raw, setRaw] = useState(false);
+  const body = useRef<HTMLDivElement>(null);
   // A streaming message with no text yet is the pre-first-token moment — reserve
-  // the reply's shape with a shimmer skeleton until the first delta lands.
+  // the reply's shape with a shimmer skeleton until the first delta lands. No
+  // toolbar either: there is nothing to copy, quote or export yet.
   if (message.streaming && message.text.trim().length === 0) return <MessageSkeleton />;
   return (
-    <div>
-      <Markdown text={message.text} streaming={message.streaming} />
-      {message.streaming && (
-        <span className="ml-0.5 inline-block h-3.5 w-[2px] translate-y-0.5 animate-pulse bg-accent align-middle" />
-      )}
+    <div className="group">
+      <div ref={body}>
+        {raw ? (
+          <pre className="overflow-auto rounded-md border border-line bg-surface-2 px-3 py-2 font-mono text-[11.5px] leading-relaxed text-muted">
+            {message.text}
+          </pre>
+        ) : (
+          <Markdown text={message.text} streaming={message.streaming} />
+        )}
+        {message.streaming && !raw && (
+          <span className="ml-0.5 inline-block h-3.5 w-[2px] translate-y-0.5 animate-pulse bg-accent align-middle" />
+        )}
+      </div>
+      <MessageActions
+        sessionId={sessionId}
+        message={message}
+        raw={raw}
+        onToggleRaw={() => setRaw((v) => !v)}
+        onSelectText={() => selectNodeText(body.current)}
+        onRegenerate={onRegenerate}
+        onRevert={onRevert}
+        toolCalls={toolCalls}
+        promptMessage={prompt}
+        className="mt-1"
+      />
     </div>
   );
 }

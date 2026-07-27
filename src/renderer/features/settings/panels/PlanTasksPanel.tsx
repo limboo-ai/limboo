@@ -59,7 +59,7 @@ export function PlanTasksPanel() {
 
       <Section
         title="Task Panel"
-        hint="How the derived plan outline is presented in the Tasks tab."
+        hint="How the implementation plan is presented in the Tasks tab."
       >
         <Field
           id="planShowReasoning"
@@ -83,33 +83,6 @@ export function PlanTasksPanel() {
           <Toggle checked={plan.highlightRisk} onChange={(v) => setPlan('highlightRisk', v)} />
         </Field>
         <Field
-          id="planStreamIncrementally"
-          label="Stream tasks as they appear"
-          hint="Update the outline incrementally while the plan is built, rather than only when it completes. Default on."
-        >
-          <Toggle
-            checked={plan.streamIncrementally}
-            onChange={(v) => setPlan('streamIncrementally', v)}
-          />
-        </Field>
-        <Field
-          id="planAutoExpandTasks"
-          label="Auto-expand new tasks"
-          hint="Expand newly generated task groups automatically. Default on."
-        >
-          <Toggle checked={plan.autoExpandTasks} onChange={(v) => setPlan('autoExpandTasks', v)} />
-        </Field>
-        <Field
-          id="planAutoCollapseCompleted"
-          label="Collapse completed tasks"
-          hint="Collapse tasks automatically as they complete during execution. Default off."
-        >
-          <Toggle
-            checked={plan.autoCollapseCompleted}
-            onChange={(v) => setPlan('autoCollapseCompleted', v)}
-          />
-        </Field>
-        <Field
           id="planExportFormat"
           label="Plan export format"
           hint="Default format used by the plan Export action."
@@ -131,16 +104,9 @@ export function PlanTasksPanel() {
         hint="How live progress is surfaced while a plan is implemented."
       >
         <Field
-          id="planShowTaskDurations"
-          label="Show task durations"
-          hint="Display how long each task took once implementation completes. Default on."
-        >
-          <Toggle checked={plan.showTaskDurations} onChange={(v) => setPlan('showTaskDurations', v)} />
-        </Field>
-        <Field
           id="planShowCheckpoints"
           label="Show checkpoints on tasks"
-          hint="Surface a Git-checkpoint hint next to tasks during execution. Default on."
+          hint="Surface a Git-checkpoint hint under Live progress during execution. Default on."
         >
           <Toggle
             checked={plan.showCheckpointsOnTasks}

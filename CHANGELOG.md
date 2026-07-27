@@ -7,6 +7,66 @@ All notable changes to Limboo are documented here. The format is based on
 
 ## [Unreleased]
 
+## [1.13.0] - 2026-07-28
+
+The conversation stops being something you only read. Every message now carries
+its own actions on hover, and any turn can be rolled back — the workspace returns
+to how it was before the agent touched it, including deleting files it created,
+with the rollback recorded rather than hidden. Plan Mode also stops saying the
+same thing three times.
+
+### Added
+
+- **Actions on every message.** Hovering a message (or reaching it with the
+  keyboard) reveals a row of actions: copy, copy as Markdown, quote it into the
+  composer, reference it in your next prompt, select its text, view it raw,
+  export it, open it as a new session, pin it to memory, regenerate it, or revert
+  to it. Copying an answer that is still being written captures everything that
+  has arrived so far rather than making you wait.
+- **Revert a turn.** Reverting restores the workspace to the checkpoint taken
+  before that turn and drops the conversation after it, so the agent's memory and
+  your files agree again. You are shown exactly what will change first — files
+  restored, files removed, messages dropped — and a safety checkpoint of the
+  current state is taken before anything moves. Only the session's own worktree
+  is touched, so work running in parallel is unaffected.
+- **Live planning progress in the conversation.** While a plan is being written,
+  the stream now names what the agent is doing — reading the repository,
+  searching, indexing symbols, decomposing the requirements — with each finished
+  step settling into a checked line.
+
+### Changed
+
+- **Plan Mode reads once, not three times.** The large plan card is gone from the
+  conversation; the stream carries a single line and the approval buttons, and
+  the Task panel holds the plan itself. That panel is now just two sections —
+  Implementation plan and Live progress — instead of a plan, a duplicate outline
+  of the plan, and a checklist of the same tasks. Live progress is always shown
+  while work is running, rather than appearing only when the outline failed to
+  match.
+- **One in-progress indicator everywhere.** The planning placeholder, the plan
+  header, and each running task now use the same loader the agent uses while it
+  writes, instead of three different spinners and a large completion checkmark.
+- **Restoring a checkpoint now truly undoes the work.** Files the agent created
+  after the checkpoint used to survive a restore and be left behind; they are
+  removed now, and the restore reports how many files it restored and removed.
+  Untracked files that already existed are never touched.
+
+### Fixed
+
+- **Checkpoint comparisons could not see new files.** Both the "what changed
+  since this checkpoint" view and the restore itself compared against staged
+  changes only, so a file the agent created and never staged was invisible —
+  the diff under-reported it and a restore left it behind. Both now compare
+  against the full working state, including files that were never staged.
+- **The selected session no longer has a coloured bar.** It reads by its
+  background and a bolder title, matching the tabs elsewhere in the app.
+
+### Removed
+
+- Four Task-panel settings that no longer controlled anything visible ("stream
+  tasks as they appear", "auto-expand new tasks", "collapse completed tasks", and
+  "show task durations").
+
 ## [1.12.0] - 2026-07-27
 
 Sessions run in a git worktree, and Limboo puts that worktree inside its own
