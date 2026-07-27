@@ -24,6 +24,72 @@ import type { ReleaseIndexEntry, ReleaseManifestEntry } from './release';
 /** Newest first. */
 export const RELEASE_MANIFESTS: ReleaseManifestEntry[] = [
   {
+    "version": "1.12.0",
+    "date": "2026-07-27",
+    "channel": "stable",
+    "codename": null,
+    "gitTag": "v1.12.0",
+    "commit": null,
+    "buildNumber": null,
+    "summary": "Sessions run in a git worktree, and Limboo puts that worktree inside its own\napplication data folder. A safety rule meant to keep the agent out of Limboo's\ndatabase read the whole folder as off limits — so in a worktree session the\nagent was refused the moment it tried to write its first file, in what was\nactually its own working directory. Approving a plan could fail for a reason\nthat was never true, and leave the session unable to try again. The plan card\nalso stops appearing before there is a plan to read.",
+    "sections": [
+      {
+        "category": "fixed",
+        "title": "Fixed",
+        "items": [
+          {
+            "lead": "The agent could not write anything in a worktree session",
+            "text": "Every file it\n  tried to create was refused as \"Limboo's own app data\", because sessions check\n  out into a folder that lives inside Limboo's data directory. The rule now\n  covers only what it was written to protect — the database, your settings, and\n  the encrypted secret store — and the rest of that directory, including the\n  worktree the agent works in, is ordinary ground. Cursor runs were blocked by a\n  second copy of the same rule and are fixed with it."
+          },
+          {
+            "lead": "Commands were refused for mentioning a filename",
+            "text": "Anything containing the\n  text `limboo.db` was blocked wherever it ran, so a plain search of your own\n  source could be denied. Only the real, full path to the database is protected\n  now."
+          },
+          {
+            "lead": "Approving a plan could fail with \"the agent is already working on this\n  session\"",
+            "text": "The plan appears while the run that wrote it is still finishing, so\n  a quick click arrived a fraction of a second early and was turned away.\n  Approving now waits for that run to finish instead of refusing, and the buttons\n  are held until it has."
+          },
+          {
+            "lead": "A failed approval left the plan unusable",
+            "text": "The plan was marked as being\n  carried out before the work had actually started, so when it did not start,\n  the approval buttons never came back and the session could not be recovered.\n  The plan is restored when the run fails to begin."
+          }
+        ],
+        "markdown": "- **The agent could not write anything in a worktree session.** Every file it\n  tried to create was refused as \"Limboo's own app data\", because sessions check\n  out into a folder that lives inside Limboo's data directory. The rule now\n  covers only what it was written to protect — the database, your settings, and\n  the encrypted secret store — and the rest of that directory, including the\n  worktree the agent works in, is ordinary ground. Cursor runs were blocked by a\n  second copy of the same rule and are fixed with it.\n- **Commands were refused for mentioning a filename.** Anything containing the\n  text `limboo.db` was blocked wherever it ran, so a plain search of your own\n  source could be denied. Only the real, full path to the database is protected\n  now.\n- **Approving a plan could fail with \"the agent is already working on this\n  session\".** The plan appears while the run that wrote it is still finishing, so\n  a quick click arrived a fraction of a second early and was turned away.\n  Approving now waits for that run to finish instead of refusing, and the buttons\n  are held until it has.\n- **A failed approval left the plan unusable.** The plan was marked as being\n  carried out before the work had actually started, so when it did not start,\n  the approval buttons never came back and the session could not be recovered.\n  The plan is restored when the run fails to begin."
+      },
+      {
+        "category": "changed",
+        "title": "Changed",
+        "items": [
+          {
+            "lead": "The plan card waits for the plan",
+            "text": "It used to appear as soon as planning\n  started, showing a title and an \"Analyzing the repository\" line above the\n  composer while the agent's actual reasoning streamed past it further up. It now\n  appears with the proposal it is asking you to approve. Progress while planning\n  reads where the rest of the run does — in the conversation."
+          }
+        ],
+        "markdown": "- **The plan card waits for the plan.** It used to appear as soon as planning\n  started, showing a title and an \"Analyzing the repository\" line above the\n  composer while the agent's actual reasoning streamed past it further up. It now\n  appears with the proposal it is asking you to approve. Progress while planning\n  reads where the rest of the run does — in the conversation."
+      }
+    ],
+    "contributors": [],
+    "pullRequests": [],
+    "mergedBranches": [],
+    "assets": [],
+    "signing": [],
+    "stats": {
+      "commits": null,
+      "filesChanged": null,
+      "additions": null,
+      "deletions": null
+    },
+    "links": {
+      "release": "https://github.com/limboo-ai/limboo/releases/tag/v1.12.0",
+      "compare": null,
+      "tag": "https://github.com/limboo-ai/limboo/releases/tag/v1.12.0",
+      "milestone": null
+    },
+    "checksumManifest": "SHA256SUMS",
+    "provenanceRepo": "limboo-ai/limboo",
+    "markdown": "Sessions run in a git worktree, and Limboo puts that worktree inside its own\napplication data folder. A safety rule meant to keep the agent out of Limboo's\ndatabase read the whole folder as off limits — so in a worktree session the\nagent was refused the moment it tried to write its first file, in what was\nactually its own working directory. Approving a plan could fail for a reason\nthat was never true, and leave the session unable to try again. The plan card\nalso stops appearing before there is a plan to read.\n\n### Fixed\n\n- **The agent could not write anything in a worktree session.** Every file it\n  tried to create was refused as \"Limboo's own app data\", because sessions check\n  out into a folder that lives inside Limboo's data directory. The rule now\n  covers only what it was written to protect — the database, your settings, and\n  the encrypted secret store — and the rest of that directory, including the\n  worktree the agent works in, is ordinary ground. Cursor runs were blocked by a\n  second copy of the same rule and are fixed with it.\n- **Commands were refused for mentioning a filename.** Anything containing the\n  text `limboo.db` was blocked wherever it ran, so a plain search of your own\n  source could be denied. Only the real, full path to the database is protected\n  now.\n- **Approving a plan could fail with \"the agent is already working on this\n  session\".** The plan appears while the run that wrote it is still finishing, so\n  a quick click arrived a fraction of a second early and was turned away.\n  Approving now waits for that run to finish instead of refusing, and the buttons\n  are held until it has.\n- **A failed approval left the plan unusable.** The plan was marked as being\n  carried out before the work had actually started, so when it did not start,\n  the approval buttons never came back and the session could not be recovered.\n  The plan is restored when the run fails to begin.\n\n### Changed\n\n- **The plan card waits for the plan.** It used to appear as soon as planning\n  started, showing a title and an \"Analyzing the repository\" line above the\n  composer while the agent's actual reasoning streamed past it further up. It now\n  appears with the proposal it is asking you to approve. Progress while planning\n  reads where the rest of the run does — in the conversation."
+  },
+  {
     "version": "1.11.0",
     "date": "2026-07-27",
     "channel": "stable",
@@ -443,139 +509,18 @@ export const RELEASE_MANIFESTS: ReleaseManifestEntry[] = [
     "checksumManifest": "SHA256SUMS",
     "provenanceRepo": "limboo-ai/limboo",
     "markdown": "Turns an update from a maintenance task into a workspace document. The release\nnotes added in 1.7.0 were one blob of Markdown; they are now a structured release\ndashboard driven by a real release manifest that the CI pipeline publishes\nalongside the binaries — so the release page, the changelog and the app all\ndescribe a release from the same file.\n\n### Added\n\n- **A structured release document.** The What's New tab becomes a full release\n  view: version, codename, channel, git tag, commit, build number, platform and\n  Electron versions; every changelog section as its own collapsible, copyable,\n  filterable card ordered by consequence (breaking and security first);\n  contributors with commit counts; merged pull requests and branches; published\n  assets with sizes; and a verification block carrying the `sha256sum -c` and\n  `gh attestation verify` commands. A release-history list browses every version\n  the changelog knows and can diff any two bundled releases category by category.\n- **A published release manifest.** Every release now ships\n  `release-manifest.json` — the same structured notes the app carries, plus every\n  artifact's size and SHA-256 and the signing posture per platform. It is written\n  before `SHA256SUMS` so the checksum manifest covers it, and\n  `ci/scripts/check-release-manifest.mjs` proves the two describe the same\n  downloads before anything is published.\n- **Release notes are searchable and agent-reachable.** They federate into Global\n  Search as a `release` source, and the agent can answer \"what changed in 1.7.0?\"\n  through read-only `list_releases` / `release_notes` tools on the existing\n  `limboo_search` server. Both providers get them from one implementation.\n  Nothing is injected into a system prompt — Claude Code shipped a fix for\n  exactly that bug, where its release-notes view leaked the whole changelog into\n  every subsequent request.\n- **Export and copy.** A release can be copied as Markdown or written to a file\n  from the document or the command palette. Main owns the save dialog; the\n  renderer never supplies a path.\n\n### Changed\n\n- **A release tab is its label.** It carries no icon — every other tab in the\n  strip names an object you could point at on disk, and this one names a version,\n  so the version is the identity.\n- **The accent underline is gone from the document and worktree tab strips.** An\n  active tab is marked by its raised seat and a heavier label instead. A 2px\n  accent bar under a tab that already sits on a plate says the same thing twice,\n  and on pure black it reads as a second element rather than an emphasis of the\n  first. Worktree tabs also gained the focus ring they were missing.\n- **`npm run gen:notes` generates the manifest too**, and CI enforces that both\n  generated modules stay in sync with `CHANGELOG.md` (`gen:notes --check`).\n  Keeping them in sync was a checklist item with nothing behind it, so a\n  changelog edit could ship with stale in-app notes and nobody would find out\n  until after the release.\n\n### Fixed\n\n- **The release notes could reappear on every launch.** With no session selected\n  the notes render inline rather than as a tab, and acknowledgement is a tab\n  being closed — so nothing ever marked the version seen. That path now has its\n  own dismissal.\n- **The tab's document id was spelled by hand** in one place instead of derived\n  through `documentId()`, which exists precisely so the format cannot drift. A\n  mismatch there would have left the tab looking permanently closed, silently\n  reopening it forever.\n\n### Security\n\n- **Release metadata is compiled into the build, never fetched.** There is no\n  network path to widen and nothing to verify at runtime, which is also the only\n  design that works under the production CSP (`connect-src 'self'`). Contributor\n  avatars are drawn locally from initials rather than loaded from a forge.\n- **Every manifest URL is screened before it becomes a link** — https only, no\n  embedded credentials, and the host must be a forge host or a subdomain of one,\n  matched on a dot boundary so `evil-github.com` cannot pass. Unscreened URLs\n  render as plain text.\n- **The document never claims verification it cannot perform.** A build cannot\n  contain the hash of an installer produced from it, so asset digests live only\n  in the published manifest; the app shows where they are and how to check them\n  instead of printing a digest it cannot stand behind. Facts about the running\n  process are shown separately from claims about the published artifact.\n- **Markdown rendering is unchanged and still sanitized** (`rehype-sanitize`, no\n  raw HTML), the document performs no writes, and the export handler bounds its\n  input and owns its own path."
-  },
-  {
-    "version": "1.7.0",
-    "date": "2026-07-26",
-    "channel": "stable",
-    "codename": null,
-    "gitTag": "v1.7.0",
-    "commit": null,
-    "buildNumber": null,
-    "summary": "Adds the **Work Graph** — a typed, queryable graph of what a session actually\ndid, built from both coding agents' event streams and owned entirely by Limboo —\nalong with a document-oriented workspace where diffs open as first-class tabs,\nand an in-app **What's New** tab so an update can finally tell you what changed.",
-    "sections": [
-      {
-        "category": "added",
-        "title": "Added",
-        "items": [
-          {
-            "lead": "The Work Graph (DAWG)",
-            "text": "Every session's execution is recorded as a Directed\n  Acyclic Work Graph — objectives, plans, tasks, subagents, investigations,\n  searches, memory lookups, MCP calls, commands, files, commits, approvals and\n  results — connected by nine typed relationships (`follows`, `contains`,\n  `generated`, `depends-on`, `implemented-in`, `verified-by`, `blocked-by`,\n  `reviewed-by`, `produced-artifact`). Neither Claude nor Cursor exposes a work\n  graph; both are conversation-driven. This is Limboo's own layer, derived from\n  the structured events they *do* emit, so it records both agents identically and\n  every future adapter contributes nodes for free. It is deliberately shaped like\n  a git history — vertical execution lanes, one node per row, commits in a\n  right-hand gutter — rather than a free-floating node diagram, because that is\n  the mental model developers already have. Layout runs in a Web Worker and rows\n  virtualize, so a long session stays responsive."
-          },
-          {
-            "lead": "Structural search over the graph",
-            "text": "Queries traverse *shape*, not just text:\n  an FTS5 seed set (free text, node kinds, statuses, time range) expanded by a\n  bounded closure over the edge table. \"Every task blocked by X\" is a traversal,\n  not a transcript scroll."
-          },
-          {
-            "lead": "Eight export formats",
-            "text": "JSON, Markdown, Mermaid, Graphviz DOT, CSV and a\n  self-contained HTML report are rendered from the stored graph; SVG and PNG are\n  rendered from the layout. Exports go to the clipboard or to a file you pick."
-          },
-          {
-            "lead": "A document-oriented workspace",
-            "text": "Diffs promote out of the Changes panel into\n  first-class tabs with their own icons, pinning, reordering, close/reopen and\n  per-document view state. `ChangesNavigator` unifies file browsing across the Git\n  panel and Changes; `DiffEditor` adds syntax highlighting and word-level diffs."
-          },
-          {
-            "lead": "A \"What's New\" tab",
-            "text": "When Limboo starts on a version it has not shown you\n  before, the release notes for *that* version open as a workspace tab. Closing it\n  is remembered until the next update. It is available any time from the command\n  palette, and — like Claude Code's own `/release-notes` — it is display-only and\n  never enters the agent's context."
-          }
-        ],
-        "markdown": "- **The Work Graph (DAWG).** Every session's execution is recorded as a Directed\n  Acyclic Work Graph — objectives, plans, tasks, subagents, investigations,\n  searches, memory lookups, MCP calls, commands, files, commits, approvals and\n  results — connected by nine typed relationships (`follows`, `contains`,\n  `generated`, `depends-on`, `implemented-in`, `verified-by`, `blocked-by`,\n  `reviewed-by`, `produced-artifact`). Neither Claude nor Cursor exposes a work\n  graph; both are conversation-driven. This is Limboo's own layer, derived from\n  the structured events they *do* emit, so it records both agents identically and\n  every future adapter contributes nodes for free. It is deliberately shaped like\n  a git history — vertical execution lanes, one node per row, commits in a\n  right-hand gutter — rather than a free-floating node diagram, because that is\n  the mental model developers already have. Layout runs in a Web Worker and rows\n  virtualize, so a long session stays responsive.\n- **Structural search over the graph.** Queries traverse *shape*, not just text:\n  an FTS5 seed set (free text, node kinds, statuses, time range) expanded by a\n  bounded closure over the edge table. \"Every task blocked by X\" is a traversal,\n  not a transcript scroll.\n- **Eight export formats.** JSON, Markdown, Mermaid, Graphviz DOT, CSV and a\n  self-contained HTML report are rendered from the stored graph; SVG and PNG are\n  rendered from the layout. Exports go to the clipboard or to a file you pick.\n- **A document-oriented workspace.** Diffs promote out of the Changes panel into\n  first-class tabs with their own icons, pinning, reordering, close/reopen and\n  per-document view state. `ChangesNavigator` unifies file browsing across the Git\n  panel and Changes; `DiffEditor` adds syntax highlighting and word-level diffs.\n- **A \"What's New\" tab.** When Limboo starts on a version it has not shown you\n  before, the release notes for *that* version open as a workspace tab. Closing it\n  is remembered until the next update. It is available any time from the command\n  palette, and — like Claude Code's own `/release-notes` — it is display-only and\n  never enters the agent's context."
-      },
-      {
-        "category": "fixed",
-        "title": "Fixed",
-        "items": [
-          {
-            "lead": "The work graph silently discarded whole batches of its own data",
-            "text": "A node\n  whose payload exceeded the size cap was skipped, but the edges pointing at it\n  were still written. `INSERT OR IGNORE` does not suppress a FOREIGN KEY\n  violation, so the failing edge aborted the entire transaction and took every\n  other node and edge in that flush with it — behind a single `logger.warn`.\n  Oversized nodes are now shrunk rather than dropped, every edge's endpoints are\n  proven to exist before insert, and persistent failures surface as a banner in\n  the panel instead of an innocent-looking empty graph."
-          },
-          {
-            "lead": "Orphan cleanup deleted real work",
-            "text": "It removed any node with no edge, which is\n  the normal state of a terminal opened outside a run, a commit made with no agent\n  active, or a service started before the first prompt. Those kinds are now exempt."
-          },
-          {
-            "lead": "Commits could be attributed to the wrong session, or lost entirely",
-            "text": "An\n  unattributable commit was still recorded as \"seen\", so it was dropped\n  permanently at the exact moment its session next became active. It is now only\n  marked seen once it has been attributed. Separately, a `git pull` bringing in\n  upstream commits claimed the current run had implemented its files in every one\n  of them; that fan-out is now limited to commits made after the run started."
-          },
-          {
-            "lead": "Subagent work was spliced into the main timeline",
-            "text": "The `contains`\n  relationship was defined, drawn by the layouter and listed in the legend, but\n  nothing ever emitted it. Subagent nesting now rides the Agent SDK's\n  `parent_tool_use_id`, so a subagent's steps sit inside the node that spawned\n  them. (Cursor's print mode has no subagents, so the branch simply never forks\n  there.)"
-          },
-          {
-            "lead": "Permission decisions were never recorded",
-            "text": "Approval nodes were inferred by\n  string-matching a log line's `\"Blocked…\"` prefix, which could not see the answer\n  the user actually gave. They now come from the one decision gate both providers\n  call, carrying the real decision, tool and risk."
-          },
-          {
-            "lead": "Nodes were labelled with the wrong agent",
-            "text": "Provider and mode were read from\n  current settings at write time rather than captured per run, so switching models\n  mid-session silently relabelled a run's history."
-          },
-          {
-            "lead": "Two release gates were not actually verifying anything",
-            "text": "Both were found by\n  checking the published v1.6.0 artifacts by hand rather than trusting a green\n  pipeline:\n  - The Squirrel.Mac layout check — the gate that exists to catch the defect that\n    made every macOS update in v1.5.x impossible — reported \"no macOS update zips\n    in this build\" and passed. It matched on a `-mac.zip` filename suffix, and\n    the packaging fix in 1.6.0 renamed the artifacts to `-<arch>.zip`. The zip\n    list now comes from `latest-mac.yml`, which is naming-independent and\n    authoritative, and a macOS feed with no matching zip is a failure rather than\n    a skip — a build can no longer opt out of its own regression gate.\n  - `SHA256SUMS` listed `limboo-package.cyclonedx.json`, a side-file the SBOM\n    action writes but the upload globs exclude, so `sha256sum -c SHA256SUMS`\n    exited non-zero on an otherwise correct release — discrediting the one\n    verification command the README and release notes give users. It is excluded\n    from the publish set, and a new check fails the build if the manifest names\n    anything that is not being published. (The v1.6.0 manifest was corrected in\n    place; its remaining hashes were always valid.)"
-          }
-        ],
-        "markdown": "- **The work graph silently discarded whole batches of its own data.** A node\n  whose payload exceeded the size cap was skipped, but the edges pointing at it\n  were still written. `INSERT OR IGNORE` does not suppress a FOREIGN KEY\n  violation, so the failing edge aborted the entire transaction and took every\n  other node and edge in that flush with it — behind a single `logger.warn`.\n  Oversized nodes are now shrunk rather than dropped, every edge's endpoints are\n  proven to exist before insert, and persistent failures surface as a banner in\n  the panel instead of an innocent-looking empty graph.\n- **Orphan cleanup deleted real work.** It removed any node with no edge, which is\n  the normal state of a terminal opened outside a run, a commit made with no agent\n  active, or a service started before the first prompt. Those kinds are now exempt.\n- **Commits could be attributed to the wrong session, or lost entirely.** An\n  unattributable commit was still recorded as \"seen\", so it was dropped\n  permanently at the exact moment its session next became active. It is now only\n  marked seen once it has been attributed. Separately, a `git pull` bringing in\n  upstream commits claimed the current run had implemented its files in every one\n  of them; that fan-out is now limited to commits made after the run started.\n- **Subagent work was spliced into the main timeline.** The `contains`\n  relationship was defined, drawn by the layouter and listed in the legend, but\n  nothing ever emitted it. Subagent nesting now rides the Agent SDK's\n  `parent_tool_use_id`, so a subagent's steps sit inside the node that spawned\n  them. (Cursor's print mode has no subagents, so the branch simply never forks\n  there.)\n- **Permission decisions were never recorded.** Approval nodes were inferred by\n  string-matching a log line's `\"Blocked…\"` prefix, which could not see the answer\n  the user actually gave. They now come from the one decision gate both providers\n  call, carrying the real decision, tool and risk.\n- **Nodes were labelled with the wrong agent.** Provider and mode were read from\n  current settings at write time rather than captured per run, so switching models\n  mid-session silently relabelled a run's history.\n- **Two release gates were not actually verifying anything.** Both were found by\n  checking the published v1.6.0 artifacts by hand rather than trusting a green\n  pipeline:\n  - The Squirrel.Mac layout check — the gate that exists to catch the defect that\n    made every macOS update in v1.5.x impossible — reported \"no macOS update zips\n    in this build\" and passed. It matched on a `-mac.zip` filename suffix, and\n    the packaging fix in 1.6.0 renamed the artifacts to `-<arch>.zip`. The zip\n    list now comes from `latest-mac.yml`, which is naming-independent and\n    authoritative, and a macOS feed with no matching zip is a failure rather than\n    a skip — a build can no longer opt out of its own regression gate.\n  - `SHA256SUMS` listed `limboo-package.cyclonedx.json`, a side-file the SBOM\n    action writes but the upload globs exclude, so `sha256sum -c SHA256SUMS`\n    exited non-zero on an otherwise correct release — discrediting the one\n    verification command the README and release notes give users. It is excluded\n    from the publish set, and a new check fails the build if the manifest names\n    anything that is not being published. (The v1.6.0 manifest was corrected in\n    place; its remaining hashes were always valid.)"
-      },
-      {
-        "category": "changed",
-        "title": "Changed",
-        "items": [
-          {
-            "lead": "Release notes now come from this file",
-            "text": "The GitHub release body was\n  generated from commit subjects while the changelog was written by hand, so the\n  two said different things about the same release and nothing connected them.\n  The notes generator now reads the section for the tag being released and falls\n  back to the previous commit-subject behaviour only when there isn't one — which\n  also means the notes shown inside the app, the notes on the release page, and\n  this file are the same text by construction."
-          },
-          {
-            "lead": "An active icon is marked by its own color, not a filled block behind it",
-            "text": "In\n  the activity rail, the title-bar tab strip and the settings navigation, the\n  background plate is gone and the glyph takes the accent color. On a pure-black\n  canvas the plate read as a second element competing with the icon it sat\n  behind. Hover still shows it, where it is feedback rather than state."
-          }
-        ],
-        "markdown": "- **Release notes now come from this file.** The GitHub release body was\n  generated from commit subjects while the changelog was written by hand, so the\n  two said different things about the same release and nothing connected them.\n  The notes generator now reads the section for the tag being released and falls\n  back to the previous commit-subject behaviour only when there isn't one — which\n  also means the notes shown inside the app, the notes on the release page, and\n  this file are the same text by construction.\n- **An active icon is marked by its own color, not a filled block behind it.** In\n  the activity rail, the title-bar tab strip and the settings navigation, the\n  background plate is gone and the glyph takes the accent color. On a pure-black\n  canvas the plate read as a second element competing with the icon it sat\n  behind. Hover still shows it, where it is feedback rather than state."
-      },
-      {
-        "category": "security",
-        "title": "Security",
-        "items": [
-          {
-            "lead": "The graph's secret redactor missed the case its own guide calls out",
-            "text": "It is\n  shared with the Hook Engine, so a gap in it was a gap in two subsystems. It now\n  covers credential-bearing URLs (`https://user:token@host` — a remote typed into\n  a terminal became a node title verbatim), GitHub, AWS and Slack tokens, PEM\n  private-key blocks, JWTs, and generic `secret=`-shaped assignments. Redaction\n  also runs recursively over a node's whole metadata on the single path into the\n  database, rather than only over its title and detail, so a future field is\n  covered without having to opt in."
-          },
-          {
-            "lead": "Export writes to disk without the renderer ever naming a path",
-            "text": "Saving a\n  graph sends only a session id and a format; the main process opens the save\n  dialog and writes wherever you chose. There is no renderer-supplied path, and\n  therefore no traversal surface to defend."
-          },
-          {
-            "lead": "Query inputs are bounded before they are examined",
-            "text": "Array arguments are\n  capped before filtering (an oversized array was previously walked in full),\n  export results are byte-capped, and edge reads are limited instead of unbounded\n  table scans."
-          }
-        ],
-        "markdown": "- **The graph's secret redactor missed the case its own guide calls out.** It is\n  shared with the Hook Engine, so a gap in it was a gap in two subsystems. It now\n  covers credential-bearing URLs (`https://user:token@host` — a remote typed into\n  a terminal became a node title verbatim), GitHub, AWS and Slack tokens, PEM\n  private-key blocks, JWTs, and generic `secret=`-shaped assignments. Redaction\n  also runs recursively over a node's whole metadata on the single path into the\n  database, rather than only over its title and detail, so a future field is\n  covered without having to opt in.\n- **Export writes to disk without the renderer ever naming a path.** Saving a\n  graph sends only a session id and a format; the main process opens the save\n  dialog and writes wherever you chose. There is no renderer-supplied path, and\n  therefore no traversal surface to defend.\n- **Query inputs are bounded before they are examined.** Array arguments are\n  capped before filtering (an oversized array was previously walked in full),\n  export results are byte-capped, and edge reads are limited instead of unbounded\n  table scans."
-      }
-    ],
-    "contributors": [],
-    "pullRequests": [],
-    "mergedBranches": [],
-    "assets": [],
-    "signing": [],
-    "stats": {
-      "commits": null,
-      "filesChanged": null,
-      "additions": null,
-      "deletions": null
-    },
-    "links": {
-      "release": "https://github.com/limboo-ai/limboo/releases/tag/v1.7.0",
-      "compare": "https://github.com/limboo-ai/limboo/compare/v1.6.0...v1.7.0",
-      "tag": "https://github.com/limboo-ai/limboo/releases/tag/v1.7.0",
-      "milestone": null
-    },
-    "checksumManifest": "SHA256SUMS",
-    "provenanceRepo": "limboo-ai/limboo",
-    "markdown": "Adds the **Work Graph** — a typed, queryable graph of what a session actually\ndid, built from both coding agents' event streams and owned entirely by Limboo —\nalong with a document-oriented workspace where diffs open as first-class tabs,\nand an in-app **What's New** tab so an update can finally tell you what changed.\n\n### Added\n\n- **The Work Graph (DAWG).** Every session's execution is recorded as a Directed\n  Acyclic Work Graph — objectives, plans, tasks, subagents, investigations,\n  searches, memory lookups, MCP calls, commands, files, commits, approvals and\n  results — connected by nine typed relationships (`follows`, `contains`,\n  `generated`, `depends-on`, `implemented-in`, `verified-by`, `blocked-by`,\n  `reviewed-by`, `produced-artifact`). Neither Claude nor Cursor exposes a work\n  graph; both are conversation-driven. This is Limboo's own layer, derived from\n  the structured events they *do* emit, so it records both agents identically and\n  every future adapter contributes nodes for free. It is deliberately shaped like\n  a git history — vertical execution lanes, one node per row, commits in a\n  right-hand gutter — rather than a free-floating node diagram, because that is\n  the mental model developers already have. Layout runs in a Web Worker and rows\n  virtualize, so a long session stays responsive.\n- **Structural search over the graph.** Queries traverse *shape*, not just text:\n  an FTS5 seed set (free text, node kinds, statuses, time range) expanded by a\n  bounded closure over the edge table. \"Every task blocked by X\" is a traversal,\n  not a transcript scroll.\n- **Eight export formats.** JSON, Markdown, Mermaid, Graphviz DOT, CSV and a\n  self-contained HTML report are rendered from the stored graph; SVG and PNG are\n  rendered from the layout. Exports go to the clipboard or to a file you pick.\n- **A document-oriented workspace.** Diffs promote out of the Changes panel into\n  first-class tabs with their own icons, pinning, reordering, close/reopen and\n  per-document view state. `ChangesNavigator` unifies file browsing across the Git\n  panel and Changes; `DiffEditor` adds syntax highlighting and word-level diffs.\n- **A \"What's New\" tab.** When Limboo starts on a version it has not shown you\n  before, the release notes for *that* version open as a workspace tab. Closing it\n  is remembered until the next update. It is available any time from the command\n  palette, and — like Claude Code's own `/release-notes` — it is display-only and\n  never enters the agent's context.\n\n### Fixed\n\n- **The work graph silently discarded whole batches of its own data.** A node\n  whose payload exceeded the size cap was skipped, but the edges pointing at it\n  were still written. `INSERT OR IGNORE` does not suppress a FOREIGN KEY\n  violation, so the failing edge aborted the entire transaction and took every\n  other node and edge in that flush with it — behind a single `logger.warn`.\n  Oversized nodes are now shrunk rather than dropped, every edge's endpoints are\n  proven to exist before insert, and persistent failures surface as a banner in\n  the panel instead of an innocent-looking empty graph.\n- **Orphan cleanup deleted real work.** It removed any node with no edge, which is\n  the normal state of a terminal opened outside a run, a commit made with no agent\n  active, or a service started before the first prompt. Those kinds are now exempt.\n- **Commits could be attributed to the wrong session, or lost entirely.** An\n  unattributable commit was still recorded as \"seen\", so it was dropped\n  permanently at the exact moment its session next became active. It is now only\n  marked seen once it has been attributed. Separately, a `git pull` bringing in\n  upstream commits claimed the current run had implemented its files in every one\n  of them; that fan-out is now limited to commits made after the run started.\n- **Subagent work was spliced into the main timeline.** The `contains`\n  relationship was defined, drawn by the layouter and listed in the legend, but\n  nothing ever emitted it. Subagent nesting now rides the Agent SDK's\n  `parent_tool_use_id`, so a subagent's steps sit inside the node that spawned\n  them. (Cursor's print mode has no subagents, so the branch simply never forks\n  there.)\n- **Permission decisions were never recorded.** Approval nodes were inferred by\n  string-matching a log line's `\"Blocked…\"` prefix, which could not see the answer\n  the user actually gave. They now come from the one decision gate both providers\n  call, carrying the real decision, tool and risk.\n- **Nodes were labelled with the wrong agent.** Provider and mode were read from\n  current settings at write time rather than captured per run, so switching models\n  mid-session silently relabelled a run's history.\n- **Two release gates were not actually verifying anything.** Both were found by\n  checking the published v1.6.0 artifacts by hand rather than trusting a green\n  pipeline:\n  - The Squirrel.Mac layout check — the gate that exists to catch the defect that\n    made every macOS update in v1.5.x impossible — reported \"no macOS update zips\n    in this build\" and passed. It matched on a `-mac.zip` filename suffix, and\n    the packaging fix in 1.6.0 renamed the artifacts to `-<arch>.zip`. The zip\n    list now comes from `latest-mac.yml`, which is naming-independent and\n    authoritative, and a macOS feed with no matching zip is a failure rather than\n    a skip — a build can no longer opt out of its own regression gate.\n  - `SHA256SUMS` listed `limboo-package.cyclonedx.json`, a side-file the SBOM\n    action writes but the upload globs exclude, so `sha256sum -c SHA256SUMS`\n    exited non-zero on an otherwise correct release — discrediting the one\n    verification command the README and release notes give users. It is excluded\n    from the publish set, and a new check fails the build if the manifest names\n    anything that is not being published. (The v1.6.0 manifest was corrected in\n    place; its remaining hashes were always valid.)\n\n### Changed\n\n- **Release notes now come from this file.** The GitHub release body was\n  generated from commit subjects while the changelog was written by hand, so the\n  two said different things about the same release and nothing connected them.\n  The notes generator now reads the section for the tag being released and falls\n  back to the previous commit-subject behaviour only when there isn't one — which\n  also means the notes shown inside the app, the notes on the release page, and\n  this file are the same text by construction.\n- **An active icon is marked by its own color, not a filled block behind it.** In\n  the activity rail, the title-bar tab strip and the settings navigation, the\n  background plate is gone and the glyph takes the accent color. On a pure-black\n  canvas the plate read as a second element competing with the icon it sat\n  behind. Hover still shows it, where it is feedback rather than state.\n\n### Security\n\n- **The graph's secret redactor missed the case its own guide calls out.** It is\n  shared with the Hook Engine, so a gap in it was a gap in two subsystems. It now\n  covers credential-bearing URLs (`https://user:token@host` — a remote typed into\n  a terminal became a node title verbatim), GitHub, AWS and Slack tokens, PEM\n  private-key blocks, JWTs, and generic `secret=`-shaped assignments. Redaction\n  also runs recursively over a node's whole metadata on the single path into the\n  database, rather than only over its title and detail, so a future field is\n  covered without having to opt in.\n- **Export writes to disk without the renderer ever naming a path.** Saving a\n  graph sends only a session id and a format; the main process opens the save\n  dialog and writes wherever you chose. There is no renderer-supplied path, and\n  therefore no traversal surface to defend.\n- **Query inputs are bounded before they are examined.** Array arguments are\n  capped before filtering (an oversized array was previously walked in full),\n  export results are byte-capped, and edge reads are limited instead of unbounded\n  table scans."
   }
 ];
 
 /** Every released version, newest first. */
 export const RELEASE_INDEX: ReleaseIndexEntry[] = [
+  {
+    "version": "1.12.0",
+    "date": "2026-07-27",
+    "channel": "stable",
+    "summary": "Sessions run in a git worktree, and Limboo puts that worktree inside its own\napplication data folder. A safety rule meant to keep the agent out of Limboo's\ndatabase read the whole folder as off limits — so in a worktree session the\nagent was refused the moment it tried to write its first file, in what was\nactually its own working directory. Approving a plan could fail for a reason\nthat was never true, and leave the session unable to try again. The plan card\nalso stops appearing before there is a plan to read.",
+    "detailed": true
+  },
   {
     "version": "1.11.0",
     "date": "2026-07-27",
@@ -609,7 +554,7 @@ export const RELEASE_INDEX: ReleaseIndexEntry[] = [
     "date": "2026-07-26",
     "channel": "stable",
     "summary": "Adds the **Work Graph** — a typed, queryable graph of what a session actually\ndid, built from both coding agents' event streams and owned entirely by Limboo —\nalong with a document-oriented workspace where diffs open as first-class tabs,\nand an in-app **What's New** tab so an update can finally tell you what changed.",
-    "detailed": true
+    "detailed": false
   },
   {
     "version": "1.6.0",
