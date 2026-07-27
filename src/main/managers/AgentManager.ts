@@ -116,7 +116,7 @@ import { createMemoryMcpServer } from './memory/memoryTools';
 import type { AttachmentManager } from './attachments/AttachmentManager';
 import type { SearchManager } from './search/SearchManager';
 import { createSearchMcpServer } from './search/searchTools';
-import type { McpManager } from './mcp/McpManager';
+import type { McpManager, McpPlanVerdict } from './mcp/McpManager';
 
 /* ------------------------------------------------------------------ */
 /* ESM loader — the SDK is ESM-only; main is a CJS bundle. Load it with */
@@ -240,14 +240,107 @@ function classifyTool(name: string): ToolRisk {
   if (WRITE_TOOLS.has(name)) return 'write';
   if (COMMAND_TOOLS.has(name)) return 'command';
   if (READ_TOOLS.has(name)) return 'read';
-  // Unknown / MCP tools are gated as commands (the conservative default). This
-  // also covers the SDK's Task subagent tool: it is gated as a command through
-  // decideToolUseCore, and every tool the subagent then runs re-enters the SAME
-  // canUseTool with the SAME cwd — and the parent run's `Options.sandbox` is
-  // process-wide — so a subagent inherits the exact worktree boundary, network
-  // policy, and OS jail of its parent. No path here ever widens a subagent's
-  // access (per the SDK docs: subagents use the parent's sandbox configuration).
+  // Unknown / MCP tools are gated as commands (the conservative default). That
+  // includes the SDK's Task/Agent subagent tool, which stays a 'command' here so
+  // it keeps prompting in default/acceptEdits mode.
+  //
+  // What makes a subagent safe is NOT sandbox inheritance — `mapClaudeSandbox`
+  // returns undefined whenever the network policy is 'all' (the default), so
+  // there is frequently no OS jail to inherit, and the subagent input carries
+  // its own `dangerouslyDisableSandbox` flag. The load-bearing invariant is
+  // that `makeCanUseTool` builds ONE closure per query: every tool a subagent
+  // calls re-enters the SAME canUseTool with the SAME `permMode` and the SAME
+  // cwd. A subagent spawned during a plan run is therefore bound by this exact
+  // gate and can still only read. See PLAN_SAFE_BUILTINS.
   return 'command';
+}
+
+/**
+ * Built-in provider tools that may still run in the read-only session modes.
+ *
+ * Without this, `classifyTool`'s conservative 'command' default means plan/ask
+ * hard-denies the SDK's subagent tool — so the agent cannot delegate exploration
+ * while planning, in any project. Claude Code's own Plan Mode permits `Task`
+ * (forbidding only Edit/Write/Bash), so denying it made Limboo diverge from the
+ * provider it wraps. Names verified against the pinned CLI binary, which defines
+ * BOTH `Agent` and `Task` as wire names for the subagent tool.
+ *
+ * Consumed ONLY by the plan/ask branch — never folded into `effectiveRisk`,
+ * which feeds `autoApproveReads`. Folding `Task` in would let a subagent spawn
+ * with no prompt in DEFAULT mode; the point here is narrower, that planning
+ * stops being a dead end.
+ *
+ * Safety rests on the closure invariant documented in `classifyTool`: every tool
+ * the subagent calls re-enters this same gate with this same `permMode`, so a
+ * subagent inside a plan run can only read.
+ *
+ * To add a future provider tool: append it here and state why it cannot mutate.
+ * Deliberately EXCLUDED — `SlashCommand` (arbitrary command expansion),
+ * `RefreshMcpTools` (re-probes servers: real spawns/network), `Skill` (injects
+ * instructions that steer later tools, and Limboo has no Skill surface), and
+ * `ReadMcpResource`, which names a server and so is gated on that server's own
+ * `planAccess` instead (see decideToolUseCore).
+ */
+const PLAN_SAFE_BUILTINS = new Set([
+  'Task', 'Agent', // spawn a subagent — bound by this same gate
+  'TaskOutput', 'TaskGet', 'TaskList', // observe one
+  'TaskStop', // halting work is not a mutation
+  'TaskCreate', 'TaskUpdate', // checklist bookkeeping; defensive, since
+  // CLAUDE_CODE_ENABLE_TASKS=0 pins TodoWrite on today
+  'ListMcpResources', // enumerate resource URIs; no fetch
+]);
+
+/** Subagent tools that accept an opt-out from the OS sandbox. */
+const SUBAGENT_TOOLS = new Set(['Task', 'Agent']);
+
+/**
+ * Provider tools that read an MCP RESOURCE. They take `{ server, uri }`, so they
+ * are gated on the named server's own `planAccess` rather than listed in
+ * PLAN_SAFE_BUILTINS — a blanket allow would reach past a blocked server.
+ */
+const RESOURCE_READ_TOOLS = new Set(['ReadMcpResource', 'ReadMcpResourceDir']);
+
+/**
+ * The remedy sentence appended to a plan/ask denial of an MCP tool.
+ *
+ * Each verdict points at the thing the user would actually have to change. The
+ * previous single message always blamed the `planAccess` setting, which is wrong
+ * — and actively misleading — when the server is unknown, belongs to another
+ * workspace, or is simply not trusted.
+ */
+function mcpDenyReason(verdict: McpPlanVerdict, toolName: string): string {
+  if (verdict.ok) return '';
+  switch (verdict.reason) {
+    case 'mcp-disabled':
+      return 'MCP is disabled in Settings › MCP.';
+    case 'unknown-server':
+      return `No configured MCP server matches ${toolName}.`;
+    case 'out-of-scope':
+      return `The MCP server "${verdict.server}" is not configured for this session's workspace.`;
+    case 'blocked':
+    case 'not-annotated':
+      return `If this tool only reads, allow it under Settings › MCP › ${verdict.server} › "Plan & Ask access".`;
+    default:
+      return '';
+  }
+}
+
+/**
+ * Is this a built-in the read-only modes may run?
+ *
+ * Input-aware because the subagent tools carry `dangerouslyDisableSandbox`:
+ * planning must not silently start a subagent that asked to run outside the
+ * jail, even though this gate would still confine its children to reads.
+ */
+function isPlanSafeBuiltin(name: string, input: Record<string, unknown>): boolean {
+  if (!PLAN_SAFE_BUILTINS.has(name)) return false;
+  if (
+    SUBAGENT_TOOLS.has(name) &&
+    (input as { dangerouslyDisableSandbox?: unknown }).dangerouslyDisableSandbox === true
+  ) {
+    return false;
+  }
+  return true;
 }
 
 function filePathOf(input: Record<string, unknown>): string | undefined {
@@ -396,6 +489,19 @@ interface ActiveRun {
   /** Attachments riding this turn (manifest + vision blocks; reused on retry). */
   attachmentIds?: string[];
   /**
+   * The workspace this run's MCP scope was resolved against, pinned at run start.
+   *
+   * The run-start injection (`options.mcpServers` / `options.allowedTools`, the
+   * generated `.cursor/mcp.json`) is a SNAPSHOT, while the permission gate
+   * re-resolves on every tool call. If the active workspace changes mid-run —
+   * a switch, or a removal, neither of which cancels an in-flight run — the two
+   * stop agreeing: a trusted server starts prompting and a plan-readable one
+   * gets hard-denied, both for servers that are still live in the query.
+   * Pinning it here makes them agree structurally rather than by timing. Same
+   * idea as resolving `cwd` once in runOnce and closing over it.
+   */
+  mcpScopeWorkspaceId?: string | null;
+  /**
    * Cursor runs only: absolute path of the per-run in-workspace attachment
    * staging dir (`<root>/.limboo/attachments`). The read-flip hook and the
    * decideToolUse attachment carve-out honor it alongside the userData dir.
@@ -501,6 +607,22 @@ export class AgentManager {
   /** Inject the Session Manager so the first prompt can name an untitled session. */
   setSessionManager(sessions: SessionManager): void {
     this.sessions = sessions;
+  }
+
+  /**
+   * Pin the workspace this run's MCP servers were resolved from, so the live
+   * permission gate answers for the same set the run-start injection used even
+   * if the active workspace changes mid-run. See `ActiveRun.mcpScopeWorkspaceId`.
+   */
+  private pinMcpScope(sessionId: string, fallbackWorkspaceId: string): void {
+    const run = this.runs.get(sessionId);
+    if (!run) return;
+    run.mcpScopeWorkspaceId = this.sessions?.get(sessionId)?.workspaceId ?? fallbackWorkspaceId;
+  }
+
+  /** The pinned MCP scope for this session's active run (undefined outside a run). */
+  private mcpScopeFor(sessionId: string): string | null | undefined {
+    return this.runs.get(sessionId)?.mcpScopeWorkspaceId;
   }
 
   /**
@@ -1662,6 +1784,7 @@ export class AgentManager {
     // isInside(cwd, …) path guard automatically confines every file tool to the
     // worktree. Plain sessions keep the workspace root.
     const cwd = this.resolveSessionRoot?.(sessionId) ?? ws.path;
+    this.pinMcpScope(sessionId, ws.id);
     const agent = this.settings.getAll().agent;
 
     let streaming: ChatMessage | null = null;
@@ -1794,11 +1917,28 @@ export class AgentManager {
       // trustedToolMatchers), NOT via allowedTools, so the single permission
       // authority + governance audit still cover every MCP call.
       if (this.mcp) {
-        const inj = this.mcp.claudeServersFor();
+        const inj = this.mcp.claudeServersFor(sessionId, this.mcpScopeFor(sessionId));
         const mcpNames = Object.keys(inj.servers);
         if (mcpNames.length > 0) {
           options.mcpServers = { ...(options.mcpServers ?? {}), ...inj.servers };
           this.recordStatus(sessionId, `Loading ${mcpNames.length} MCP server(s)…`, mcpNames.join(', '));
+        }
+        // The ONE exception to the rule directly above. Under permissionMode
+        // 'plan' the SDK auto-denies every mcp__* tool BEFORE canUseTool runs,
+        // so our own plan-mode relaxation can never be reached — read-only MCP
+        // tools are unusable while planning no matter what we decide. (Ask mode
+        // is unaffected: buildOptions maps it to 'default'.)
+        //
+        // allowedTools entries run with no prompt, so membership requires an
+        // explicit human decision: either the user declared the whole server
+        // read-only (planAccess 'all' — their own assertion, made out of band in
+        // Settings), or a TRUSTED server declared the individual tool read-only
+        // (planAccess 'annotated'). See McpManager.planAllowedToolsFor for why
+        // those two cases differ. Nothing else is listed, so a run never skips
+        // an approval the user has not already given.
+        if (permMode === 'plan') {
+          const planAllow = this.mcp.planAllowedToolsFor(sessionId, this.mcpScopeFor(sessionId));
+          if (planAllow.length > 0) options.allowedTools = planAllow;
         }
       }
       this.diag('lifecycle', 'debug', 'Handshake — query opened', undefined, sessionId);
@@ -2235,7 +2375,11 @@ export class AgentManager {
     // referenced as ${env:NAME} in the generated .cursor/mcp.json (never the
     // file). Independent of the limboo bridge pipe — external servers don't need
     // it — so a server is registered even when the bridge failed to start.
-    const cursorMcp = this.mcp ? this.mcp.cursorSpecFor() : { userServers: {}, allowRules: [], secretEnv: {} };
+    // Every field of CursorMcpInjection must be present here: the allow-rule
+    // array below spreads `planAllowRules`, and spreading `undefined` throws.
+    const cursorMcp = this.mcp
+      ? this.mcp.cursorSpecFor(sessionId, this.mcpScopeFor(sessionId))
+      : { userServers: {}, allowRules: [], planAllowRules: [], secretEnv: {} };
     const hasUserServers = Object.keys(cursorMcp.userServers).length > 0;
     const limbooBridge = !!(pipe && mcpBridgePath);
     const mcpSpec: McpBridgeSpec | null =
@@ -2309,6 +2453,17 @@ export class AgentManager {
       // Trusted user MCP servers auto-approve declaratively too (Mcp(<name>:*)),
       // matching the decideToolUse trust for the Claude path.
       ...cursorMcp.allowRules,
+      // Read-only MCP tools the user opened up for the plan/ask modes. Spliced
+      // per-mode, not always, so a server granted read-only planning access does
+      // not thereby become allow-listed for ordinary runs.
+      //
+      // Note this is the ONLY enforcement surface for MCP on the Cursor path:
+      // cursor/hooks.ts has no `beforeMCPExecution`, so if `preToolUse` does not
+      // fire for MCP calls, decideToolUse never sees them and can neither prompt
+      // nor deny. Do NOT try to compensate with a broad Mcp(<name>:*) deny plus
+      // narrow allows — deny supersedes allow in Cursor's grammar and would eat
+      // the allows.
+      ...(permMode === 'plan' || permMode === 'ask' ? cursorMcp.planAllowRules : []),
     ];
     // Workspace secrets (.env / SSH keys / key-cert material) are ask-for-approval,
     // not hard-denied: on a hook-verified run the beforeReadFile hook drives the
@@ -3207,19 +3362,23 @@ export class AgentManager {
     signal: AbortSignal,
     gate?: { prompted: boolean },
   ): Promise<PermissionResult> {
-      // Sandbox-escape audit (G4): when a Bash command sets the SDK's
+      // Sandbox-escape audit (G4): when a tool sets the SDK's
       // `dangerouslyDisableSandbox` flag, it is being retried OUTSIDE the OS jail
       // and falls back to this normal permission flow. Record it in the timeline
-      // so the audit trail shows whether a command stayed contained or escaped —
-      // enforcement is unchanged (the command still passes every guard below).
+      // so the audit trail shows whether it stayed contained or escaped —
+      // enforcement is unchanged (it still passes every guard below). Covers the
+      // subagent tools as well as Bash: the flag is on all of their input
+      // schemas, and only Bash used to be recorded.
       if (
-        toolName === 'Bash' &&
+        (toolName === 'Bash' || SUBAGENT_TOOLS.has(toolName)) &&
         (input as { dangerouslyDisableSandbox?: unknown }).dangerouslyDisableSandbox === true
       ) {
         this.pushActivity(
           sessionId,
           'status',
-          'Command ran outside the sandbox — normal permission flow',
+          toolName === 'Bash'
+            ? 'Command ran outside the sandbox — normal permission flow'
+            : 'Subagent requested to run outside the sandbox — normal permission flow',
           undefined,
           'warning',
         );
@@ -3314,20 +3473,67 @@ export class AgentManager {
           (toolName === 'Bash' && isReadOnlyShellCommand(input.command)));
       const effectiveRisk: ToolRisk = readOnlyShell ? 'read' : risk;
 
+      // An external MCP tool the user declared reachable in the read-only modes
+      // (per-server `planAccess`, optionally backed by the server's own
+      // `readOnlyHint`). Every `mcp__*` name classifies as 'command' because
+      // classifyTool has no way to know better, which otherwise makes plan/ask
+      // unusable with any third-party MCP server.
+      //
+      // Deliberately NOT folded into `effectiveRisk` like `readOnlyShell` is.
+      // That relaxation rests on an allowlist WE authored; this one rests on a
+      // claim the server makes about itself, and `effectiveRisk` feeds the
+      // `autoApproveReads` branch further down — so folding it in would make a
+      // plan-mode setting silently stop these tools prompting in DEFAULT mode
+      // too. Keeping it separate means a qualifying tool merely stops being
+      // hard-denied here and falls through to the normal path: auto-allowed if
+      // its server is trusted, otherwise PROMPTED, with the chip still honestly
+      // reading 'command'.
+      const mcpScope = this.mcpScopeFor(sessionId);
+      const mcpVerdict: McpPlanVerdict | null =
+        risk === 'command' && toolName.startsWith('mcp__')
+          ? (this.mcp?.planVerdictFor(toolName, sessionId, mcpScope) ?? {
+              ok: false,
+              reason: 'mcp-disabled',
+            })
+          : null;
+      const planReadableMcp = mcpVerdict?.ok === true;
+
+      // Built-in provider tools the read-only modes may still run — chiefly the
+      // subagent tool, which Claude Code's own Plan Mode permits. Same shape and
+      // same reason as the MCP relaxation above, and equally kept out of
+      // `effectiveRisk`. See PLAN_SAFE_BUILTINS.
+      const planSafeBuiltin = risk === 'command' && isPlanSafeBuiltin(toolName, input);
+
+      // An MCP RESOURCE read names its server (these tools take `{server, uri}`),
+      // so it is gated on that server's own plan access rather than
+      // blanket-allowed — otherwise it would reach straight past a
+      // `planAccess: 'block'` server. Resources are read-only by MCP definition,
+      // so no per-item hint is consulted.
+      const planReadableResource =
+        RESOURCE_READ_TOOLS.has(toolName) &&
+        typeof input.server === 'string' &&
+        (this.mcp?.resourceReadableIn(input.server, sessionId, mcpScope) ?? false);
+
+      const planPermitted = planReadableMcp || planSafeBuiltin || planReadableResource;
+
       // Read-only contract (defense in depth): plan runs propose before touching
       // the repo, ask runs never touch it at all. The SDK/provider already leans
       // read-only in these modes, but we also refuse any write/mutating command
       // here so a misbehaving tool can never slip through. Kept AHEAD of the
       // auto/remembered auto-approvals below — nothing bypasses this gate.
-      if ((permMode === 'plan' || permMode === 'ask') && effectiveRisk !== 'read') {
+      if ((permMode === 'plan' || permMode === 'ask') && effectiveRisk !== 'read' && !planPermitted) {
         const label = permMode === 'plan' ? 'planning' : 'ask mode';
         this.pushActivity(sessionId, 'permission', `Blocked ${toolName} during ${label}`, undefined, 'warning');
+        const base =
+          permMode === 'plan'
+            ? 'Planning is read-only — approve the plan to make changes.'
+            : 'Ask mode is read-only — switch to another mode to make changes.';
+        // Name the actual cause. This used to blame the `planAccess` setting
+        // unconditionally, which is wrong (and sends the user to an already-
+        // correct field) when the server is unknown, out of scope, or untrusted.
         return {
           behavior: 'deny',
-          message:
-            permMode === 'plan'
-              ? 'Planning is read-only — approve the plan to make changes.'
-              : 'Ask mode is read-only — switch to another mode to make changes.',
+          message: mcpVerdict ? `${base} ${mcpDenyReason(mcpVerdict, toolName)}` : base,
         };
       }
 
@@ -3352,13 +3558,26 @@ export class AgentManager {
 
       // User-configured MCP servers marked "trusted" auto-approve — the single
       // permission authority both providers share for external tools. Placed
-      // AFTER the plan/ask read-only gate and the path guard (so trust never
-      // reopens a plan run), and untrusted MCP tools fall through to the prompt
-      // below like any other 'command'-risk tool.
+      // AFTER the plan/ask read-only gate and the path guard, so trust ALONE
+      // never reopens a plan run: a tool only reaches here during plan/ask if
+      // the server's separate `planAccess` setting already declared it
+      // read-only. Trust then decides prompt-vs-silent, not allowed-vs-denied.
+      // Untrusted MCP tools fall through to the prompt below like any other
+      // 'command'-risk tool.
       if (this.mcp && toolName.startsWith('mcp__')) {
-        for (const prefix of this.mcp.trustedToolMatchers()) {
+        for (const prefix of this.mcp.trustedToolMatchers(sessionId, mcpScope)) {
           if (toolName.startsWith(prefix)) return { behavior: 'allow', updatedInput: input };
         }
+      }
+
+      // A subagent spawned while planning performs no I/O itself, and every tool
+      // it goes on to call re-enters THIS gate with THIS `permMode` — so
+      // approving the spawn grants no reachable capability, and prompting per
+      // spawn would make a fan-out plan unusable. Scoped to plan/ask on purpose:
+      // in default / acceptEdits these tools keep prompting exactly as before.
+      // Placed after the path guard so nothing skips it.
+      if ((permMode === 'plan' || permMode === 'ask') && (planSafeBuiltin || planReadableResource)) {
+        return { behavior: 'allow', updatedInput: input };
       }
 
       const autoRead =

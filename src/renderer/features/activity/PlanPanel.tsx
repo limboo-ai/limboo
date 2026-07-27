@@ -19,7 +19,6 @@
  */
 import { useEffect, useMemo, useState } from 'react';
 import {
-  CheckCircle2,
   ChevronDown,
   ChevronRight,
   ClipboardList,
@@ -39,19 +38,11 @@ import {
   Search,
   TriangleAlert,
 } from 'lucide-react';
-import type {
-  PlanMeta,
-  PlanRevision,
-  PlanStatus,
-  SessionPermissionMode,
-  SessionPlan,
-  TaskItem,
-} from '@shared/types';
+import type { PlanRevision, SessionPlan, TaskItem } from '@shared/types';
 import { EmptyState, IconButton, Spinner, SuccessCheck } from '@/renderer/components/ui';
 import { cn } from '@/renderer/lib/cn';
 import {
   applyRuntime,
-  outlineToJson,
   parsePlanOutline,
   type OutlinePhase,
   type OutlineTask,
@@ -62,22 +53,13 @@ import { useSessionStore } from '@/renderer/stores/useSessionStore';
 import { useAgentStore } from '@/renderer/stores/useAgentStore';
 import { useSettingsStore } from '@/renderer/stores/useSettingsStore';
 import { useLayoutStore } from '@/renderer/stores/useLayoutStore';
-import { useUIStore } from '@/renderer/stores/useUIStore';
 import { Markdown } from '@/renderer/features/workspace/Markdown';
-
-const STATUS_BADGE: Record<PlanStatus, { label: string; cls: string }> = {
-  planning: { label: 'Planning', cls: 'text-accent' },
-  ready: { label: 'Ready for approval', cls: 'text-accent' },
-  implementing: { label: 'Active execution', cls: 'text-warning' },
-  completed: { label: 'Completed', cls: 'text-success' },
-  rejected: { label: 'Rejected', cls: 'text-faint' },
-};
-
-const RISK_CLS: Record<NonNullable<PlanMeta['risk']>, string> = {
-  low: 'text-success',
-  medium: 'text-warning',
-  high: 'text-danger',
-};
+import {
+  ApprovalControls,
+  PlanMetaRow,
+  STATUS_BADGE,
+  usePlanActions,
+} from '@/renderer/features/plan/parts';
 
 type TaskFilter = 'all' | 'pending' | 'done';
 
@@ -123,8 +105,6 @@ function PlanView({
   const approvePlan = useAgentStore((s) => s.approvePlan);
   const rejectPlan = useAgentStore((s) => s.rejectPlan);
   const regeneratePlan = useAgentStore((s) => s.regeneratePlan);
-  const setPlanPinned = useAgentStore((s) => s.setPlanPinned);
-  const addToast = useUIStore((s) => s.addToast);
 
   // Run signals used to derive live per-task execution states.
   const awaitingPermission = useAgentStore((s) => (sessionId ? !!s.pendingBySession[sessionId] : false));
@@ -176,17 +156,11 @@ function PlanView({
       : { completed: outline.completed, total: outline.taskCount, active: 0 };
   const hasProgress = progress.total > 0;
 
-  const copy = () => {
-    void window.limboo?.system?.clipboardWrite(plan.markdown);
-    addToast({ title: 'Plan copied', tone: 'success' });
-  };
-  const exportMarkdown = () => downloadText(`${slugify(plan.title)}.md`, plan.markdown);
-  const exportJson = () =>
-    downloadText(`${slugify(plan.title)}.json`, outlineToJson(outline, plan.title));
-  const print = () => printPlan(plan.title, plan.markdown);
-  const togglePin = () => {
-    if (sessionId) setPlanPinned(sessionId, !plan.pinned);
-  };
+  const { copy, exportMarkdown, exportJson, print, togglePin } = usePlanActions(
+    sessionId,
+    plan,
+    outline,
+  );
   const setAllCollapsed = (value: boolean) => {
     const next: Record<string, boolean> = {};
     for (const p of outline.phases) next[p.id] = value;
@@ -375,69 +349,6 @@ function PlanView({
 /* ------------------------------------------------------------------ */
 /* Approval                                                            */
 /* ------------------------------------------------------------------ */
-
-function ApprovalControls({
-  settings,
-  onApprove,
-  onRegenerate,
-  onReject,
-}: {
-  settings: { requireSecondaryConfirm: boolean };
-  onApprove: (mode: SessionPermissionMode) => void;
-  onRegenerate: () => void;
-  onReject: () => void;
-}) {
-  const [confirming, setConfirming] = useState<SessionPermissionMode | null>(null);
-
-  const approve = (mode: SessionPermissionMode) => {
-    if (settings.requireSecondaryConfirm && confirming !== mode) {
-      setConfirming(mode);
-      return;
-    }
-    setConfirming(null);
-    onApprove(mode);
-  };
-
-  return (
-    <div className="flex flex-col gap-2 rounded-md border border-accent/40 bg-accent/10 px-3 py-2.5">
-      <p className="text-[12px] text-muted">
-        Review the plan above. Approving exits Plan Mode and begins implementation against this
-        outline — choose how much to review as it works.
-      </p>
-      <div className="flex flex-wrap items-center gap-2">
-        <button
-          type="button"
-          onClick={() => approve('default')}
-          className="flex items-center gap-1.5 rounded-md bg-accent px-3 py-1.5 text-[12px] font-semibold text-base transition-opacity hover:opacity-90"
-        >
-          <CheckCircle2 size={13} />
-          {confirming === 'default' ? 'Confirm — start now' : 'Approve & ask before edits'}
-        </button>
-        <button
-          type="button"
-          onClick={() => approve('acceptEdits')}
-          className="rounded-md border border-accent/50 bg-accent/15 px-2.5 py-1.5 text-[12px] font-medium text-accent transition-colors hover:bg-accent/25"
-        >
-          {confirming === 'acceptEdits' ? 'Confirm — accept edits' : 'Approve & accept edits'}
-        </button>
-        <button
-          type="button"
-          onClick={onRegenerate}
-          className="rounded-md border border-line bg-surface-2 px-2.5 py-1.5 text-[12px] text-muted transition-colors hover:bg-elevated hover:text-fg"
-        >
-          Keep planning
-        </button>
-        <button
-          type="button"
-          onClick={onReject}
-          className="ml-auto rounded-md px-2.5 py-1.5 text-[12px] text-faint transition-colors hover:text-danger"
-        >
-          Reject
-        </button>
-      </div>
-    </div>
-  );
-}
 
 /* ------------------------------------------------------------------ */
 /* Outline tree                                                        */
@@ -732,32 +643,6 @@ function HistorySection({ sessionId, plan }: { sessionId: string; plan: SessionP
 /* Shared bits                                                         */
 /* ------------------------------------------------------------------ */
 
-function PlanMetaRow({ meta, highlightRisk }: { meta: PlanMeta; highlightRisk: boolean }) {
-  const chips: Array<{ label: string; cls?: string }> = [];
-  if (meta.taskCount) chips.push({ label: `${meta.taskCount} task${meta.taskCount === 1 ? '' : 's'}` });
-  if (meta.affectedFiles)
-    chips.push({ label: `~${meta.affectedFiles} file${meta.affectedFiles === 1 ? '' : 's'}` });
-  if (meta.risk) chips.push({ label: `${meta.risk} risk`, cls: highlightRisk ? RISK_CLS[meta.risk] : undefined });
-  if (meta.frameworks && meta.frameworks.length > 0)
-    chips.push({ label: meta.frameworks.slice(0, 3).join(', ') });
-  if (chips.length === 0) return null;
-  return (
-    <div className="flex flex-wrap items-center gap-1.5">
-      {chips.map((c, i) => (
-        <span
-          key={i}
-          className={cn(
-            'rounded-md border border-line bg-surface-2 px-1.5 py-0.5 text-[10.5px] font-medium',
-            c.cls ?? 'text-muted',
-          )}
-        >
-          {c.label}
-        </span>
-      ))}
-    </div>
-  );
-}
-
 function TaskChecklist({ tasks, title = 'Checklist' }: { tasks: TaskItem[]; title?: string }) {
   const done = tasks.filter((t) => t.done).length;
   return (
@@ -795,66 +680,6 @@ function TaskChecklist({ tasks, title = 'Checklist' }: { tasks: TaskItem[]; titl
 /* ------------------------------------------------------------------ */
 /* helpers                                                             */
 /* ------------------------------------------------------------------ */
-
-function slugify(s: string): string {
-  return (
-    s
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, '-')
-      .replace(/^-+|-+$/g, '')
-      .slice(0, 60) || 'plan'
-  );
-}
-
-/** Trigger a client-side file download for the given text (no fs / IPC needed). */
-function downloadText(filename: string, text: string): void {
-  const blob = new Blob([text], { type: 'text/plain;charset=utf-8' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = filename;
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  URL.revokeObjectURL(url);
-}
-
-/**
- * Print just the plan via an offscreen iframe. A new BrowserWindow is denied by
- * the app's window-open handler, so we print the iframe's own document instead of
- * the whole shell. The raw Markdown is shown in a readable monospace block.
- */
-function printPlan(title: string, markdown: string): void {
-  const iframe = document.createElement('iframe');
-  iframe.style.position = 'fixed';
-  iframe.style.right = '0';
-  iframe.style.bottom = '0';
-  iframe.style.width = '0';
-  iframe.style.height = '0';
-  iframe.style.border = '0';
-  document.body.appendChild(iframe);
-  const doc = iframe.contentWindow?.document;
-  if (!doc) {
-    iframe.remove();
-    return;
-  }
-  const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-  doc.open();
-  doc.write(
-    `<html><head><title>${esc(title)}</title><style>` +
-      'body{font:12px/1.5 -apple-system,Segoe UI,Roboto,sans-serif;color:#111;padding:24px}' +
-      'h1{font-size:18px;margin:0 0 12px}pre{white-space:pre-wrap;word-wrap:break-word;font:11px/1.5 ui-monospace,Menlo,Consolas,monospace}' +
-      `</style></head><body><h1>${esc(title)}</h1><pre>${esc(markdown)}</pre></body></html>`,
-  );
-  doc.close();
-  const win = iframe.contentWindow;
-  if (win) {
-    win.focus();
-    win.print();
-  }
-  // Give the print dialog time to read the document before tearing it down.
-  window.setTimeout(() => iframe.remove(), 1000);
-}
 
 /** Naive line set-diff for a compact +added / -removed history summary. */
 function diffLines(current: string, revision: string): { added: number; removed: number } {

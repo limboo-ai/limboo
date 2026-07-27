@@ -34,12 +34,14 @@ import { getDb } from '../../db/database';
 import type { SecretStore } from '../../secrets/SecretStore';
 import type { SettingsManager } from '../SettingsManager';
 import type { WorkspaceManager } from '../WorkspaceManager';
+import type { SessionManager } from '../SessionManager';
 import {
   cachedTools,
   countServers,
   deleteServer,
   getServer,
   listServers,
+  listAllServers,
   nameTaken,
   setEnabledRow,
   setToolsCache,
@@ -57,10 +59,53 @@ export interface ClaudeMcpInjection {
   allowedTools: string[];
 }
 
+/**
+ * Why a tool may (or may not) run in a read-only session mode. The reason drives
+ * the denial message — see `McpManager.planVerdictFor`.
+ */
+export type McpPlanVerdict =
+  | { ok: true }
+  | { ok: false; reason: 'mcp-disabled' }
+  | { ok: false; reason: 'unknown-server' }
+  /** The server exists but belongs to another workspace. */
+  | { ok: false; reason: 'out-of-scope'; server: string }
+  /** planAccess === 'block'. */
+  | { ok: false; reason: 'blocked'; server: string }
+  /** planAccess === 'annotated' but the server never declared this tool read-only. */
+  | { ok: false; reason: 'not-annotated'; server: string };
+
+/**
+ * Longest-prefix match of a fully-qualified `mcp__<server>__<tool>` name.
+ *
+ * PREFIX-matched, never split on `__`: `MCP_SERVER_NAME_RE` permits underscores
+ * in a server name, so `mcp__my__server__do__thing` is genuinely ambiguous.
+ */
+function matchPrefix(
+  configs: McpServerConfig[],
+  qualified: string,
+): { cfg: McpServerConfig; tool: string } | null {
+  let best: { cfg: McpServerConfig; tool: string } | null = null;
+  for (const cfg of configs) {
+    if (!cfg.enabled) continue;
+    const prefix = `mcp__${cfg.name}__`;
+    if (!qualified.startsWith(prefix)) continue;
+    if (!best || cfg.name.length > best.cfg.name.length) {
+      best = { cfg, tool: qualified.slice(prefix.length) };
+    }
+  }
+  return best;
+}
+
 /** Config the Cursor runtime consumes (merged into .cursor/mcp.json). */
 export interface CursorMcpInjection {
   userServers: Record<string, unknown>;
   allowRules: string[];
+  /**
+   * Extra `Mcp(...)` rules that apply ONLY to a plan/ask run — the tools the
+   * user declared reachable in the read-only modes. Kept separate from
+   * `allowRules` so the caller splices them per mode rather than always.
+   */
+  planAllowRules: string[];
   /** Env vars carrying resolved secret values, referenced as ${env:NAME} in the file. */
   secretEnv: Record<string, string>;
 }
@@ -71,12 +116,24 @@ export class McpManager {
   private readonly probing = new Set<string>();
   private heartbeatTimer: NodeJS.Timeout | null = null;
   private unsubscribeSettings: (() => void) | null = null;
+  /**
+   * Setter-injected (mirrors `agent.setSessionManager` / `setSessionRootResolver`
+   * in the composition root): McpManager is constructed before SessionManager is
+   * wired, and must not hard-depend on it. Used only to resolve a session to its
+   * workspace — see `scopeFor`.
+   */
+  private sessions: SessionManager | null = null;
 
   constructor(
     private readonly secrets: SecretStore,
     private readonly settings: SettingsManager,
     private readonly workspace: WorkspaceManager,
   ) {}
+
+  /** Wire the session lookup used to resolve a run's workspace. See `scopeFor`. */
+  setSessionManager(sessions: SessionManager): void {
+    this.sessions = sessions;
+  }
 
   /** Begin the heartbeat + probe eager servers. Called once after app-ready. */
   start(): void {
@@ -327,12 +384,12 @@ export class McpManager {
   /* ------------------------------------------------------ injection producers */
 
   /** Servers to inject into a Claude run (options.mcpServers) + trusted allow list. */
-  claudeServersFor(): ClaudeMcpInjection {
+  claudeServersFor(sessionId: string, scope?: string | null): ClaudeMcpInjection {
     const s = this.settings.getAll().mcp;
     if (!s.enabled || !s.injectIntoClaude) return { servers: {}, allowedTools: [] };
     const servers: Record<string, unknown> = {};
     const allowedTools: string[] = [];
-    for (const cfg of this.injectable('claude')) {
+    for (const cfg of this.injectable('claude', sessionId, scope)) {
       if (cfg.transport === 'stdio') {
         servers[cfg.name] = { command: cfg.command, args: cfg.args, env: this.resolveEnv(cfg) };
       } else {
@@ -344,13 +401,15 @@ export class McpManager {
   }
 
   /** Servers to inject into a Cursor run (.cursor/mcp.json) + allow rules + secret env. */
-  cursorSpecFor(): CursorMcpInjection {
+  cursorSpecFor(sessionId: string, scope?: string | null): CursorMcpInjection {
     const s = this.settings.getAll().mcp;
-    if (!s.enabled || !s.injectIntoCursor) return { userServers: {}, allowRules: [], secretEnv: {} };
+    if (!s.enabled || !s.injectIntoCursor)
+      return { userServers: {}, allowRules: [], planAllowRules: [], secretEnv: {} };
     const userServers: Record<string, unknown> = {};
     const allowRules: string[] = [];
+    const planAllowRules: string[] = [];
     const secretEnv: Record<string, string> = {};
-    for (const cfg of this.injectable('cursor')) {
+    for (const cfg of this.injectable('cursor', sessionId, scope)) {
       if (cfg.transport === 'stdio') {
         const env: Record<string, string> = {};
         for (const [k, fv] of Object.entries(cfg.env)) {
@@ -368,26 +427,186 @@ export class McpManager {
             : { url: cfg.url, headers };
       }
       if (cfg.trust === 'trusted') allowRules.push(`Mcp(${cfg.name}:*)`);
+      if (cfg.planAccess === 'all') {
+        planAllowRules.push(`Mcp(${cfg.name}:*)`);
+      } else if (cfg.planAccess === 'annotated') {
+        for (const t of cachedTools(getDb(), cfg.id)) {
+          if (t.readOnly === true) planAllowRules.push(`Mcp(${cfg.name}:${t.name})`);
+        }
+      }
     }
-    return { userServers, allowRules, secretEnv };
+    return { userServers, allowRules, planAllowRules, secretEnv };
   }
 
   /** `mcp__<name>__` prefixes of trusted, enabled, in-scope servers (both providers). */
-  trustedToolMatchers(): string[] {
+  trustedToolMatchers(sessionId: string, scope?: string | null): string[] {
     if (!this.settings.getAll().mcp.enabled) return [];
-    return this.scoped()
+    return this.scoped(sessionId, scope)
       .filter((c) => c.enabled && c.trust === 'trusted')
       .map((c) => `mcp__${c.name}__`);
   }
 
-  /* --------------------------------------------------------------- internals */
-
-  private scoped(): McpServerConfig[] {
-    return listServers(getDb(), this.activeWorkspaceId());
+  /**
+   * May a plan/ask run read RESOURCES from this server?
+   *
+   * MCP resources are read-only by definition, but `ReadMcpResource` names a
+   * SERVER — so allowing it blindly would reach straight past that server's
+   * `planAccess: 'block'`. The per-server setting stays the single authority
+   * over that server's data, tools and resources alike. Resources carry no
+   * per-item readOnlyHint, so 'annotated' and 'all' both qualify.
+   */
+  resourceReadableIn(serverName: string, sessionId: string, scope?: string | null): boolean {
+    if (!this.settings.getAll().mcp.enabled) return false;
+    const cfg = this.scoped(sessionId, scope).find((c) => c.enabled && c.name === serverName);
+    return !!cfg && cfg.planAccess !== 'block';
   }
 
-  private injectable(provider: 'claude' | 'cursor'): McpServerConfig[] {
-    return this.scoped().filter((c) => c.enabled && c.providers[provider]);
+  /**
+   * Resolve a fully-qualified `mcp__<server>__<tool>` name back to its config.
+   *
+   * PREFIX-matched, never split on `__`: `MCP_SERVER_NAME_RE` permits underscores
+   * in a server name, so `mcp__my__server__do__thing` is genuinely ambiguous.
+   * Longest matching prefix wins, and the remainder is the tool name.
+   */
+  private resolveMcpTool(
+    qualified: string,
+    sessionId?: string,
+    scope?: string | null,
+  ): { cfg: McpServerConfig; tool: string } | null {
+    if (!this.settings.getAll().mcp.enabled) return null;
+    return matchPrefix(this.scoped(sessionId, scope), qualified);
+  }
+
+  /**
+   * May this tool run inside a read-only session mode (`plan` / `ask`), and if
+   * not, WHY?
+   *
+   * The reason is load-bearing, not decoration: a denial here used to blame the
+   * `planAccess` setting unconditionally, which is simply wrong when the server
+   * is unknown, out of scope, or merely untrusted — and it sent the user to a
+   * settings field that was already correct.
+   *
+   * This answers "is it read-only", NOT "is it approved" — the permission gate
+   * still runs on top, so a tool that qualifies here still prompts unless the
+   * server is separately marked trusted.
+   *
+   * Reads the DURABLE tool cache rather than `this.runtime`, which is empty
+   * after a restart until the server is probed again. An empty cache therefore
+   * FAILS CLOSED: an enabled server is probed on add/update/enable/eager-start
+   * and by the heartbeat, so "no cached tools" means it never connected, and
+   * denying is the correct reading of that.
+   */
+  planVerdictFor(qualified: string, sessionId: string, scope?: string | null): McpPlanVerdict {
+    if (!this.settings.getAll().mcp.enabled) return { ok: false, reason: 'mcp-disabled' };
+    const hit = this.resolveMcpTool(qualified, sessionId, scope);
+    if (!hit) {
+      // Distinguish "no such server" from "wrong workspace". Unscoped lookup,
+      // deny path only — never an input to an allow decision.
+      const other = matchPrefix(listAllServers(getDb()), qualified);
+      return other
+        ? { ok: false, reason: 'out-of-scope', server: other.cfg.name }
+        : { ok: false, reason: 'unknown-server' };
+    }
+    const server = hit.cfg.name;
+    if (hit.cfg.planAccess === 'block') return { ok: false, reason: 'blocked', server };
+    if (hit.cfg.planAccess === 'all') return { ok: true };
+    const declared = cachedTools(getDb(), hit.cfg.id).some(
+      (t) => t.name === hit.tool && t.readOnly === true,
+    );
+    return declared ? { ok: true } : { ok: false, reason: 'not-annotated', server };
+  }
+
+  /**
+   * Fully-qualified tool names to put in a Claude PLAN run's `options.allowedTools`.
+   *
+   * This exists only to get past the Agent SDK's own plan-mode block, which
+   * auto-denies `mcp__*` before `canUseTool` is ever consulted. Entries here
+   * "execute automatically without asking the user for approval" (the SDK's own
+   * words), so membership requires an explicit human decision — one of exactly
+   * two, mirroring the MCP spec's trusted/untrusted split:
+   *
+   *   planAccess 'all'       — the USER asserted, per server and out of band,
+   *                            that this server only reads. Their machine,
+   *                            their claim; it stands on its own, and it is a
+   *                            more deliberate act than clicking a mid-run
+   *                            dialog. Trust is NOT additionally required.
+   *   planAccess 'annotated' — the claim comes from the SERVER's own
+   *                            readOnlyHint, and the spec says a client must
+   *                            treat annotations as untrusted unless the server
+   *                            is trusted. So this case DOES require
+   *                            `trust: 'trusted'`.
+   *
+   * 'block' never qualifies. Nothing else reaches this list, so a run can never
+   * silently skip a prompt the user did not already answer.
+   *
+   * Exact names, never a `mcp__<server>__*` wildcard: a wildcard would readmit
+   * that server's WRITE tools past the SDK's block. The single exception is a
+   * server the user declared read-only wholesale and which has no cached tools
+   * to enumerate.
+   */
+  planAllowedToolsFor(sessionId: string, scope?: string | null): string[] {
+    const s = this.settings.getAll().mcp;
+    if (!s.enabled || !s.injectIntoClaude) return [];
+    const out: string[] = [];
+    for (const cfg of this.injectable('claude', sessionId, scope)) {
+      if (cfg.planAccess === 'block') continue;
+      if (cfg.planAccess === 'annotated' && cfg.trust !== 'trusted') continue;
+      const tools = cachedTools(getDb(), cfg.id);
+      if (cfg.planAccess === 'all') {
+        if (tools.length === 0) out.push(`mcp__${cfg.name}__*`);
+        else for (const t of tools) out.push(`mcp__${cfg.name}__${t.name}`);
+      } else {
+        for (const t of tools) {
+          if (t.readOnly === true) out.push(`mcp__${cfg.name}__${t.name}`);
+        }
+      }
+      if (out.length >= MCP_LIMITS.maxPlanAllowedTools) break;
+    }
+    return out.slice(0, MCP_LIMITS.maxPlanAllowedTools);
+  }
+
+  /* --------------------------------------------------------------- internals */
+
+  private scoped(sessionId?: string, scope?: string | null): McpServerConfig[] {
+    return listServers(getDb(), this.scopeFor(sessionId, scope));
+  }
+
+  private injectable(
+    provider: 'claude' | 'cursor',
+    sessionId?: string,
+    scope?: string | null,
+  ): McpServerConfig[] {
+    return this.scoped(sessionId, scope).filter((c) => c.enabled && c.providers[provider]);
+  }
+
+  /**
+   * The workspace whose MCP servers a call may see.
+   *
+   * Callers with no session — the UI list, the heartbeat, eager startup,
+   * import/export — legitimately follow the ACTIVE workspace. A run-path caller
+   * always passes a session, and resolves through that session's own workspace
+   * (`sessions.workspace_id` is TEXT NOT NULL, so the session always knows).
+   * `scope` is the workspace pinned on the run record at run start; it wins,
+   * because the run's servers were injected from it and the live gate must
+   * answer for the same set even if the active workspace changes mid-run.
+   *
+   * Same shape as `WorktreeManager.resolveSessionRoot`, including the
+   * `workspace.getById` validity check so a stale id cannot silently collapse
+   * the scope.
+   *
+   * The fallback is the ACTIVE workspace, not global-only. Narrowing looks
+   * safer but is not: on the gate side a narrow scope fails closed (fine), but
+   * on the INJECTION side it means the server is never registered with the
+   * provider at all, so the model gets an opaque "no such tool" instead of a
+   * gate decision. Both sides run through this one function precisely so they
+   * cannot disagree — that disagreement is the bug this exists to prevent.
+   */
+  private scopeFor(sessionId?: string, scope?: string | null): string | null {
+    if (scope && this.workspace.getById(scope)) return scope;
+    if (!sessionId) return this.activeWorkspaceId();
+    const ws = this.sessions?.get(sessionId)?.workspaceId;
+    if (ws && this.workspace.getById(ws)) return ws;
+    return this.activeWorkspaceId();
   }
 
   private activeWorkspaceId(): string | null {

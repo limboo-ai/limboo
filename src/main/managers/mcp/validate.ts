@@ -20,6 +20,7 @@ import type {
   McpStartup,
   McpTransport,
   McpTrust,
+  McpPlanAccess,
 } from '@shared/types';
 import { categorizeServer } from './categorize';
 
@@ -56,6 +57,7 @@ export interface PreparedServer {
     enabled: boolean;
     startup: McpStartup;
     trust: McpTrust;
+    planAccess: McpPlanAccess;
     timeoutMs: number;
     restartPolicy: McpRestartPolicy;
     providers: { claude: boolean; cursor: boolean };
@@ -156,6 +158,11 @@ export function prepareServer(
   const secretHeaders = validatePairs(input.secretHeaders, true, 'header');
 
   const trust: McpTrust = input.trust === 'trusted' || input.trust === 'ask' ? input.trust : opts.defaultTrust;
+  // Whitelist-only, so an imported/marketplace definition can never widen its
+  // own plan/ask reach — 'all' is reachable from the settings form and nowhere
+  // else.
+  const planAccess: McpPlanAccess =
+    input.planAccess === 'block' || input.planAccess === 'all' ? input.planAccess : 'annotated';
   const startup: McpStartup = input.startup === 'eager' ? 'eager' : 'on-demand';
   const restartPolicy: McpRestartPolicy = input.restartPolicy === 'never' ? 'never' : 'on-failure';
   const category: McpCategory =
@@ -184,6 +191,7 @@ export function prepareServer(
       enabled: input.enabled !== false,
       startup,
       trust,
+      planAccess,
       timeoutMs,
       restartPolicy,
       providers: {

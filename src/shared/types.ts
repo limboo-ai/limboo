@@ -736,6 +736,21 @@ export type McpStartup = 'eager' | 'on-demand';
 /** Whether the server's tools auto-approve or prompt through the permission gate. */
 export type McpTrust = 'ask' | 'trusted';
 
+/**
+ * How far a server's tools may reach inside the read-only session modes
+ * (`plan` / `ask`), which otherwise deny every non-read tool outright.
+ *
+ *   block     — never (the tool is denied, as before this setting existed)
+ *   annotated — only tools whose server-declared `readOnlyHint` is true
+ *   all       — the user asserts the whole server is read-only
+ *
+ * Deliberately ORTHOGONAL to `McpTrust`: trust answers "auto-approve?", this
+ * answers "do I believe this server's read-only claims?". Coupling them would
+ * force a user who only wants read-only planning access to also grant blanket
+ * auto-approval in every mode.
+ */
+export type McpPlanAccess = 'block' | 'annotated' | 'all';
+
 /** Restart policy for a crashed stdio server. */
 export type McpRestartPolicy = 'never' | 'on-failure';
 
@@ -773,6 +788,15 @@ export type McpServerStatus =
 export interface McpToolInfo {
   name: string;
   description?: string;
+  /**
+   * The server's own `annotations.readOnlyHint` (MCP spec), narrowed by
+   * `destructiveHint`. This is a HINT the SERVER asserts about itself, never
+   * enforcement — a server can claim read-only and write anyway. Absent means
+   * "not claimed" (the spec's default is `false`). Consulted only when the user
+   * has set that server's `planAccess` to `'annotated'`; the permission gate
+   * still runs on top.
+   */
+  readOnly?: boolean;
 }
 
 /**
@@ -812,6 +836,8 @@ export interface McpServerConfig {
   enabled: boolean;
   startup: McpStartup;
   trust: McpTrust;
+  /** How far this server's tools reach inside the read-only plan/ask modes. */
+  planAccess: McpPlanAccess;
   /** Per-tool-call wall-clock cap (ms). */
   timeoutMs: number;
   restartPolicy: McpRestartPolicy;
@@ -864,6 +890,7 @@ export interface McpServerInput {
   enabled?: boolean;
   startup?: McpStartup;
   trust?: McpTrust;
+  planAccess?: McpPlanAccess;
   timeoutMs?: number;
   restartPolicy?: McpRestartPolicy;
   providers?: { claude: boolean; cursor: boolean };

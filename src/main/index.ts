@@ -203,6 +203,10 @@ function bootstrap(): void {
     // health probes, and permission trust. Its own SecretStore instance (the
     // store is stateless — filesystem-backed) keeps MCP secrets namespaced.
     mcp = new McpManager(new SecretStore(), settings, workspace);
+    // A run's MCP scope comes from ITS session's workspace, not from whichever
+    // workspace happens to be active — otherwise switching projects mid-run
+    // silently changes which servers the permission gate can see.
+    mcp.setSessionManager(sessions);
     // The Work Graph — a provider-neutral platform service owned by the app,
     // peer to Memory / Search / Resume. It normalizes BOTH adapters' event
     // streams into one typed, queryable DAG of the work itself. Purely

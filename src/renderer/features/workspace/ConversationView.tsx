@@ -31,6 +31,7 @@ import { MessageSkeleton, ThinkingPulse } from './MessageSkeleton';
 import { InlineApproval } from './InlineApproval';
 import { ToolDiff } from './ToolDiff';
 import { CodeBlock } from './CodeBlock';
+import { PlanCard } from '@/renderer/features/plan/PlanCard';
 
 /** Human label for a file-edit tool's change status, shown inline in the stream. */
 const CHANGE_WORD: Record<string, string> = {
@@ -232,6 +233,11 @@ export function ConversationView({ sessionId }: { sessionId: string }) {
           }
         />
       )}
+      {/* The session's plan, at the tail of the transcript. A plan is session
+          state rather than a turn (it is replaced, not appended), and "the most
+          recent thing said" is where it belongs — right above the composer that
+          approves it. Renders nothing when the session has no plan. */}
+      <PlanCard sessionId={sessionId} />
       {/* Scroll anchor — a small bottom margin keeps the last line off the very
           edge when auto-scrolling (honored by scrollIntoView). The composer is
           docked in flow below the scroller, so no large reserve is needed. */}
