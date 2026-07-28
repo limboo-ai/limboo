@@ -2204,6 +2204,21 @@ export type RequestPhase =
   | 'recovering' // recovery loop re-attempting this run
   | 'done'; // completed (see outcome)
 
+/**
+ * Phases in which a session's run counts as "in flight" — the single definition
+ * of busy, shared by both processes. Main uses it to prove a phase against the
+ * live run map; the renderer uses it to gate every busy/disabled control. They
+ * used to be separate literals, which is exactly how a window could inherit a
+ * phase main no longer believed in.
+ */
+export const RUNNING_REQUEST_PHASES: readonly RequestPhase[] = [
+  'submitting',
+  'connecting',
+  'streaming',
+  'recovering',
+  'awaiting-permission',
+];
+
 /** Live state of the active run, mirrored to the renderer. */
 export interface RequestState {
   /** Session whose run this describes, or null when idle. */

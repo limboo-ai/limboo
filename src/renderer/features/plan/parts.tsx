@@ -84,7 +84,10 @@ export function usePlanActions(
  * same secondary-confirm rule and the same busy guard, which is the entire
  * reason this component lives here rather than in each surface:
  *
- *   • `panel`  — the Tasks drawer: an accent block with full-weight buttons.
+ *   • `panel`  — the Tasks drawer: full-weight buttons sitting directly on the
+ *                panel column. It carries NO container of its own — the row and
+ *                its lead-in line are returned as a Fragment so the drawer's own
+ *                `flex flex-col gap-3` spaces them like every other block.
  *   • `inline` — the conversation stream: borderless text controls that read as
  *                a continuation of the transcript, not a card docked in it.
  */
@@ -168,7 +171,7 @@ export function ApprovalControls({
   }
 
   return (
-    <div className="flex flex-col gap-2 rounded-md border border-accent/40 bg-accent/10 px-3 py-2.5">
+    <>
       <p className="text-[12px] text-muted">
         {busy
           ? 'Finishing the planning run — the controls unlock in a moment.'
@@ -217,7 +220,7 @@ export function ApprovalControls({
           Reject
         </button>
       </div>
-    </div>
+    </>
   );
 }
 

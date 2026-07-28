@@ -66,6 +66,7 @@ import type {
   TerminalCommandRecord,
   ToolRisk,
 } from '@shared/types';
+import { RUNNING_REQUEST_PHASES } from '@shared/types';
 import {
   ACTIVITY_LIMITS,
   AGENT_LIMITS,
@@ -1028,6 +1029,7 @@ export class AgentManager {
    * last broadcast, which only carries the fields in {@link setState} patches.
    */
   getState(): AgentState {
+    this.healPhantomRequests();
     return {
       ...this.state,
       requestsBySession: Object.fromEntries(this.requests),
@@ -1037,12 +1039,40 @@ export class AgentManager {
   }
 
   /**
+   * Reconcile any request phase that claims to be in flight while `runs` holds
+   * no entry for it. The phase map is authoritative for every busy/disabled
+   * control in the UI — including the plan's Approve buttons, which are gated on
+   * it while Reject is not, so a phase that outlives its run reads to the user
+   * as "I can only reject". A run that ends without reaching `completeRequest`
+   * (a window reload mid-run, an iterator that never unwinds after the
+   * ExitPlanMode interrupt) left exactly that, and `getState` replayed it to
+   * every hydrating window. Proving the phase against the run map on the way out
+   * makes it self-healing.
+   */
+  private healPhantomRequests(): void {
+    for (const [sessionId, request] of this.requests) {
+      if (!RUNNING_REQUEST_PHASES.includes(request.phase)) continue;
+      if (this.runs.has(sessionId)) continue;
+      this.diag(
+        'request',
+        'warning',
+        `Cleared a stale '${request.phase}' phase with no live run`,
+        undefined,
+        sessionId,
+      );
+      // Through setRequest so live windows heal too, not just the hydrating one.
+      this.setRequest(sessionId, { phase: 'done', outcome: 'cancelled', attempt: 0 });
+    }
+  }
+
+  /**
    * Boot the manager: probe the capability once, then begin heartbeat
    * supervision. Called from the main-process wiring after construction.
    */
   start(): void {
     this.setLifecycle('initializing');
     this.diag('lifecycle', 'info', 'Agent manager starting');
+    this.reconcilePlans();
     this.lastModel = this.settings.getAll().agent.model;
     this.probeHealth(true);
     this.startHeartbeat();
@@ -3355,8 +3385,57 @@ export class AgentManager {
     return items.length > 0 ? { title: plan.title, items } : null;
   }
 
+  /**
+   * Settle plan rows stranded by the last shutdown. Only `send`'s `finally`
+   * moves a plan off `planning`, and only a completed implement run moves one
+   * off `implementing` — so a quit or crash mid-run leaves a row in a state the
+   * UI renders as permanently in-flight. `PlanPanel` hides its whole toolbar
+   * while `planning` and its approval block unless `ready`, so such a row has NO
+   * approve, reject or regenerate: the session is stuck with no way out.
+   *
+   * Safe to do unconditionally at boot: `this.runs` is empty, so nothing here
+   * can be alive. Writes the DB only — no window exists yet to receive an event,
+   * and every renderer hydrates through {@link getSnapshot}, which reads it.
+   */
+  private reconcilePlans(): void {
+    try {
+      const rows = getDb()
+        .prepare("SELECT session_id FROM agent_plans WHERE status IN ('planning', 'implementing')")
+        .all() as Array<{ session_id: string }>;
+      let settled = 0;
+      for (const row of rows) {
+        const plan = this.loadPlan(row.session_id);
+        if (!plan) continue;
+        // A planning run that never presented a plan is over; an implementation
+        // that never finished goes back to `ready` so it can be approved again —
+        // 'completed' would claim work that demonstrably did not happen.
+        const status: PlanStatus = plan.status === 'planning' ? 'rejected' : 'ready';
+        this.savePlan({ ...plan, status });
+        settled += 1;
+      }
+      if (settled > 0) {
+        this.diag('lifecycle', 'info', `Settled ${settled} plan(s) interrupted by the last shutdown`);
+      }
+    } catch (err) {
+      // Never block boot on housekeeping.
+      this.diag(
+        'lifecycle',
+        'warning',
+        'Could not reconcile interrupted plans',
+        err instanceof Error ? err.message : String(err),
+      );
+    }
+  }
+
   /** Open a fresh planning artifact when a plan run starts. */
   private beginPlan(sessionId: string, prompt: string): void {
+    // A plan awaiting approval is a user-visible artifact — never overwrite one
+    // without filing it in History first. Restoring the composer's default
+    // `plan` mode after a restart made this reachable by simply typing.
+    const existing = this.loadPlan(sessionId);
+    if (existing && (existing.status === 'ready' || existing.status === 'implementing')) {
+      this.snapshotRevision(existing);
+    }
     const plan: SessionPlan = {
       sessionId,
       status: 'planning',
@@ -3431,10 +3510,21 @@ export class AgentManager {
 
     // Cursor implement passes re-run with --force on the resumed chat (see
     // runCursorOnce), so the prompt asks it to apply what it already proposed.
-    const prompt =
+    const instruction =
       providerForModel(this.settings.getAll().agent.model) === 'cursor'
-        ? 'The plan is approved — implement it now, applying the proposed changes exactly as planned, working through the steps in order.'
-        : 'The plan is approved. Implement it now, working through the steps in order and tracking your progress with the TodoWrite tool. Ask for approval before any change you are unsure about.';
+        ? 'The plan below is approved — implement it now, applying the proposed changes exactly as planned, working through the steps in order.'
+        : 'The plan below is approved. Implement it now, working through the steps in order and tracking your progress with the TodoWrite tool. Ask for approval before any change you are unsure about.';
+    // The plan RIDES THE PROMPT rather than relying on the provider conversation
+    // to still hold it. A plan run always ends on an ExitPlanMode deny with
+    // `interrupt: true`, which leaves a tool call unanswered — exactly the
+    // condition `stop()` (and quit, via `cleanup()`) uses to forget the stored
+    // resume/chat id. Without this the approval that follows a restart opened a
+    // FRESH conversation and pointed it at a plan the model had never seen: the
+    // run "succeeded" having done nothing, and markPlanCompletedIfImplementing
+    // then filed the plan as completed. Approve must not depend on state that
+    // does not survive the process.
+    const body = plan.markdown.trim().slice(0, AGENT_LIMITS.planPromptMax);
+    const prompt = body ? `${instruction}\n\n<approved-plan>\n${body}\n</approved-plan>` : instruction;
     try {
       await this.send(sessionId, prompt, mode);
     } catch (err) {

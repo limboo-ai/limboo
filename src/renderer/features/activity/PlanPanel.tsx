@@ -173,7 +173,16 @@ function PlanView({
             )}
           </span>
         </div>
-        {!planning && (
+        {/* While planning there is no document to copy/export/pin yet — but
+            Regenerate must stay reachable, or a planning run that never settles
+            leaves the panel with no control at all. */}
+        {planning ? (
+          <div className="flex shrink-0 items-center justify-end gap-0.5">
+            <IconButton size="sm" label="Regenerate plan" onClick={() => sessionId && regeneratePlan(sessionId)}>
+              <RefreshCw size={13} />
+            </IconButton>
+          </div>
+        ) : (
           <div className="flex shrink-0 flex-wrap items-center justify-end gap-0.5">
             <IconButton size="sm" label="Copy plan as Markdown" onClick={copy}>
               <Copy size={13} />

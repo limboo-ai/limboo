@@ -5,16 +5,15 @@
  * Running state is never stored on the session itself; it is purely agent state.
  */
 import type { RequestPhase } from '@shared/types';
+import { RUNNING_REQUEST_PHASES } from '@shared/types';
 import { useAgentStore } from '@/renderer/stores/useAgentStore';
 
-/** Phases in which a session's run counts as "in flight" (busy/disabled UI). */
-export const RUNNING_PHASES = new Set<RequestPhase>([
-  'submitting',
-  'connecting',
-  'streaming',
-  'recovering',
-  'awaiting-permission',
-]);
+/**
+ * Phases in which a session's run counts as "in flight" (busy/disabled UI).
+ * Derived from the shared list so main and renderer can never disagree about
+ * what busy means — main proves these phases against its live run map.
+ */
+export const RUNNING_PHASES = new Set<RequestPhase>(RUNNING_REQUEST_PHASES);
 
 /**
  * Whether a specific session's agent run is currently in flight. Reads the

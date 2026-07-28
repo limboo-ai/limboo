@@ -45,6 +45,12 @@ function emptySnapshot(): AgentSessionSnapshot {
  * state: nothing renders from it (the buttons gate on the run phase), it exists
  * only to keep a double-click — or a command-palette invoke racing the button —
  * from issuing two approvals for one plan.
+ *
+ * Released on the FIRST plan event that follows (main commits `implementing` and
+ * pushes it before it starts the run), never on the invoke settling: that
+ * promise only resolves when the whole implementation run does, so a run that
+ * hung left the session in here permanently — and every later Approve click
+ * returned with no toast, no log and no visible effect.
  */
 const approvalsInFlight = new Set<string>();
 
@@ -217,6 +223,10 @@ export const useAgentStore = create<AgentStoreState>((set, get) => {
     // Any other event must see the fully-applied stream first — otherwise a
     // `message-done` (which replaces text) could race ahead of buffered deltas.
     flushDeltasNow();
+
+    // Main commits the plan transition and pushes it BEFORE it starts the run,
+    // so the first plan event is the earliest honest proof the approval landed.
+    if (event.kind === 'plan') approvalsInFlight.delete(event.sessionId);
 
     set((state) => {
       const patch: Partial<AgentStoreState> = {};
@@ -399,6 +409,9 @@ export const useAgentStore = create<AgentStoreState>((set, get) => {
     loadSession: async (sessionId) => {
       const api = window.limboo?.agent;
       if (!api) return;
+      // Reopening a session re-reads its plan from the DB, so any approval this
+      // window still believes is in flight is stale by definition.
+      approvalsInFlight.delete(sessionId);
       const snapshot = await api.getSnapshot(sessionId);
       set((state) => ({ bySession: { ...state.bySession, [sessionId]: snapshot } }));
     },
@@ -612,8 +625,11 @@ export const useAgentStore = create<AgentStoreState>((set, get) => {
         .catch((err: unknown) => {
           // The run never started: main has already restored the plan to
           // 'ready', so put the composer back too rather than leaving it in an
-          // implement mode with nothing running.
-          if (previousMode) get().setComposerMode(sessionId, previousMode);
+          // implement mode with nothing running. After a restart this session
+          // has no remembered mode at all — fall back to 'plan', which is what a
+          // plan awaiting approval actually means, instead of stranding the
+          // composer in 'default'.
+          get().setComposerMode(sessionId, previousMode ?? 'plan');
           useUIStore.getState().addToast({
             title: 'Could not start implementation',
             description: err instanceof Error ? err.message : String(err),

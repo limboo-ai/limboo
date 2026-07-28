@@ -71,6 +71,12 @@ export const AGENT_LIMITS = {
   promptMax: 100_000,
   /** Cap on the plan markdown captured from ExitPlanMode (renderer-displayed). */
   planMarkdownMax: 262_144,
+  /**
+   * Cap on the plan markdown re-injected into the approval prompt. Far smaller
+   * than {@link planMarkdownMax}: that bound protects a stored/rendered
+   * document, this one rides in a conversation turn.
+   */
+  planPromptMax: 24_000,
 } as const;
 
 /** Caps for the audit-style agent activity feed (label + detail truncation). */

@@ -22,6 +22,54 @@ export interface ReleaseNotesEntry {
 /** Newest first. */
 export const RELEASE_NOTES: ReleaseNotesEntry[] = [
   {
+    version: '1.13.2',
+    date: '2026-07-28',
+    markdown: `A plan you left waiting can be approved again.
+
+### Fixed
+
+- **Approving a plan after reopening the app did nothing.** A plan waiting for
+  your approval was saved, but the conversation that produced it was not — a plan
+  run always ends by interrupting the agent, and an interrupted conversation is
+  cleared so your next message cannot fail on it. Approving afterwards therefore
+  started a fresh conversation and told it to implement a plan it had never seen:
+  the run finished having done nothing, and the plan was filed as complete. The
+  approved plan is now sent with the approval, so it no longer matters whether
+  the earlier conversation survived. This applies to both Claude and Cursor.
+- **Approve was greyed out while Reject still worked.** Approve, "Approve &
+  accept edits" and "Keep planning" are disabled while a run is finishing;
+  Reject is not. A run that ended without reporting back — after reloading the
+  window mid-run, or when a planning run did not fully unwind — left the session
+  looking permanently busy, so the only control that still responded was Reject.
+  A session that claims to be working with nothing running is now corrected on
+  the spot.
+- **Plans could get stuck with no way out.** Closing the app while a plan was
+  being written, or while one was being implemented, left it in that state
+  forever — and while a plan is being written the panel hides its whole toolbar,
+  so there was no approve, no reject and no regenerate. Interrupted plans are now
+  settled on startup: one that was never finished is cleared, and one that was
+  part-way through being implemented returns to awaiting approval so you can
+  start it again. Regenerate also stays available while a plan is being written.
+- **Approve could stop responding with no explanation.** Clicking Approve blocked
+  further clicks until the whole implementation run finished, so a run that hung
+  left the button silently dead for the rest of the session. It is now released
+  as soon as the run actually starts.
+- **Starting a new plan discarded the one waiting for approval.** It was replaced
+  without being recorded, so it was not even in the plan's own History. A pending
+  plan is now saved to History first. Reopening the app restores Plan mode by
+  default, which made this reachable by simply typing.
+- **A failed approval could leave the composer in the wrong mode.** After
+  reopening the app it stayed on "Ask before edits" even though the plan had been
+  put back and was waiting for approval again. It now returns to Plan.
+
+### Changed
+
+- **The plan approval controls are no longer boxed in.** The Approve, "Approve &
+  accept edits", "Keep planning" and Reject buttons sit directly on the panel
+  instead of inside a tinted card, matching how the same controls already read in
+  the conversation.`,
+  },
+  {
     version: '1.13.1',
     date: '2026-07-28',
     markdown: `Stopping the agent mid-task no longer breaks your next message.
@@ -216,80 +264,6 @@ composer forever.
 - **Settings no longer offers "Archive on completion".** The switch had never
   been connected to anything, and with finished plans now hidden by rule it would
   read as the control for that.`,
-  },
-  {
-    version: '1.10.0',
-    date: '2026-07-27',
-    markdown: `Plan and Ask are read-only modes, and they enforced that by refusing anything
-they could not prove safe. Because nothing could prove a third-party tool safe,
-both modes blocked every MCP server you had connected — and the agent's own
-research subagents — in every project, with no prompt and no way to allow them.
-Read-only now means read-only rather than unusable. The plan itself also leaves
-the side drawer and appears in the conversation, where the work is.
-
-### Fixed
-
-- **Connected MCP tools were blocked while planning, with no way through.** A
-  tool from a server you added yourself — a database browser, a deployment
-  client — was refused in Plan and Ask even when it only reads, and the refusal
-  offered no way to permit it. Servers now carry a **Plan & Ask access** setting,
-  and read-only tools work in both modes.
-- **The agent could not delegate research while planning.** Spawning a subagent
-  was treated as a mutating command and blocked outright, so planning a large
-  change could not fan out to explore the codebase first — in any project. A
-  subagent performs no work of its own, and everything it goes on to do is
-  checked by the same permission gate under the same mode, so it can still only
-  read while a plan is being written.
-- **A Plan or Ask run using Cursor could fail before it started.** A missing
-  default in the permission configuration threw as the run was assembled.
-- **Cursor mislabelled MCP tool calls.** Tool names arriving from Cursor's hooks
-  were reformatted before they were recognized, so a server's tools were shown
-  under a mangled name and were never matched against that server's own
-  permissions.
-- **Editing an MCP server discarded everything known about its tools.** Saving an
-  unrelated field — a rename, a timeout — cleared the cached tool list until the
-  next successful health probe, which also meant a server briefly lost the
-  read-only information its permissions depend on.
-- **A blocked tool now says what to change.** Every denial pointed at the same
-  setting, even when the setting was already correct and the real cause was a
-  server that was unknown, belonged to another project, or was not trusted.
-
-### Added
-
-- **Plan & Ask access, per MCP server.** Three choices: *Blocked* (nothing runs
-  in the read-only modes), *Read-only tools* (only the tools that server declares
-  read-only), or *Whole server* (you vouch for it). A server that declares
-  nothing says so in its settings rather than silently allowing nothing, and
-  tools it does declare read-only are marked in its tool list.
-- **The plan appears in the conversation.** It used to live only in the narrow
-  Tasks drawer, so a long plan read as raw Markdown next to the work it
-  describes. It now renders as text at full width in the stream, with copy, a
-  Markdown view, collapse, and a control that opens the full panel. Approving no
-  longer means leaving the conversation to find the button.
-
-### Changed
-
-- **A run's MCP servers come from its own project.** They were resolved from
-  whichever project happened to be open, so switching or closing a project while
-  the agent was working changed which servers it was allowed to use mid-run — a
-  trusted server would start asking for approval, and a permitted one could be
-  refused. The set is now fixed when the run starts, from the session's own
-  project.
-
-### Security
-
-- **A server's claim to be read-only is not taken on faith.** Servers may declare
-  which of their tools only read. Following the Model Context Protocol's own
-  guidance, that declaration is honored only for servers you have marked trusted;
-  for anything else it is shown as information and the tool still asks. Choosing
-  *Whole server* is recorded as your assertion, not the server's.
-- **Permitting a tool while planning never widens it elsewhere.** The read-only
-  allowance applies to Plan and Ask alone; in the normal modes every one of these
-  tools still asks exactly as before, and the workspace, app-data and
-  sensitive-file guards run ahead of it unchanged.
-- **A subagent that asks to run outside the sandbox is refused while planning**
-  and recorded in the timeline, alongside the existing audit for shell commands
-  that do the same.`,
   },
 ];
 

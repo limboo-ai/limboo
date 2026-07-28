@@ -7,6 +7,53 @@ All notable changes to Limboo are documented here. The format is based on
 
 ## [Unreleased]
 
+## [1.13.2] - 2026-07-28
+
+A plan you left waiting can be approved again.
+
+### Fixed
+
+- **Approving a plan after reopening the app did nothing.** A plan waiting for
+  your approval was saved, but the conversation that produced it was not — a plan
+  run always ends by interrupting the agent, and an interrupted conversation is
+  cleared so your next message cannot fail on it. Approving afterwards therefore
+  started a fresh conversation and told it to implement a plan it had never seen:
+  the run finished having done nothing, and the plan was filed as complete. The
+  approved plan is now sent with the approval, so it no longer matters whether
+  the earlier conversation survived. This applies to both Claude and Cursor.
+- **Approve was greyed out while Reject still worked.** Approve, "Approve &
+  accept edits" and "Keep planning" are disabled while a run is finishing;
+  Reject is not. A run that ended without reporting back — after reloading the
+  window mid-run, or when a planning run did not fully unwind — left the session
+  looking permanently busy, so the only control that still responded was Reject.
+  A session that claims to be working with nothing running is now corrected on
+  the spot.
+- **Plans could get stuck with no way out.** Closing the app while a plan was
+  being written, or while one was being implemented, left it in that state
+  forever — and while a plan is being written the panel hides its whole toolbar,
+  so there was no approve, no reject and no regenerate. Interrupted plans are now
+  settled on startup: one that was never finished is cleared, and one that was
+  part-way through being implemented returns to awaiting approval so you can
+  start it again. Regenerate also stays available while a plan is being written.
+- **Approve could stop responding with no explanation.** Clicking Approve blocked
+  further clicks until the whole implementation run finished, so a run that hung
+  left the button silently dead for the rest of the session. It is now released
+  as soon as the run actually starts.
+- **Starting a new plan discarded the one waiting for approval.** It was replaced
+  without being recorded, so it was not even in the plan's own History. A pending
+  plan is now saved to History first. Reopening the app restores Plan mode by
+  default, which made this reachable by simply typing.
+- **A failed approval could leave the composer in the wrong mode.** After
+  reopening the app it stayed on "Ask before edits" even though the plan had been
+  put back and was waiting for approval again. It now returns to Plan.
+
+### Changed
+
+- **The plan approval controls are no longer boxed in.** The Approve, "Approve &
+  accept edits", "Keep planning" and Reject buttons sit directly on the panel
+  instead of inside a tinted card, matching how the same controls already read in
+  the conversation.
+
 ## [1.13.1] - 2026-07-28
 
 Stopping the agent mid-task no longer breaks your next message.
@@ -792,7 +839,8 @@ operational.
 - **Unified streaming timeline** — the conversation rendered as one continuous,
   turn-grouped event stream of messages, tool calls, and status markers.
 
-[Unreleased]: https://github.com/limboo-ai/limboo/compare/v1.13.1...HEAD
+[Unreleased]: https://github.com/limboo-ai/limboo/compare/v1.13.2...HEAD
+[1.13.2]: https://github.com/limboo-ai/limboo/compare/v1.13.1...v1.13.2
 [1.13.1]: https://github.com/limboo-ai/limboo/compare/v1.13.0...v1.13.1
 [1.13.0]: https://github.com/limboo-ai/limboo/compare/v1.12.0...v1.13.0
 [1.12.0]: https://github.com/limboo-ai/limboo/compare/v1.11.0...v1.12.0
