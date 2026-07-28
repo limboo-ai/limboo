@@ -30,7 +30,13 @@ export type DocumentRef =
    * it does not point at a file in the repository, which is why `documentId`
    * and `titleFor` below both need an explicit case for it.
    */
-  | { kind: 'release-notes'; version: string };
+  | { kind: 'release-notes'; version: string }
+  /**
+   * One delegated subagent, opened full-width to watch its live stream. Pathless
+   * like `release-notes` — identity is the spawning `Agent` tool call's id, which
+   * is also the key everything else about a worker hangs off.
+   */
+  | { kind: 'subagent'; callId: string; title: string };
 
 export type DocumentId = string;
 
@@ -93,9 +99,35 @@ interface SessionDocuments {
   closed: DocumentRef[];
 }
 
+/**
+ * Presentation state for a maximized subagent, cached exactly like
+ * {@link DiffViewState} so a maximize -> minimize round-trip keeps its place.
+ *
+ * A SEPARATE map rather than widening `viewCache`: that field is typed
+ * `Record<DocumentId, DiffViewState>` and every consumer does
+ * `?? DEFAULT_VIEW_STATE`, so a union would break `viewFor`'s return type and
+ * each of those call sites. Same key space, same lifetime, same invariant —
+ * closing a document never clears it.
+ */
+export interface SubagentViewState {
+  scrollTop: number;
+  summaryOpen: boolean;
+  transcriptOpen: boolean;
+  /** Follow the live stream to the bottom as it grows. */
+  autoScroll: boolean;
+}
+
+export const DEFAULT_SUBAGENT_VIEW: SubagentViewState = {
+  scrollTop: 0,
+  summaryOpen: true,
+  transcriptOpen: false,
+  autoScroll: true,
+};
+
 interface DocumentState {
   bySession: Record<string, SessionDocuments>;
   viewCache: Record<DocumentId, DiffViewState>;
+  subagentViewCache: Record<DocumentId, SubagentViewState>;
 
   ensureSession: (sessionId: string) => void;
   /** Open (or focus) a document and make it active. Returns its id. */
@@ -116,6 +148,9 @@ interface DocumentState {
   viewFor: (id: DocumentId) => DiffViewState;
   patchView: (id: DocumentId, patch: Partial<DiffViewState>) => void;
 
+  subagentViewFor: (id: DocumentId) => SubagentViewState;
+  patchSubagentView: (id: DocumentId, patch: Partial<SubagentViewState>) => void;
+
   seed: (persisted: PersistedDocument[]) => void;
 }
 
@@ -135,6 +170,9 @@ export function documentId(ref: DocumentRef): DocumentId {
   // Keyed by version, so notes for two versions are two documents and the tab
   // for a version already read is never reused for a newer one.
   if (ref.kind === 'release-notes') return `release-notes:${ref.version}`;
+  // Must precede the diff fallthrough: without a case of its own a subagent ref
+  // silently produces a diff-shaped id built from undefined fields.
+  if (ref.kind === 'subagent') return `subagent:${ref.callId}`;
   return `diff:${ref.staged ? 's' : 'w'}:${ref.baseRef ?? ''}:${ref.path}`;
 }
 
@@ -156,6 +194,9 @@ function titleFor(ref: DocumentRef): string {
   // notes, contributors, assets, integrity — and its tab carries no icon, so the
   // label is the only identity it has. Two open releases must not read alike.
   if (ref.kind === 'release-notes') return `Release ${ref.version}`;
+  // Must precede the basename call for the same reason release-notes does: this
+  // ref has no path, and reading one would throw while opening the tab.
+  if (ref.kind === 'subagent') return ref.title;
   return basename(ref.path);
 }
 
@@ -192,6 +233,12 @@ const persist = debounce((bySession: Record<string, SessionDocuments>) => {
       // the pathless-ref filter in SettingsManager, so the intent is in the
       // code instead of being an accident of a downstream guard.
       if (entry.ref.kind === 'release-notes') continue;
+      // A subagent tab watches a live run. Restoring one after a restart would
+      // reopen a tab onto work that can never resume — and the record it would
+      // show already lives in the conversation. Skipped explicitly, like release
+      // notes, so the intent is in the code rather than an accident of the
+      // pathless-ref guard downstream.
+      if (entry.ref.kind === 'subagent') continue;
       if (documents.length >= DOCUMENT_LIMITS.maxPersisted) break;
       documents.push({
         sessionId,
@@ -226,6 +273,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => {
   return {
     bySession: {},
     viewCache: {},
+    subagentViewCache: {},
 
     ensureSession: (sessionId) => {
       if (get().bySession[sessionId]) return;
@@ -352,6 +400,16 @@ export const useDocumentStore = create<DocumentState>((set, get) => {
     },
 
     viewFor: (id) => get().viewCache[id] ?? DEFAULT_VIEW_STATE,
+
+    subagentViewFor: (id) => get().subagentViewCache[id] ?? DEFAULT_SUBAGENT_VIEW,
+
+    patchSubagentView: (id, patch) =>
+      set((state) => ({
+        subagentViewCache: {
+          ...state.subagentViewCache,
+          [id]: { ...(state.subagentViewCache[id] ?? DEFAULT_SUBAGENT_VIEW), ...patch },
+        },
+      })),
 
     patchView: (id, patch) =>
       set((state) => ({

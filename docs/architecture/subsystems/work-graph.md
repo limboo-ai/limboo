@@ -93,8 +93,8 @@ heuristic from ever presenting itself with the authority of an observed fact.
 | `tasks` | one `task` per TodoWrite item | `generated`; `depends-on` (derived) between siblings |
 | `tool-start` (read risk) | `investigation` | `follows` |
 | `tool-start` `Bash` | `terminal` | `follows` |
-| `tool-start` `Task` | `subagent` | `follows` |
-| `tool-start` inside a subagent | its own kind | `contains` ← the parent `Task` node |
+| `tool-start` `Agent`/`Task` | `subagent` | `follows` |
+| `tool-start` inside a subagent | its own kind | `contains` ← the parent subagent node |
 | `tool-start` `mcp__limboo_*` | `search` / `memory` | `follows` |
 | `tool-start` other `mcp__*` | `mcp` | `follows` |
 | `tool-start` (write, with change) | `file` | `generated`, `implemented-in` |
@@ -111,13 +111,36 @@ interleave, and a positional join mis-attributes every one of them.
 The Claude Agent SDK sets `parent_tool_use_id` on every assistant and result
 message originating inside a subagent's context. `AgentManager` threads it onto
 `AgentToolCall.parentCallId`, and the builder uses it to emit `contains` from
-the spawning `Task` node instead of `follows` from the spine tip — so a
+the spawning subagent node instead of `follows` from the spine tip — so a
 subagent's work nests under it rather than being spliced into the main lane.
 
-Cursor print mode has no subagents, so the branch simply never forks there.
-Cursor's own `subagentStart`/`subagentStop` hooks are not used for this: their
-four id fields are documented as all carrying the same value, so parent linkage
-is not derivable from them.
+**The spawning tool has two names, and both must be matched.** Claude Code
+renamed `Task` to `Agent` in v2.1.63: current SDK releases emit `Agent` in
+`tool_use` blocks but still report `Task` in the `system:init` tool list and in
+`result.permission_denials[].tool_name`. `nodeKindForTool` matched only `Task`,
+which made the `subagent` node kind unreachable on every current release — a
+worker's calls landed as ordinary `investigation`/`terminal` nodes on the main
+spine. The predicate now lives in `src/shared/subagents.ts` (`isSubagentTool`)
+and is the single answer used by the builder, `AgentManager`, the conversation
+stream, and the plan milestones. Never test `name === 'Task'` directly.
+
+Cursor print mode carries no `parent_tool_use_id` analogue, so the branch simply
+never forks there. Cursor's own `subagentStart`/`subagentStop` hooks are
+registered for OBSERVABILITY only and are never a source of nesting: their four
+id fields are documented as all carrying the same value, so parent linkage is
+not derivable from them, and `subagentStop` is reported not to fire at all for
+background workers.
+
+### Where a subagent is actually observed
+
+Not here. The Work Graph records the structure; the place a user *watches* a
+delegation is the conversation stream —
+`renderer/features/workspace/SubagentActivity.tsx`, one inline row per worker
+with stages derived from its own tool calls (`subagentStages.ts`, the
+`plan/milestones.ts` technique). There is deliberately no subagent panel: a
+subagent works in its own context window and returns only a distilled result, so
+a dedicated surface would duplicate the timeline and the Tasks drawer. See
+`docs/architecture/subsystems/subagents.md`.
 
 ### Git commit attribution
 
@@ -158,7 +181,7 @@ Stated plainly, so nobody builds a fake:
   after a file change — plus the repo's own `limboo.json` script names. That is
   inference, and it is marked as such.
 
-## Storage (schema v15)
+## Storage (schema v17)
 
 Two tables plus an FTS index, in
 [`src/main/db/database.ts`](../../../src/main/db/database.ts):

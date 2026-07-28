@@ -23,8 +23,28 @@
 import { CURSOR_LIMITS } from '@shared/constants';
 import { withSessionFile } from './sessionFile';
 
-/** The gate + observability events the bridge registers. */
-const HOOK_EVENTS = ['preToolUse', 'beforeShellExecution', 'beforeReadFile', 'afterFileEdit'] as const;
+/**
+ * The gate + observability events the bridge registers.
+ *
+ * `subagentStart`/`subagentStop` are OBSERVABILITY ONLY and strictly
+ * best-effort. Cursor documents them as carrying `task`, `tool_call_id`,
+ * `subagent_model` and a set of id fields — but the id fields are reported to
+ * all carry the same session id, so parent linkage is not derivable from them,
+ * and `subagentStop` is reported not to fire at all for background workers.
+ * Limboo therefore treats these as a bonus signal that can enrich a row when it
+ * arrives and changes nothing when it does not: no permission decision, no
+ * lifecycle state, and no UI that breaks by their absence. Cursor's stream
+ * carries no `parent_tool_use_id` analogue, so a Cursor run still renders its
+ * tool calls flat, exactly as it did before subagent rows existed.
+ */
+const HOOK_EVENTS = [
+  'preToolUse',
+  'beforeShellExecution',
+  'beforeReadFile',
+  'afterFileEdit',
+  'subagentStart',
+  'subagentStop',
+] as const;
 
 /** Quote a path for the hook command string (shell-parsed by Cursor). */
 function quoted(p: string): string {

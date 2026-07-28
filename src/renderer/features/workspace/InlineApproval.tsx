@@ -43,7 +43,9 @@ export function InlineApproval({ request }: { request: PermissionRequest }) {
   }, [request.id, respond]);
 
   return (
-    <div className="flex flex-col gap-2 border-l border-accent/50 pl-3 animate-fade-in">
+    // No coloured strip: the risk ICON already carries severity, and a bar
+    // beside it says the same thing in a second visual language.
+    <div className="flex flex-col gap-2 px-1 animate-fade-in">
       <div className="flex items-center gap-2">
         <Icon
           size={13}
@@ -57,6 +59,11 @@ export function InlineApproval({ request }: { request: PermissionRequest }) {
         <span className="text-[12px] font-medium text-fg">Permission required</span>
         <span className="truncate text-[11px] text-faint">
           {RISK_LABEL[request.risk]} · {request.tool}
+          {/* Name the worker that asked, so an approval raised inside a
+              delegation is not mistaken for the main conversation's. Main only
+              sets this when exactly one worker is in flight — it never guesses
+              between concurrent ones. */}
+          {request.parentCallId && ` · via ${request.subagentType ?? 'subagent'}`}
         </span>
       </div>
 

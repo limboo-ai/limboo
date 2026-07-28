@@ -435,6 +435,15 @@ version is just a dev/baseline placeholder. To release: `git tag vX.Y.Z && git p
   - **System-handler input caps** —
     [`systemHandlers.ts`](src/main/ipc/systemHandlers.ts) caps URL/clipboard/
     notify lengths and rejects `openExternal` URLs with embedded credentials.
+  - **Scoped "always allow"** — a remembered permission choice is keyed
+    `sessionId:<risk>` via `rememberKey` in
+    [`AgentManager.ts`](src/main/managers/AgentManager.ts), with `sensitive` as
+    its own scope. It was keyed `sessionId:remember` for every prompt, so one
+    approval on a read granted every later write and shell command **and**
+    satisfied the secret-file guard. A remembered grant must only ever widen the
+    class the user was actually shown; secret access always needs its own
+    consent. This matters more with subagents, whose calls re-enter the same
+    gate and would inherit any blanket grant.
 
   **Contracts for the not-yet-built managers** (§8) — every future agent must follow:
   - **Local DB** (`better-sqlite3`): use **parameterized/bound statements only**;
@@ -501,7 +510,9 @@ the real (no-mock) UI. Each owns one responsibility:
   WAL, versioned schema (`WORKSPACE_SCHEMA_VERSION`), idempotent migrations. Bound
   parameters only.
 - **Session Manager** (`managers/SessionManager.ts`) — create/list/switch/trash
-  sessions; persists transcript + activity per session.
+  sessions; persists transcript + activity per session. Tool calls are runtime
+  state and are NOT persisted — `agent_subagent_runs` (schema v17) is the one
+  exception, because a subagent row is the only record of a delegation.
 - **Workspace Manager** (`managers/WorkspaceManager.ts`) — repos, lifecycle, active
   workspace.
 - **Git Engine** (`managers/GitManager.ts` + `managers/git/*`) — status/diff/stage/
@@ -817,6 +828,104 @@ message.
     generating row, the planning placeholder, the plan header, the per-task
     marks. Do not reintroduce `Spinner`/`Loader2` in a plan surface, and there is
     no large "Execution complete" checkmark banner.
+  - **A prompt Limboo composes is not a prompt the user typed.** `send()`
+    persists and broadcasts EVERY prompt as a visible user turn, and `UserBubble`
+    renders text verbatim — so approving a plan echoed the whole document plus
+    its `<approved-plan>` tags into the transcript as raw Markdown. Orchestration
+    prompts now carry **`ChatMessage.display`** (`{ text, body? }`): the line to
+    show and an optional rendered body. It is a **renderer hint only** — it never
+    changes what reaches the provider, the raw toggle still reveals the true sent
+    text, and `autoTitle` skips these turns so a session is never named after
+    Limboo's own action. Persisted in `agent_messages.display`
+    (`addColumnIfMissing`; NULL for every ordinary prompt).
+
+### Subagents: the stream is the only orchestration surface
+
+Full doc: `docs/architecture/subsystems/subagents.md`.
+
+A delegation renders as **one inline row** in the conversation
+(`features/workspace/SubagentActivity.tsx`) — stages while it runs, a single
+line with `duration · N tools` once it settles, expanding into an execution
+record and the worker's returned summary. **There is no permanent subagent
+panel, and none may be added**: both providers run a subagent in its own context
+window and return only a distilled result, so a standing surface would duplicate
+the timeline and the Tasks drawer and would imply access to reasoning neither
+provider exposes. Completion links out to surfaces that already exist (a diff via
+`promote`, the Work Graph via `revealInGraph`).
+
+A **transient maximized tab** is a different claim and is supported:
+`{ kind: 'subagent', callId, title }` is a `DocumentRef`, rendered by
+`SubagentWorkspace.tsx`. Both shells sit over the shared presenters in
+`subagentParts.tsx` (the `DiffView`/`DiffWorkspace` split) — **density is the
+only thing they vary**. Presentation state rides a parallel
+`subagentViewCache` (never widen `viewCache`'s union), and the tab is not
+persisted, like release notes.
+
+**Rows are never cards.** Multi-paragraph prose — a returned summary, a
+transcript, an approved plan — renders in a `ProseCard`, which supplies the
+disclosure, the clamp (fade + "Show more", never a nested scroller) and one
+consistent size. Its `variant` decides the border, and the rule is: a container
+earns a border when it separates a document from **unrelated** content (the
+approved plan in a user turn → `card`); it does not when everything around it is
+the same document (a subagent's transcript and summary sit among `validation` /
+`files changed` / `tool calls` → `bare`). Long tool lists collapse
+(`TOOL_LIST_AUTO_COLLAPSE`, evaluated at mount so a live run stays open).
+
+- **The spawning tool has TWO names.** Claude Code renamed `Task` to `Agent` in
+  v2.1.63; current SDKs emit `Agent` in `tool_use` blocks but still say `Task` in
+  `system:init` and `permission_denials[].tool_name`. `src/shared/subagents.ts`
+  (`isSubagentTool`) is the single answer for main **and** the renderer. **Never
+  test `name === 'Task'`** — that is exactly what made the Work Graph's
+  `subagent` node kind unreachable on every current release.
+- **`parentCallId` is the only nesting signal** (the SDK's `parent_tool_use_id`,
+  on complete messages only — it is always `null` on partial stream events).
+  `streamToolCalls` in `ConversationView` removes a worker's calls from the
+  stream across the WHOLE snapshot, never per turn: a worker still running when
+  the user sends the next prompt has its later calls land in the next turn, and a
+  per-turn spawn set would leak them as top-level rows.
+- **`handleMessage` MUST read `parent_tool_use_id` before finalizing assistant
+  text.** With `forwardSubagentText` on, the SDK forwards a worker's narration as
+  assistant messages carrying that id; finalizing first spliced it into the
+  parent transcript *and persisted it*. Worker text goes to
+  `SubagentInfo.transcript` and nowhere else.
+- **Prefer the SDK's own telemetry to derivation.** `onTaskMessage` consumes
+  `task_started`/`task_progress`/`task_updated`/`task_notification`, joined by
+  **`tool_use_id`** (never array position), for measured `duration_ms` /
+  `tool_uses` / `total_tokens` and the provider's own progress line. Honour
+  `skip_transcript: true` — those tasks render no row. Both opt-ins default OFF
+  in the SDK and map to `agent.subagents.{forwardText,progressSummaries}`.
+- **Stages are DERIVED** as the fallback tier (`subagentStages.ts`) — the
+  `plan/milestones.ts` technique, so a provider that reports nothing (Cursor,
+  summaries off) still shows progress. A stage is active only while one of its
+  tools is genuinely `running`.
+- **Counters live on the spawning call** (`SubagentInfo`), rolled up in main and
+  carried by re-emitting `tool-start` — the only event holding a whole call.
+  Every roll-up failure is swallowed: observability must never break a run.
+- **Subagent rows are PERSISTED** (`agent_subagent_runs`, schema v17) even though
+  ordinary tool calls are not — the row is the only record of a delegation, and
+  without it the Work Graph remembered a worker the transcript had forgotten. A
+  run still `running` at load rehydrates as errored, never as a spinning row.
+- **Omit what was not measured.** A field the provider did not report is left
+  out, not defaulted — the same rule the release document follows. There is
+  deliberately no `worktree` field: `isolation: worktree` is managed internally
+  by Claude Code and never reported, and the session root is not the worker's.
+- **Attribution refuses to guess.** `subagentOwningPrompt` resolves a permission
+  prompt's owner from a sole live worker, or from `task_progress.last_tool_name`
+  under concurrency. Ambiguous → undefined, and the dialog renders as it would
+  without subagents.
+- **Cursor degrades to nothing.** Its stream carries no parent linkage, so a
+  Cursor run renders flat. `subagentStart`/`subagentStop` are registered
+  `observeOnly` — never a gate (Cursor treats `ask` there as a deny) and never a
+  nesting source (all four id fields carry the same session id). The
+  `observeOnly` branch returns immediately, so anything mapped there must record
+  explicitly or it is dead code; these emit onto the governance bus.
+- **The transcript is untrusted content** — bounded by `transcriptMax`, rendered
+  as data, never merged into a system prompt. `buildOptions` still has exactly
+  three context producers (memory, search, resume).
+- Settings live under `agent.subagents` (`SUBAGENT_LIMITS`, `SETTINGS_VERSION`
+  24). Completion links reuse `useDocumentStore.promote` and `revealInGraph`;
+  there is **no task link** (`TaskItem` has index-derived ids and no timestamps,
+  so a settled worker's task is not recoverable — do not fabricate it).
 
 ### Workspace Documents + the Diff Review environment
 

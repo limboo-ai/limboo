@@ -262,6 +262,36 @@ export interface AppSettings {
       audit: 'off' | 'lifecycle' | 'verbose';
     };
     /**
+     * Subagent orchestration — how much of a delegated worker's execution the
+     * conversation shows. There is deliberately no "open subagents in a panel"
+     * option: the stream is the only orchestration surface (see
+     * `docs/architecture/subsystems/subagents.md`).
+     */
+    subagents: {
+      /** Render the inline subagent row. Off folds workers back into plain tool chips. */
+      inlineActivity: boolean;
+      /**
+       * Ask the provider to forward the worker's own transcript
+       * (`forwardSubagentText`). Off keeps only the returned summary; the SDK
+       * then emits just the worker's tool_use/tool_result blocks.
+       */
+      forwardText: boolean;
+      /**
+       * Ask the provider for periodic AI-written progress lines
+       * (`agentProgressSummaries`). Costs a small periodic fork of the worker's
+       * conversation; off falls back to stage labels derived from tool names.
+       */
+      progressSummaries: boolean;
+      /** Cap on the stored returned summary, in characters. */
+      summaryMax: number;
+      /** Cap on the stored forwarded transcript, in characters. */
+      transcriptMax: number;
+      /** Cap on each rolled-up list (tools, MCP servers, changed files). */
+      rollupMax: number;
+      /** How many finished subagent runs to keep per session. */
+      retainRuns: number;
+    };
+    /**
      * Provider-neutral OS-level Sandbox (defense-in-depth Layer 3). Limboo owns
      * one sandbox policy and translates it into whichever agent runs: Claude's
      * Agent-SDK `Options.sandbox` (bubblewrap/Seatbelt) and Cursor's
@@ -2425,6 +2455,25 @@ export interface ChatMessage {
   createdAt: number;
   /** Files the user attached to this turn (hydrated main-side; user role only). */
   attachments?: AttachmentMeta[];
+  /**
+   * How to RENDER this turn when that should differ from what was SENT.
+   *
+   * Some prompts are orchestration, not conversation: approving a plan sends the
+   * whole plan document wrapped in `<approved-plan>` tags, and regenerating one
+   * sends a re-planning instruction. `send()` persists and broadcasts every
+   * prompt as a visible user turn, and the user bubble renders text verbatim, so
+   * those turns used to surface as thousands of characters of raw Markdown plus
+   * literal XML tags in a chat bubble.
+   *
+   * `text` is the one-line summary to show; `body` is an optional Markdown
+   * document rendered beneath it. Absent means "render `text` as before", so
+   * every ordinary prompt is completely unaffected.
+   *
+   * This is a **renderer hint only**. It never changes what reaches the provider,
+   * and the raw view still reveals the true sent text — nothing is hidden from
+   * someone auditing the transcript.
+   */
+  display?: { text: string; body?: string };
 }
 
 /* ------------------------------------------------------------------ */
@@ -2484,6 +2533,127 @@ export interface AttachmentProgress {
 export type ToolRisk = 'read' | 'write' | 'command';
 export type ToolCallStatus = 'running' | 'done' | 'denied' | 'error';
 
+/**
+ * The execution record of ONE spawned subagent, carried on the `Agent`/`Task`
+ * tool call that spawned it.
+ *
+ * Subagents are deliberately NOT a UI surface of their own: Claude Code's model
+ * is that a subagent works in its own context window and returns only a
+ * distilled result to the parent, so the conversation stream is the only place
+ * the user observes one. Everything here exists to let a single inline row in
+ * that stream expand into "what did this worker actually do" without opening a
+ * second conversation, a panel, or a window.
+ *
+ * ## Where the fields come from
+ *
+ * Two sources, and the distinction matters for honesty:
+ *
+ *  - **Reported** — the Agent SDK's `task_started` / `task_progress` /
+ *    `task_notification` messages, joined to this call by their `tool_use_id`.
+ *    These are measurements (`usage.duration_ms`, `tool_uses`, `total_tokens`)
+ *    and the provider's own progress prose. Authoritative when present.
+ *  - **Rolled up** — derived in the main process from the worker's own child
+ *    tool calls (those whose {@link AgentToolCall.parentCallId} is this call's
+ *    id), because the renderer must never re-derive orchestration facts.
+ *
+ * A field neither source filled stays undefined and is **omitted** from the UI
+ * rather than defaulted. Cursor reports nothing here, so a Cursor run leaves
+ * every field unset and the surface degrades to nothing.
+ */
+export interface SubagentInfo {
+  /**
+   * The subagent definition's name — the Agent tool's `subagent_type` input
+   * (e.g. `Explore`, `Plan`, `general-purpose`, or a custom/plugin-scoped name).
+   * Undefined when the provider does not report one.
+   */
+  type?: string;
+  /** The short task description the parent gave the worker (Agent tool `description`). */
+  description?: string;
+  /**
+   * Model the subagent ran on, when the provider reports it. Claude resolves a
+   * subagent's model from several sources and only sometimes echoes the result,
+   * so this is best-effort and rendered only when present.
+   */
+  model?: string;
+  /** True when the provider launched this worker as a non-blocking background task. */
+  background?: boolean;
+  /* NOTE: there is deliberately no `worktree` field. Claude Code's
+   * `isolation: worktree` puts a subagent in a temporary worktree it manages
+   * internally and never reports — not in the Agent tool input, not in the
+   * `task_*` stream. Limboo's WorktreeManager resolves the SESSION's root, which
+   * is the parent's checkout, not the worker's isolated copy. Showing it would
+   * be a confident wrong answer, so the field does not exist. */
+  /** Distinct tool names the worker invoked, in first-use order. */
+  tools?: string[];
+  /** Distinct MCP server names the worker reached (`mcp__<server>__<tool>`). */
+  mcpServers?: string[];
+  /** Count of read-shaped calls the worker made (Read/Glob/LS/NotebookRead). */
+  filesRead?: number;
+  /**
+   * Files the worker modified, with their diffstat — so the completion row can
+   * show `+adds/-dels` and open each one's diff. Paths alone were not enough to
+   * render anything but a link.
+   */
+  filesChanged?: FileChange[];
+  /** Permission prompts raised inside this worker: how many, and how many denied. */
+  permissions?: { prompted: number; denied: number };
+  /** Count of memory lookups the worker performed via the shared memory tools. */
+  memoryLookups?: number;
+  /**
+   * Verification the worker ran — test, lint, typecheck and build commands
+   * recognized from its shell calls. Empty (not zero) when it ran none, so the
+   * row can omit the line rather than claim "0 validation steps".
+   */
+  validations?: Array<{ kind: SubagentValidationKind; command: string; ok: boolean }>;
+
+  /* --- Reported by the provider (see the type doc) --------------------- */
+
+  /** The SDK task id, when the `task_*` stream identified this worker. */
+  taskId?: string;
+  /**
+   * The provider's own one-line progress description, refreshed while the
+   * worker runs (`task_progress.summary`, enabled by `agentProgressSummaries`).
+   * Present-tense and model-written — e.g. "Analyzing authentication module".
+   */
+  progress?: string;
+  /** The tool the worker was last seen running (`task_progress.last_tool_name`). */
+  lastTool?: string;
+  /** Measured wall-clock duration. Preferred over `endedAt - startedAt`. */
+  durationMs?: number;
+  /** Measured count of tool invocations. Preferred over the rolled-up list length. */
+  toolUses?: number;
+  /** Tokens the worker consumed — the real cost of the delegation. */
+  totalTokens?: number;
+  /**
+   * Terminal status as the provider reported it. `stopped` is distinct from
+   * `failed`: the user or the harness ended the worker, it did not error.
+   */
+  outcome?: 'completed' | 'failed' | 'stopped';
+  /** Provider-reported error text when the worker failed. */
+  error?: string;
+  /**
+   * The worker's forwarded transcript — its own narration, available only when
+   * `forwardSubagentText` is on.
+   *
+   * **This is untrusted content.** It is model output that Limboo renders
+   * verbatim, so it is bounded, stored as data, and must never be merged into a
+   * system prompt or fed to a context provider. It is NOT the worker's
+   * reasoning: thinking blocks are excluded, and no affordance may imply the
+   * chain of thought is available.
+   */
+  transcript?: string;
+  /**
+   * The worker's final message — the Agent tool result the parent actually
+   * receives. This is the distilled summary, never the worker's reasoning:
+   * neither provider exposes a subagent's internal chain of thought, and this
+   * field must not be used to imply otherwise.
+   */
+  summary?: string;
+}
+
+/** A verification step recognized from a worker's shell commands. */
+export type SubagentValidationKind = 'test' | 'lint' | 'typecheck' | 'build';
+
 /** An agent tool invocation, shown inline in the conversation. */
 export interface AgentToolCall {
   id: string;
@@ -2521,14 +2691,21 @@ export interface AgentToolCall {
    */
   read?: { content: string; lang?: string; startLine?: number; truncated?: boolean };
   /**
-   * The `Task` tool call this call was made INSIDE, when it originated in a
-   * subagent's context — the Claude Agent SDK's `parent_tool_use_id`, which it
-   * sets on every assistant/result message from a spawned subagent. Absent for
-   * the main agent's own calls, and always absent for Cursor print mode, which
-   * has no subagents. The Work Graph uses it to nest a subagent's work under
-   * the node that spawned it instead of splicing it into the main spine.
+   * The `Agent`/`Task` tool call this call was made INSIDE, when it originated
+   * in a subagent's context — the Claude Agent SDK's `parent_tool_use_id`, which
+   * it sets on every assistant/result message from a spawned subagent. Absent
+   * for the main agent's own calls, and absent for Cursor print mode, whose
+   * stream carries no derivable parent linkage. The Work Graph uses it to nest a
+   * subagent's work under the node that spawned it instead of splicing it into
+   * the main spine, and the conversation stream uses it to fold that work into
+   * one inline subagent row instead of interleaving it with the parent's.
    */
   parentCallId?: string;
+  /**
+   * Present only on the `Agent`/`Task` call that SPAWNED a subagent — the
+   * rolled-up execution record of that worker. See {@link SubagentInfo}.
+   */
+  subagent?: SubagentInfo;
   status: ToolCallStatus;
   startedAt: number;
   endedAt?: number;
@@ -2543,6 +2720,16 @@ export interface PermissionRequest {
   summary: string;
   /** Operation preview: command text, file path, or a short diff snippet. */
   detail?: string;
+  /**
+   * The spawning `Agent`/`Task` call id when this prompt was raised from inside
+   * a subagent, so the approval can name the worker that asked instead of
+   * appearing to come from the main conversation. Best-effort: it is resolved
+   * from the run's single in-flight subagent, so it is set only when exactly one
+   * worker is running — never guessed between concurrent workers.
+   */
+  parentCallId?: string;
+  /** The worker's definition name, when {@link parentCallId} resolved. */
+  subagentType?: string;
   createdAt: number;
 }
 
@@ -2968,7 +3155,14 @@ export type WorkGraphNode =
     })
   | (WorkGraphNodeBase & {
       kind: 'subagent';
-      meta: { toolName: string; childCount: number };
+      meta: {
+        toolName: string;
+        childCount: number;
+        /** The worker's definition name (`subagent_type`), when reported. */
+        subagentType?: string;
+        /** Wall-clock time the worker ran, filled in on `tool-end`. */
+        durationMs?: number;
+      };
     })
   | (WorkGraphNodeBase & {
       kind: 'investigation';

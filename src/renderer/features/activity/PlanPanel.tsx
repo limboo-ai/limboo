@@ -24,6 +24,7 @@ import {
   CheckCircle2,
   ChevronDown,
   ChevronRight,
+  CircleAlert,
   ClipboardList,
   Code2,
   Copy,
@@ -39,6 +40,7 @@ import {
   TriangleAlert,
 } from 'lucide-react';
 import type { PlanRevision, SessionPlan, TaskItem } from '@shared/types';
+import { isSubagentTool } from '@shared/subagents';
 import { EmptyState, HelixLoader, IconButton } from '@/renderer/components/ui';
 import { cn } from '@/renderer/lib/cn';
 import { applyRuntime, parsePlanOutline, type TaskExecStatus } from '@/renderer/lib/planOutline';
@@ -328,6 +330,11 @@ function LiveProgress({
     () => (sessionId ? checkpoints.filter((c) => c.sessionId === sessionId).length : 0),
     [checkpoints, sessionId],
   );
+  // Delegated work in flight. Counted into the header so the tally reflects
+  // everything executing, not only the checklist — a task whose real work is
+  // happening inside three workers otherwise reads as one idle line.
+  const { running: runningWorkers } = useSubagentCalls(sessionId);
+  const running = runningWorkers.length;
 
   const q = search.trim().toLowerCase();
   const visible = useMemo(
@@ -346,13 +353,24 @@ function LiveProgress({
   if (tasks.length === 0) return null;
 
   const done = tasks.filter((t) => t.done || t.status === 'completed').length;
+  // The FIRST in-progress task owns the live workers. Rendering them under every
+  // in-progress task duplicated the same rows once per task, because the source
+  // is the session's running workers, not any per-task association.
+  const liveTaskId = visible.find((t) => (t.status ?? (t.done ? 'completed' : 'pending')) === 'in_progress')?.id;
 
   return (
     <div className="flex flex-col gap-1.5">
       <div className="flex items-center justify-between text-[10px] font-medium uppercase tracking-wider text-faint">
         <span>Live progress</span>
-        <span>
-          {done}/{tasks.length}
+        <span className="flex items-center gap-1.5">
+          {running > 0 && (
+            <span className="text-accent">
+              {running} {running === 1 ? 'worker' : 'workers'}
+            </span>
+          )}
+          <span>
+            {done}/{tasks.length}
+          </span>
         </span>
       </div>
       {visible.length === 0 ? (
@@ -362,23 +380,32 @@ function LiveProgress({
           {visible.map((task) => {
             const status = task.status ?? (task.done ? 'completed' : 'pending');
             return (
-              <li key={task.id} className="flex items-start gap-2 rounded-md px-1 py-1">
-                <ExecMark status={status === 'in_progress' ? 'active' : status} />
-                <span
-                  className={cn(
-                    'text-[12px] leading-snug',
-                    status === 'completed' && 'text-faint line-through',
-                    status === 'in_progress' && 'text-fg',
-                    status === 'pending' && 'text-muted',
-                  )}
-                >
-                  {task.label}
-                </span>
+              <li key={task.id} className="flex flex-col gap-1 rounded-md px-1 py-1">
+                <div className="flex items-start gap-2">
+                  <ExecMark status={status === 'in_progress' ? 'active' : status} />
+                  <span
+                    className={cn(
+                      'text-[12px] leading-snug',
+                      status === 'completed' && 'text-faint line-through',
+                      status === 'in_progress' && 'text-fg',
+                      status === 'pending' && 'text-muted',
+                    )}
+                  >
+                    {task.label}
+                  </span>
+                </div>
+                {/* Workers running RIGHT NOW belong to the task running right
+                    now — that association is sound because both are live. A
+                    settled worker's task is not recoverable (TaskItem carries no
+                    timestamps), so those are archived below instead of being
+                    attributed to a task by guesswork. */}
+                {task.id === liveTaskId && <RunningSubagents sessionId={sessionId} />}
               </li>
             );
           })}
         </ul>
       )}
+      <DelegatedWork sessionId={sessionId} />
       {showCheckpoints && mine > 0 && (
         <button
           type="button"
@@ -388,6 +415,94 @@ function LiveProgress({
           {mine} checkpoint{mine === 1 ? '' : 's'} captured — review or roll back
         </button>
       )}
+    </div>
+  );
+}
+
+/**
+ * Subagent spawns for a session, split by whether they are still running.
+ *
+ * Reads the store directly rather than taking a prop: the Tasks panel renders
+ * from the plan, and a worker's lifecycle is independent of it.
+ */
+function useSubagentCalls(sessionId: string | null) {
+  const calls = useAgentStore((s) => (sessionId ? s.bySession[sessionId]?.toolCalls : undefined));
+  return useMemo(() => {
+    const spawns = (calls ?? []).filter((c) => isSubagentTool(c.name));
+    return {
+      running: spawns.filter((c) => c.status === 'running'),
+      settled: spawns.filter((c) => c.status !== 'running'),
+    };
+  }, [calls]);
+}
+
+/** Live workers, nested under the task that is executing. */
+function RunningSubagents({ sessionId }: { sessionId: string | null }) {
+  const { running } = useSubagentCalls(sessionId);
+  if (running.length === 0) return null;
+  return (
+    <ul className="ml-1.5 flex flex-col gap-0.5 border-l border-line pl-2">
+      {running.map((call) => (
+        <li key={call.id} className="flex items-center gap-2 text-[11.5px] text-muted">
+          <HelixLoader size={12} label={call.summary} />
+          <span className="shrink-0 font-medium text-accent">{call.summary}</span>
+          <span className="min-w-0 flex-1 truncate text-faint" title={call.target}>
+            {call.target}
+          </span>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+/**
+ * Finished workers, archived under the checklist.
+ *
+ * Deliberately terse — the conversation stream is the canonical record of what
+ * each worker did, and this section exists so a long-running execution can be
+ * audited from the panel without turning it into a second transcript. Clicking
+ * a row is not offered because there is nothing here the stream does not say
+ * better.
+ */
+function DelegatedWork({ sessionId }: { sessionId: string | null }) {
+  const { settled } = useSubagentCalls(sessionId);
+  if (settled.length === 0) return null;
+  const failed = settled.filter((c) => c.status === 'error' || c.status === 'denied').length;
+  return (
+    <div className="flex flex-col gap-1">
+      <div className="flex items-center justify-between text-[10px] font-medium uppercase tracking-wider text-faint">
+        <span>Delegated work</span>
+        <span>{failed ? `${settled.length} · ${failed} failed` : String(settled.length)}</span>
+      </div>
+      <ul className="flex flex-col gap-0.5">
+        {settled.map((call) => {
+          const bad = call.status === 'error' || call.status === 'denied';
+          const tools = call.subagent?.tools?.length ?? 0;
+          return (
+            <li key={call.id} className="flex items-center gap-2 px-1 text-[11.5px]">
+              {/* Same glyph the conversation row uses for the same state —
+                  TriangleAlert here and CircleAlert there made one failure read
+                  as two different things in two panels. */}
+              {bad ? (
+                <CircleAlert size={12} className="shrink-0 text-danger" />
+              ) : (
+                <CheckCircle2 size={12} className="shrink-0 text-success" />
+              )}
+              <span className={cn('shrink-0', bad ? 'text-danger' : 'text-muted')}>
+                {call.summary}
+              </span>
+              <span className="min-w-0 flex-1 truncate text-faint" title={call.target}>
+                {call.target}
+              </span>
+              {tools > 0 && (
+                <span className="shrink-0 text-[10.5px] text-faint">
+                  {tools} {tools === 1 ? 'tool' : 'tools'}
+                </span>
+              )}
+            </li>
+          );
+        })}
+      </ul>
     </div>
   );
 }

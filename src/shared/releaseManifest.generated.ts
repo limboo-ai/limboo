@@ -24,6 +24,127 @@ import type { ReleaseIndexEntry, ReleaseManifestEntry } from './release';
 /** Newest first. */
 export const RELEASE_MANIFESTS: ReleaseManifestEntry[] = [
   {
+    "version": "1.14.0",
+    "date": "2026-07-29",
+    "channel": "stable",
+    "codename": null,
+    "gitTag": "v1.14.0",
+    "commit": null,
+    "buildNumber": null,
+    "summary": "When the agent hands work to a specialist, you can finally watch it happen.\nDelegated work used to arrive as an anonymous pile of tool calls mixed into the\nmain reply; it now reads as one line you can open, follow live, and take apart\nafterwards — without ever leaving the conversation.",
+    "sections": [
+      {
+        "category": "added",
+        "title": "Added",
+        "items": [
+          {
+            "lead": "Delegated work reads as one activity",
+            "text": "When the agent hands a job to a\n  specialist — exploring the repository, reviewing code, running tests — the\n  conversation shows a single line naming the worker and what it was asked to do,\n  with its progress underneath. The worker's own tool calls no longer scatter\n  through the reply as if the main agent had run them. Opening the line shows how\n  long it took, which model it used, what it read and changed, which tools and\n  connected servers it reached, what it verified, and what it concluded."
+          },
+          {
+            "lead": "Live progress in the worker's own words",
+            "text": "While a specialist works, it\n  reports what it is doing in plain language — \"Analyzing authentication module\"\n  — refreshed as it goes. When that is unavailable the progress is worked out\n  from the tools it is using, so there is always something to read."
+          },
+          {
+            "lead": "Open a worker in its own tab",
+            "text": "Maximize a delegation and it opens beside\n  your files as a full-width tab: live progress, everything it ran, its notes and\n  its conclusion, following along as it works. Minimizing returns it to the\n  conversation exactly where you left it — same scroll position, same sections\n  open. If the worker pauses for permission while you are watching, you can\n  answer without going back."
+          },
+          {
+            "lead": "Actions on every delegation",
+            "text": "Copy the conclusion or the worker's notes,\n  export the whole record as Markdown, jump to it in the work graph, or open any\n  file it changed straight into a diff. Copying while it is still working\n  captures everything that has arrived."
+          },
+          {
+            "lead": "Delegated work in the task list",
+            "text": "Specialists running right now appear under\n  the task they belong to, with finished ones collected below it, so a long\n  execution can be followed from the Tasks panel without reading the whole\n  conversation."
+          },
+          {
+            "lead": "Settings for delegated work",
+            "text": "Under Agent › Subagents you can turn the\n  inline activity off, stop requesting live progress descriptions, or stop\n  keeping a worker's notes."
+          }
+        ],
+        "markdown": "- **Delegated work reads as one activity.** When the agent hands a job to a\n  specialist — exploring the repository, reviewing code, running tests — the\n  conversation shows a single line naming the worker and what it was asked to do,\n  with its progress underneath. The worker's own tool calls no longer scatter\n  through the reply as if the main agent had run them. Opening the line shows how\n  long it took, which model it used, what it read and changed, which tools and\n  connected servers it reached, what it verified, and what it concluded.\n- **Live progress in the worker's own words.** While a specialist works, it\n  reports what it is doing in plain language — \"Analyzing authentication module\"\n  — refreshed as it goes. When that is unavailable the progress is worked out\n  from the tools it is using, so there is always something to read.\n- **Open a worker in its own tab.** Maximize a delegation and it opens beside\n  your files as a full-width tab: live progress, everything it ran, its notes and\n  its conclusion, following along as it works. Minimizing returns it to the\n  conversation exactly where you left it — same scroll position, same sections\n  open. If the worker pauses for permission while you are watching, you can\n  answer without going back.\n- **Actions on every delegation.** Copy the conclusion or the worker's notes,\n  export the whole record as Markdown, jump to it in the work graph, or open any\n  file it changed straight into a diff. Copying while it is still working\n  captures everything that has arrived.\n- **Delegated work in the task list.** Specialists running right now appear under\n  the task they belong to, with finished ones collected below it, so a long\n  execution can be followed from the Tasks panel without reading the whole\n  conversation.\n- **Settings for delegated work.** Under Agent › Subagents you can turn the\n  inline activity off, stop requesting live progress descriptions, or stop\n  keeping a worker's notes."
+      },
+      {
+        "category": "fixed",
+        "title": "Fixed",
+        "items": [
+          {
+            "lead": "The plan was dumped into the conversation as raw text",
+            "text": "Approving a plan\n  sent it to the agent, and everything sent to the agent is shown — so the whole\n  plan appeared in a chat bubble as unformatted markup, tags and all, sometimes\n  thousands of characters of it. The approval now reads as one line with the plan\n  beneath it, properly formatted and collapsed by default. Nothing is hidden:\n  viewing the message raw still shows exactly what the agent received."
+          },
+          {
+            "lead": "Checklists in plans rendered twice over",
+            "text": "Every `- [ ]` item drew a tick box\n  *and* a bullet, on plans that are almost entirely checklists. Ticked items are\n  now also greyed, so a plan reads like a plan."
+          },
+          {
+            "lead": "The Tasks panel could go blank",
+            "text": "A specialist that failed or was denied took\n  the whole panel down with it."
+          },
+          {
+            "lead": "Long output was hard to read and hard to escape",
+            "text": "A worker's notes and\n  conclusion ran together with everything around them at a size that fought its\n  surroundings, inside a small scrolling box that trapped the page. They are now\n  properly separated, one consistent size, and clipped with a clear way to read\n  the rest."
+          },
+          {
+            "lead": "A worker's tool list could bury everything below it",
+            "text": "A specialist that\n  reads thirty files pushed its own conclusion off the screen. Long lists now\n  arrive folded, with the count and anything still running or failed still\n  visible."
+          },
+          {
+            "lead": "Delegated work went unrecognized on current agent versions",
+            "text": "The tool that\n  starts a specialist was renamed upstream, and Limboo only recognized the old\n  name — so on any recent version delegated work was recorded as ordinary tool\n  calls and never appeared as delegation at all. Both names are now recognized."
+          },
+          {
+            "lead": "A specialist's work vanished when you sent the next message",
+            "text": "A worker still\n  running when you typed again had the rest of its work spill into the new turn\n  as loose tool calls. Its record also now survives restarting the app."
+          },
+          {
+            "lead": "Sessions were named after approving a plan",
+            "text": "An untitled session took its\n  name from the approval instead of from what you had asked for."
+          }
+        ],
+        "markdown": "- **The plan was dumped into the conversation as raw text.** Approving a plan\n  sent it to the agent, and everything sent to the agent is shown — so the whole\n  plan appeared in a chat bubble as unformatted markup, tags and all, sometimes\n  thousands of characters of it. The approval now reads as one line with the plan\n  beneath it, properly formatted and collapsed by default. Nothing is hidden:\n  viewing the message raw still shows exactly what the agent received.\n- **Checklists in plans rendered twice over.** Every `- [ ]` item drew a tick box\n  *and* a bullet, on plans that are almost entirely checklists. Ticked items are\n  now also greyed, so a plan reads like a plan.\n- **The Tasks panel could go blank.** A specialist that failed or was denied took\n  the whole panel down with it.\n- **Long output was hard to read and hard to escape.** A worker's notes and\n  conclusion ran together with everything around them at a size that fought its\n  surroundings, inside a small scrolling box that trapped the page. They are now\n  properly separated, one consistent size, and clipped with a clear way to read\n  the rest.\n- **A worker's tool list could bury everything below it.** A specialist that\n  reads thirty files pushed its own conclusion off the screen. Long lists now\n  arrive folded, with the count and anything still running or failed still\n  visible.\n- **Delegated work went unrecognized on current agent versions.** The tool that\n  starts a specialist was renamed upstream, and Limboo only recognized the old\n  name — so on any recent version delegated work was recorded as ordinary tool\n  calls and never appeared as delegation at all. Both names are now recognized.\n- **A specialist's work vanished when you sent the next message.** A worker still\n  running when you typed again had the rest of its work spill into the new turn\n  as loose tool calls. Its record also now survives restarting the app.\n- **Sessions were named after approving a plan.** An untitled session took its\n  name from the approval instead of from what you had asked for."
+      },
+      {
+        "category": "security",
+        "title": "Security",
+        "items": [
+          {
+            "lead": "\"Always allow\" no longer grants more than you agreed to",
+            "text": "Allowing an action\n  for the session applied to *every* later action, whatever its kind — approving a\n  file read also pre-approved writing files and running commands, and satisfied\n  the guard on secrets like `.env` files and private keys. It now applies only to\n  the kind of action you were actually shown, and access to secrets always asks\n  on its own."
+          },
+          {
+            "lead": "A specialist's notes are treated as untrusted",
+            "text": "What a worker writes is\n  stored and shown as text, with a size limit, and is never fed back to the agent\n  as instructions."
+          },
+          {
+            "lead": "Approvals name the worker that asked",
+            "text": "A permission request raised inside a\n  delegation says so — and when it cannot be attributed with certainty, it says\n  nothing rather than guessing."
+          }
+        ],
+        "markdown": "- **\"Always allow\" no longer grants more than you agreed to.** Allowing an action\n  for the session applied to *every* later action, whatever its kind — approving a\n  file read also pre-approved writing files and running commands, and satisfied\n  the guard on secrets like `.env` files and private keys. It now applies only to\n  the kind of action you were actually shown, and access to secrets always asks\n  on its own.\n- **A specialist's notes are treated as untrusted.** What a worker writes is\n  stored and shown as text, with a size limit, and is never fed back to the agent\n  as instructions.\n- **Approvals name the worker that asked.** A permission request raised inside a\n  delegation says so — and when it cannot be attributed with certainty, it says\n  nothing rather than guessing."
+      }
+    ],
+    "contributors": [],
+    "pullRequests": [],
+    "mergedBranches": [],
+    "assets": [],
+    "signing": [],
+    "stats": {
+      "commits": null,
+      "filesChanged": null,
+      "additions": null,
+      "deletions": null
+    },
+    "links": {
+      "release": "https://github.com/limboo-ai/limboo/releases/tag/v1.14.0",
+      "compare": "https://github.com/limboo-ai/limboo/compare/v1.13.2...v1.14.0",
+      "tag": "https://github.com/limboo-ai/limboo/releases/tag/v1.14.0",
+      "milestone": null
+    },
+    "checksumManifest": "SHA256SUMS",
+    "provenanceRepo": "limboo-ai/limboo",
+    "markdown": "When the agent hands work to a specialist, you can finally watch it happen.\nDelegated work used to arrive as an anonymous pile of tool calls mixed into the\nmain reply; it now reads as one line you can open, follow live, and take apart\nafterwards — without ever leaving the conversation.\n\n### Added\n\n- **Delegated work reads as one activity.** When the agent hands a job to a\n  specialist — exploring the repository, reviewing code, running tests — the\n  conversation shows a single line naming the worker and what it was asked to do,\n  with its progress underneath. The worker's own tool calls no longer scatter\n  through the reply as if the main agent had run them. Opening the line shows how\n  long it took, which model it used, what it read and changed, which tools and\n  connected servers it reached, what it verified, and what it concluded.\n- **Live progress in the worker's own words.** While a specialist works, it\n  reports what it is doing in plain language — \"Analyzing authentication module\"\n  — refreshed as it goes. When that is unavailable the progress is worked out\n  from the tools it is using, so there is always something to read.\n- **Open a worker in its own tab.** Maximize a delegation and it opens beside\n  your files as a full-width tab: live progress, everything it ran, its notes and\n  its conclusion, following along as it works. Minimizing returns it to the\n  conversation exactly where you left it — same scroll position, same sections\n  open. If the worker pauses for permission while you are watching, you can\n  answer without going back.\n- **Actions on every delegation.** Copy the conclusion or the worker's notes,\n  export the whole record as Markdown, jump to it in the work graph, or open any\n  file it changed straight into a diff. Copying while it is still working\n  captures everything that has arrived.\n- **Delegated work in the task list.** Specialists running right now appear under\n  the task they belong to, with finished ones collected below it, so a long\n  execution can be followed from the Tasks panel without reading the whole\n  conversation.\n- **Settings for delegated work.** Under Agent › Subagents you can turn the\n  inline activity off, stop requesting live progress descriptions, or stop\n  keeping a worker's notes.\n\n### Fixed\n\n- **The plan was dumped into the conversation as raw text.** Approving a plan\n  sent it to the agent, and everything sent to the agent is shown — so the whole\n  plan appeared in a chat bubble as unformatted markup, tags and all, sometimes\n  thousands of characters of it. The approval now reads as one line with the plan\n  beneath it, properly formatted and collapsed by default. Nothing is hidden:\n  viewing the message raw still shows exactly what the agent received.\n- **Checklists in plans rendered twice over.** Every `- [ ]` item drew a tick box\n  *and* a bullet, on plans that are almost entirely checklists. Ticked items are\n  now also greyed, so a plan reads like a plan.\n- **The Tasks panel could go blank.** A specialist that failed or was denied took\n  the whole panel down with it.\n- **Long output was hard to read and hard to escape.** A worker's notes and\n  conclusion ran together with everything around them at a size that fought its\n  surroundings, inside a small scrolling box that trapped the page. They are now\n  properly separated, one consistent size, and clipped with a clear way to read\n  the rest.\n- **A worker's tool list could bury everything below it.** A specialist that\n  reads thirty files pushed its own conclusion off the screen. Long lists now\n  arrive folded, with the count and anything still running or failed still\n  visible.\n- **Delegated work went unrecognized on current agent versions.** The tool that\n  starts a specialist was renamed upstream, and Limboo only recognized the old\n  name — so on any recent version delegated work was recorded as ordinary tool\n  calls and never appeared as delegation at all. Both names are now recognized.\n- **A specialist's work vanished when you sent the next message.** A worker still\n  running when you typed again had the rest of its work spill into the new turn\n  as loose tool calls. Its record also now survives restarting the app.\n- **Sessions were named after approving a plan.** An untitled session took its\n  name from the approval instead of from what you had asked for.\n\n### Security\n\n- **\"Always allow\" no longer grants more than you agreed to.** Allowing an action\n  for the session applied to *every* later action, whatever its kind — approving a\n  file read also pre-approved writing files and running commands, and satisfied\n  the guard on secrets like `.env` files and private keys. It now applies only to\n  the kind of action you were actually shown, and access to secrets always asks\n  on its own.\n- **A specialist's notes are treated as untrusted.** What a worker writes is\n  stored and shown as text, with a size limit, and is never fed back to the agent\n  as instructions.\n- **Approvals name the worker that asked.** A permission request raised inside a\n  delegation says so — and when it cannot be attributed with certainty, it says\n  nothing rather than guessing."
+  },
+  {
     "version": "1.13.2",
     "date": "2026-07-28",
     "channel": "stable",
@@ -317,96 +438,18 @@ export const RELEASE_MANIFESTS: ReleaseManifestEntry[] = [
     "checksumManifest": "SHA256SUMS",
     "provenanceRepo": "limboo-ai/limboo",
     "markdown": "Sessions run in a git worktree, and Limboo puts that worktree inside its own\napplication data folder. A safety rule meant to keep the agent out of Limboo's\ndatabase read the whole folder as off limits — so in a worktree session the\nagent was refused the moment it tried to write its first file, in what was\nactually its own working directory. Approving a plan could fail for a reason\nthat was never true, and leave the session unable to try again. The plan card\nalso stops appearing before there is a plan to read.\n\n### Fixed\n\n- **The agent could not write anything in a worktree session.** Every file it\n  tried to create was refused as \"Limboo's own app data\", because sessions check\n  out into a folder that lives inside Limboo's data directory. The rule now\n  covers only what it was written to protect — the database, your settings, and\n  the encrypted secret store — and the rest of that directory, including the\n  worktree the agent works in, is ordinary ground. Cursor runs were blocked by a\n  second copy of the same rule and are fixed with it.\n- **Commands were refused for mentioning a filename.** Anything containing the\n  text `limboo.db` was blocked wherever it ran, so a plain search of your own\n  source could be denied. Only the real, full path to the database is protected\n  now.\n- **Approving a plan could fail with \"the agent is already working on this\n  session\".** The plan appears while the run that wrote it is still finishing, so\n  a quick click arrived a fraction of a second early and was turned away.\n  Approving now waits for that run to finish instead of refusing, and the buttons\n  are held until it has.\n- **A failed approval left the plan unusable.** The plan was marked as being\n  carried out before the work had actually started, so when it did not start,\n  the approval buttons never came back and the session could not be recovered.\n  The plan is restored when the run fails to begin.\n\n### Changed\n\n- **The plan card waits for the plan.** It used to appear as soon as planning\n  started, showing a title and an \"Analyzing the repository\" line above the\n  composer while the agent's actual reasoning streamed past it further up. It now\n  appears with the proposal it is asking you to approve. Progress while planning\n  reads where the rest of the run does — in the conversation."
-  },
-  {
-    "version": "1.11.0",
-    "date": "2026-07-27",
-    "channel": "stable",
-    "codename": null,
-    "gitTag": "v1.11.0",
-    "commit": null,
-    "buildNumber": null,
-    "summary": "1.10.0 set out to stop Plan and Ask blocking the MCP servers you had connected.\nIt gave every server a **Plan & Ask access** setting and then defaulted it to\n\"only the tools this server declares read-only\" — but declaring that is optional,\nand most servers declare nothing. So most servers stayed blocked, and the refusal\nsent you to a control buried inside a per-server edit form that search could not\nfind. An un-annotated tool now asks you, in the run, with a button. Opening the\nTasks drawer also stopped crashing, and a finished plan no longer sits above the\ncomposer forever.",
-    "sections": [
-      {
-        "category": "fixed",
-        "title": "Fixed",
-        "items": [
-          {
-            "lead": "The Tasks drawer crashed on any plan with a finished or not-yet-started\n  step",
-            "text": "A missing icon reference threw as the step was drawn, taking the whole\n  drawer down with it. Only steps that were running or had failed escaped it,\n  which is why it survived 1.10.0."
-          },
-          {
-            "lead": "Most MCP servers were still blocked in Plan and Ask",
-            "text": "Read-only annotations\n  are optional in the MCP protocol and few servers ship them, so the default\n  setting allowed nothing at all — the same dead end 1.10.0 meant to close, one\n  layer further in. A tool from a known, connected server that has simply not\n  declared itself read-only now **asks for approval during the run**, the same\n  way any other command does, instead of being refused with a pointer to\n  Settings. Blocked still means blocked, with no prompt."
-          },
-          {
-            "lead": "Limboo's own memory and search tools were unusable while planning",
-            "text": "They are\n  the tools the agent uses to recall what it learned about your project and to\n  find its way around it, and they were left out of the permissions a planning\n  run is given — so every plan started with less about your project than it had\n  available."
-          },
-          {
-            "lead": "The plan card stayed above the composer forever",
-            "text": "A plan record is never\n  deleted, so once a session had run one, a card for it sat pinned over the\n  composer for the life of that session — collapsing, once it was approved or\n  rejected, to a header with nothing under it. It now shows while a plan is being\n  written, while it waits for you, and while it is being carried out, and goes\n  away when it is done. Finished plans stay in the Tasks drawer."
-          }
-        ],
-        "markdown": "- **The Tasks drawer crashed on any plan with a finished or not-yet-started\n  step.** A missing icon reference threw as the step was drawn, taking the whole\n  drawer down with it. Only steps that were running or had failed escaped it,\n  which is why it survived 1.10.0.\n- **Most MCP servers were still blocked in Plan and Ask.** Read-only annotations\n  are optional in the MCP protocol and few servers ship them, so the default\n  setting allowed nothing at all — the same dead end 1.10.0 meant to close, one\n  layer further in. A tool from a known, connected server that has simply not\n  declared itself read-only now **asks for approval during the run**, the same\n  way any other command does, instead of being refused with a pointer to\n  Settings. Blocked still means blocked, with no prompt.\n- **Limboo's own memory and search tools were unusable while planning.** They are\n  the tools the agent uses to recall what it learned about your project and to\n  find its way around it, and they were left out of the permissions a planning\n  run is given — so every plan started with less about your project than it had\n  available.\n- **The plan card stayed above the composer forever.** A plan record is never\n  deleted, so once a session had run one, a card for it sat pinned over the\n  composer for the life of that session — collapsing, once it was approved or\n  rejected, to a header with nothing under it. It now shows while a plan is being\n  written, while it waits for you, and while it is being carried out, and goes\n  away when it is done. Finished plans stay in the Tasks drawer."
-      },
-      {
-        "category": "added",
-        "title": "Added",
-        "items": [
-          {
-            "lead": "A default Plan & Ask access for new servers",
-            "text": ", under Settings › MCP, beside\n  Default trust — so a fleet of read-only servers is a decision made once rather\n  than per server. Changing it never rewrites servers already configured."
-          },
-          {
-            "lead": "Plan & Ask access is findable",
-            "text": "It is now in settings search under *plan*,\n  *ask*, *read-only*, *approve* and *blocked* — searching any of those used to\n  land on the unrelated Plan & Tasks section — and each server states its current\n  access in words on its own row, instead of only inside Edit."
-          }
-        ],
-        "markdown": "- **A default Plan & Ask access for new servers**, under Settings › MCP, beside\n  Default trust — so a fleet of read-only servers is a decision made once rather\n  than per server. Changing it never rewrites servers already configured.\n- **Plan & Ask access is findable.** It is now in settings search under *plan*,\n  *ask*, *read-only*, *approve* and *blocked* — searching any of those used to\n  land on the unrelated Plan & Tasks section — and each server states its current\n  access in words on its own row, instead of only inside Edit."
-      },
-      {
-        "category": "changed",
-        "title": "Changed",
-        "items": [
-          {
-            "lead": "A server marked Trusted is still asked about in Plan and Ask",
-            "text": "when it has\n  not declared a tool read-only. Trust decides whether a permitted tool is\n  silent, never whether a read-only mode is a read-only mode."
-          },
-          {
-            "lead": "Settings no longer offers \"Archive on completion\"",
-            "text": "The switch had never\n  been connected to anything, and with finished plans now hidden by rule it would\n  read as the control for that."
-          }
-        ],
-        "markdown": "- **A server marked Trusted is still asked about in Plan and Ask** when it has\n  not declared a tool read-only. Trust decides whether a permitted tool is\n  silent, never whether a read-only mode is a read-only mode.\n- **Settings no longer offers \"Archive on completion\".** The switch had never\n  been connected to anything, and with finished plans now hidden by rule it would\n  read as the control for that."
-      }
-    ],
-    "contributors": [],
-    "pullRequests": [],
-    "mergedBranches": [],
-    "assets": [],
-    "signing": [],
-    "stats": {
-      "commits": null,
-      "filesChanged": null,
-      "additions": null,
-      "deletions": null
-    },
-    "links": {
-      "release": "https://github.com/limboo-ai/limboo/releases/tag/v1.11.0",
-      "compare": "https://github.com/limboo-ai/limboo/compare/v1.10.0...v1.11.0",
-      "tag": "https://github.com/limboo-ai/limboo/releases/tag/v1.11.0",
-      "milestone": null
-    },
-    "checksumManifest": "SHA256SUMS",
-    "provenanceRepo": "limboo-ai/limboo",
-    "markdown": "1.10.0 set out to stop Plan and Ask blocking the MCP servers you had connected.\nIt gave every server a **Plan & Ask access** setting and then defaulted it to\n\"only the tools this server declares read-only\" — but declaring that is optional,\nand most servers declare nothing. So most servers stayed blocked, and the refusal\nsent you to a control buried inside a per-server edit form that search could not\nfind. An un-annotated tool now asks you, in the run, with a button. Opening the\nTasks drawer also stopped crashing, and a finished plan no longer sits above the\ncomposer forever.\n\n### Fixed\n\n- **The Tasks drawer crashed on any plan with a finished or not-yet-started\n  step.** A missing icon reference threw as the step was drawn, taking the whole\n  drawer down with it. Only steps that were running or had failed escaped it,\n  which is why it survived 1.10.0.\n- **Most MCP servers were still blocked in Plan and Ask.** Read-only annotations\n  are optional in the MCP protocol and few servers ship them, so the default\n  setting allowed nothing at all — the same dead end 1.10.0 meant to close, one\n  layer further in. A tool from a known, connected server that has simply not\n  declared itself read-only now **asks for approval during the run**, the same\n  way any other command does, instead of being refused with a pointer to\n  Settings. Blocked still means blocked, with no prompt.\n- **Limboo's own memory and search tools were unusable while planning.** They are\n  the tools the agent uses to recall what it learned about your project and to\n  find its way around it, and they were left out of the permissions a planning\n  run is given — so every plan started with less about your project than it had\n  available.\n- **The plan card stayed above the composer forever.** A plan record is never\n  deleted, so once a session had run one, a card for it sat pinned over the\n  composer for the life of that session — collapsing, once it was approved or\n  rejected, to a header with nothing under it. It now shows while a plan is being\n  written, while it waits for you, and while it is being carried out, and goes\n  away when it is done. Finished plans stay in the Tasks drawer.\n\n### Added\n\n- **A default Plan & Ask access for new servers**, under Settings › MCP, beside\n  Default trust — so a fleet of read-only servers is a decision made once rather\n  than per server. Changing it never rewrites servers already configured.\n- **Plan & Ask access is findable.** It is now in settings search under *plan*,\n  *ask*, *read-only*, *approve* and *blocked* — searching any of those used to\n  land on the unrelated Plan & Tasks section — and each server states its current\n  access in words on its own row, instead of only inside Edit.\n\n### Changed\n\n- **A server marked Trusted is still asked about in Plan and Ask** when it has\n  not declared a tool read-only. Trust decides whether a permitted tool is\n  silent, never whether a read-only mode is a read-only mode.\n- **Settings no longer offers \"Archive on completion\".** The switch had never\n  been connected to anything, and with finished plans now hidden by rule it would\n  read as the control for that."
   }
 ];
 
 /** Every released version, newest first. */
 export const RELEASE_INDEX: ReleaseIndexEntry[] = [
+  {
+    "version": "1.14.0",
+    "date": "2026-07-29",
+    "channel": "stable",
+    "summary": "When the agent hands work to a specialist, you can finally watch it happen.\nDelegated work used to arrive as an anonymous pile of tool calls mixed into the\nmain reply; it now reads as one line you can open, follow live, and take apart\nafterwards — without ever leaving the conversation.",
+    "detailed": true
+  },
   {
     "version": "1.13.2",
     "date": "2026-07-28",
@@ -440,7 +483,7 @@ export const RELEASE_INDEX: ReleaseIndexEntry[] = [
     "date": "2026-07-27",
     "channel": "stable",
     "summary": "1.10.0 set out to stop Plan and Ask blocking the MCP servers you had connected.\nIt gave every server a **Plan & Ask access** setting and then defaulted it to\n\"only the tools this server declares read-only\" — but declaring that is optional,\nand most servers declare nothing. So most servers stayed blocked, and the refusal\nsent you to a control buried inside a per-server edit form that search could not\nfind. An un-annotated tool now asks you, in the run, with a button. Opening the\nTasks drawer also stopped crashing, and a finished plan no longer sits above the\ncomposer forever.",
-    "detailed": true
+    "detailed": false
   },
   {
     "version": "1.10.0",

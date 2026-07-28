@@ -365,6 +365,45 @@ export function AgentPanel() {
       </Section>
 
       <Section
+        title="Subagents"
+        hint="When the agent delegates work — research, review, testing — the worker appears as one inline activity in the conversation, expandable into its execution record. There is deliberately no separate subagent panel: a subagent runs in its own context window and returns only a distilled result, so a second surface would duplicate the timeline and the Tasks drawer."
+      >
+        <Field
+          id="subagentInline"
+          label="Inline activity"
+          hint="Show a delegation as its own row with live progress and an expandable execution record. Off folds a worker's calls back into ordinary tool chips."
+        >
+          <Toggle
+            checked={agent.subagents.inlineActivity}
+            onChange={(v) => set('subagents', { ...agent.subagents, inlineActivity: v })}
+            aria-label="Show subagents as inline activity"
+          />
+        </Field>
+        <Field
+          id="subagentProgress"
+          label="Live progress summaries"
+          hint="Ask the provider for a present-tense description of what a worker is doing (“Analyzing authentication module”), refreshed while it runs. Costs a small periodic fork of the worker's conversation. Off falls back to progress derived from the tools it calls."
+        >
+          <Toggle
+            checked={agent.subagents.progressSummaries}
+            onChange={(v) => set('subagents', { ...agent.subagents, progressSummaries: v })}
+            aria-label="Request subagent progress summaries"
+          />
+        </Field>
+        <Field
+          id="subagentForwardText"
+          label="Capture the worker's transcript"
+          hint="Keep a worker's own narration inside its row. It never enters the main conversation and is never fed back to the agent — it is stored as data you can read. Reasoning is not included: neither provider exposes a subagent's chain of thought."
+        >
+          <Toggle
+            checked={agent.subagents.forwardText}
+            onChange={(v) => set('subagents', { ...agent.subagents, forwardText: v })}
+            aria-label="Forward subagent transcripts"
+          />
+        </Field>
+      </Section>
+
+      <Section
         title="Hook Engine"
         hint="The provider-neutral governance layer. Every governed action (session, prompt, tool gate, file edit, shell, checkpoint) is recorded to the Hooks audit tab — identically whether Claude or Cursor is running. This only affects the audit trail; it never weakens enforcement (the permission gate always runs)."
       >

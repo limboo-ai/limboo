@@ -373,6 +373,25 @@ export function mapHookEvent(
         genericToolName(rawName);
       return { name, input: reshapeArgs(name, args), observeOnly: false };
     }
+    case 'subagentStart':
+    case 'subagentStop': {
+      // OBSERVE ONLY — never a gate. Cursor's own docs say `permission: "ask"`
+      // is unsupported on subagentStart and is treated as a deny, so routing
+      // this through the permission core could silently kill a delegation the
+      // user never saw a prompt for. It is mapped so the run records that a
+      // worker was spawned; the ids are unusable for parent linkage (all four
+      // carry the session id), so nothing here tries to nest anything.
+      const task = strField(payload, 'task') ?? strField(payload, 'description') ?? '';
+      const model = strField(payload, 'subagent_model') ?? strField(payload, 'subagentModel');
+      return {
+        name: 'Agent',
+        input: {
+          description: task,
+          ...(model ? { model } : {}),
+        },
+        observeOnly: true,
+      };
+    }
     default:
       return null;
   }

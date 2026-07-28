@@ -160,6 +160,9 @@ function metaEntries(node: WorkGraphNode, previews = true): Array<[string, strin
       return [['state', node.meta.taskStatus]];
     case 'subagent':
       return [
+        ...(node.meta.subagentType
+          ? ([['agent', node.meta.subagentType]] as Array<[string, string]>)
+          : []),
         ['tool', node.meta.toolName],
         ['children', String(node.meta.childCount)],
       ];

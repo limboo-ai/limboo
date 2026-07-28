@@ -1,7 +1,7 @@
 import type { AppSettings, WorkspaceConfig } from './types';
 
 /** Bumped whenever the {@link AppSettings} shape changes incompatibly. */
-export const SETTINGS_VERSION = 23;
+export const SETTINGS_VERSION = 24;
 
 /**
  * The agent providers Limboo can run (Claude Code = Anthropic via the Agent
@@ -77,6 +77,23 @@ export const AGENT_LIMITS = {
    * document, this one rides in a conversation turn.
    */
   planPromptMax: 24_000,
+} as const;
+
+/**
+ * Bounds for subagent execution records.
+ *
+ * Every one of these caps a value that rides a per-event payload AND a persisted
+ * row: a worker that runs away must not be able to grow either without limit.
+ * The transcript cap is the strictest-feeling one on purpose — it holds
+ * forwarded model output, which is untrusted content Limboo renders verbatim.
+ */
+export const SUBAGENT_LIMITS = {
+  summaryMax: { min: 500, max: 64_000, default: 4_000 },
+  transcriptMax: { min: 1_000, max: 262_144, default: 32_000 },
+  rollupMax: { min: 8, max: 512, default: 64 },
+  retainRuns: { min: 10, max: 2_000, default: 200 },
+  /** Cap on a single rolled-up string (tool name, MCP server, path, command). */
+  fieldMax: 512,
 } as const;
 
 /** Caps for the audit-style agent activity feed (label + detail truncation). */
@@ -784,6 +801,15 @@ export const DEFAULT_SETTINGS: AppSettings = {
       enabled: true,
       audit: 'lifecycle',
     },
+    subagents: {
+      inlineActivity: true,
+      forwardText: true,
+      progressSummaries: true,
+      summaryMax: SUBAGENT_LIMITS.summaryMax.default,
+      transcriptMax: SUBAGENT_LIMITS.transcriptMax.default,
+      rollupMax: SUBAGENT_LIMITS.rollupMax.default,
+      retainRuns: SUBAGENT_LIMITS.retainRuns.default,
+    },
   },
   git: {
     userName: '',
@@ -985,7 +1011,7 @@ export function clamp(value: number, min: number, max: number): number {
 /* ------------------------------------------------------------------ */
 
 /** Bumped whenever the workspace DB schema changes incompatibly. */
-export const WORKSPACE_SCHEMA_VERSION = 16;
+export const WORKSPACE_SCHEMA_VERSION = 17;
 
 /** Input caps the main process enforces on renderer-supplied session values. */
 export const SESSION_LIMITS = {

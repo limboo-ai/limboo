@@ -10,6 +10,7 @@ import type { AppSettings, DeepPartial, PersistedDocument } from '@shared/types'
 import {
   AGENT_CONNECTION_LIMITS,
   AGENT_LIMITS,
+  SUBAGENT_LIMITS,
   ATTACHMENT_LIMITS,
   CHAT_FONTS,
   CURSOR_LIMITS,
@@ -162,6 +163,22 @@ export class SettingsManager {
     merged.agent.maxTurns = Math.round(
       clamp(merged.agent.maxTurns, AGENT_LIMITS.maxTurns.min, AGENT_LIMITS.maxTurns.max),
     );
+
+    // Subagents (SETTINGS_VERSION 23 -> 24: `agent.subagents` introduced; the
+    // deep-merge above supplies every default, so there is no data migration).
+    // Each numeric bound caps a value that rides both a per-event payload and a
+    // persisted row, so clamping here is the enforcement point, not a nicety.
+    const sub = merged.agent.subagents;
+    const S = SUBAGENT_LIMITS;
+    sub.inlineActivity = !!sub.inlineActivity;
+    sub.forwardText = !!sub.forwardText;
+    sub.progressSummaries = !!sub.progressSummaries;
+    sub.summaryMax = Math.round(clamp(sub.summaryMax, S.summaryMax.min, S.summaryMax.max));
+    sub.transcriptMax = Math.round(
+      clamp(sub.transcriptMax, S.transcriptMax.min, S.transcriptMax.max),
+    );
+    sub.rollupMax = Math.round(clamp(sub.rollupMax, S.rollupMax.min, S.rollupMax.max));
+    sub.retainRuns = Math.round(clamp(sub.retainRuns, S.retainRuns.min, S.retainRuns.max));
 
     const c = merged.agent.connection;
     const L = AGENT_CONNECTION_LIMITS;

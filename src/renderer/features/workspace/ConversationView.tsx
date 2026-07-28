@@ -14,7 +14,7 @@
  * turn renders as a compact right-aligned bubble.
  */
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { Check, ChevronRight, CircleAlert } from 'lucide-react';
+import { Check, ChevronRight, CircleAlert, TriangleAlert } from 'lucide-react';
 import type { AgentActivityItem, AgentToolCall, AttachmentMeta, ChatMessage, PermissionRequest } from '@shared/types';
 import { Logo } from '@/renderer/components/brand/Logo';
 import { HelixLoader, Spinner } from '@/renderer/components/ui';
@@ -25,6 +25,7 @@ import { phaseLabel } from '@/renderer/features/agent/status';
 import { useLayoutStore } from '@/renderer/stores/useLayoutStore';
 import { useGitStore } from '@/renderer/stores/useGitStore';
 import { useAttachmentStore } from '@/renderer/stores/useAttachmentStore';
+import { useSettingsStore } from '@/renderer/stores/useSettingsStore';
 import { AttachmentChip } from './AttachmentChip';
 import { Markdown } from './Markdown';
 import { MessageSkeleton, ThinkingPulse } from './MessageSkeleton';
@@ -34,6 +35,9 @@ import { CodeBlock } from './CodeBlock';
 import { MessageActions, selectNodeText } from './MessageActions';
 import { RevertDialog } from './RevertDialog';
 import { PlanInline } from '@/renderer/features/plan/PlanInline';
+import { SubagentActivity } from './SubagentActivity';
+import { ProseCard } from './ProseCard';
+import { isSubagentTool } from '@shared/subagents';
 
 /** Human label for a file-edit tool's change status, shown inline in the stream. */
 const CHANGE_WORD: Record<string, string> = {
@@ -69,18 +73,35 @@ interface Turn {
 
 /** Items actually rendered inside an assistant block: text and markers pass
  *  through, but consecutive tool calls fold into ONE group so a long run of
- *  tools reads as a single compact line instead of a wall of rows. */
+ *  tools reads as a single compact line instead of a wall of rows. A subagent
+ *  spawn is its own item, carrying the worker's own calls with it. */
 type RenderItem =
   | { kind: 'text'; message: ChatMessage }
   | { kind: 'marker'; item: AgentActivityItem }
-  | { kind: 'tool-group'; key: string; calls: AgentToolCall[] };
+  | { kind: 'tool-group'; key: string; calls: AgentToolCall[] }
+  | { kind: 'subagent'; key: string; call: AgentToolCall };
 
 /** Collapse consecutive tool blocks into one group; text/markers break a run.
- *  The group key is the FIRST call's id — stable while a live group appends. */
-function groupBlocks(blocks: Block[]): RenderItem[] {
+ *  The group key is the FIRST call's id — stable while a live group appends.
+ *
+ *  A subagent spawn NEVER joins a tool group: its work belongs inside it, not
+ *  beside it, so it becomes its own item and takes its children with it. Calls
+ *  made inside a worker were previously spliced into this list as siblings of
+ *  the spawn — indistinguishable from the parent's own work — which is what made
+ *  a delegating turn read as one flat interleaved wall. */
+function groupBlocks(blocks: Block[], inlineSubagents: boolean): RenderItem[] {
   const out: RenderItem[] = [];
   for (const b of blocks) {
     if (b.kind === 'tool') {
+      if (inlineSubagents && isSubagentTool(b.call.name)) {
+        // The worker's own calls are NOT passed down: SubagentActivity
+        // subscribes for them, the same way LiveStatusRow subscribes for the
+        // running tool. Threading them through here would mean a Map in
+        // TurnView's memo comparator, which identity-compares — every settled
+        // turn would re-render on every streaming delta.
+        out.push({ kind: 'subagent', key: b.call.id, call: b.call });
+        continue;
+      }
       const last = out[out.length - 1];
       if (last && last.kind === 'tool-group') last.calls.push(b.call);
       else out.push({ kind: 'tool-group', key: b.call.id, calls: [b.call] });
@@ -91,6 +112,30 @@ function groupBlocks(blocks: Block[]): RenderItem[] {
     }
   }
   return out;
+}
+
+/**
+ * Drop a worker's own tool calls from the stream — they belong inside the
+ * worker's row, which fetches them itself.
+ *
+ * Resolved across the WHOLE snapshot, never per turn. `buildTurns` slices blocks
+ * by user-message timestamps, so a worker still running when the user sends the
+ * next prompt has its later calls land in the next turn — where a per-turn spawn
+ * set would not recognize them and they would surface as top-level rows, exactly
+ * the leak the subagent row exists to prevent. A child whose spawn is genuinely
+ * absent (a truncated snapshot) is left in the stream rather than dropped:
+ * showing it in the wrong place beats losing it.
+ */
+export function streamToolCalls(toolCalls: AgentToolCall[], inlineActivity = true): AgentToolCall[] {
+  // With the inline row switched off a worker's calls stay in the stream as
+  // ordinary chips — the pre-subagent rendering, not a blank space.
+  if (!inlineActivity) return toolCalls;
+  const spawns = new Set<string>();
+  for (const call of toolCalls) {
+    if (isSubagentTool(call.name)) spawns.add(call.id);
+  }
+  if (spawns.size === 0) return toolCalls;
+  return toolCalls.filter((c) => !(c.parentCallId && spawns.has(c.parentCallId)));
 }
 
 /** Fold the session snapshot into chronological turns. A user message opens a
@@ -159,6 +204,7 @@ export function ConversationView({ sessionId }: { sessionId: string }) {
   // The run is paused on an AskUserQuestion for this session — the card lives
   // above the composer; here we only show a lightweight inline "waiting" status.
   const clarifying = useAgentStore((s) => !!s.pendingClarificationBySession[sessionId]);
+  const inlineSubagents = useSettingsStore((s) => s.settings.agent.subagents.inlineActivity);
   const bottomRef = useRef<HTMLDivElement>(null);
   const stick = useRef(true);
   // Id of the last user message we pinned to — lets us force-follow the user's own
@@ -166,8 +212,13 @@ export function ConversationView({ sessionId }: { sessionId: string }) {
   const lastUserId = useRef<string | null>(null);
 
   const turns = useMemo(
-    () => buildTurns(snapshot.messages, snapshot.toolCalls, snapshot.activity),
-    [snapshot.messages, snapshot.toolCalls, snapshot.activity],
+    () =>
+      buildTurns(
+        snapshot.messages,
+        streamToolCalls(snapshot.toolCalls, inlineSubagents),
+        snapshot.activity,
+      ),
+    [snapshot.messages, snapshot.toolCalls, snapshot.activity, inlineSubagents],
   );
 
   // Auto-stick to the bottom while streaming, but only if the user hasn't
@@ -429,13 +480,28 @@ function turnsEqual(prev: TurnViewProps, next: TurnViewProps): boolean {
  */
 function LiveStatusRow({ sessionId }: { sessionId: string }) {
   const phase = useAgentStore((s) => s.requestsBySession[sessionId]?.phase ?? 'idle');
+  // What the MAIN agent is doing. A tool call made inside a subagent is that
+  // worker's business and is already reported by the worker's own row, so it is
+  // skipped here — otherwise the top-level status narrated a delegated Grep as
+  // if the main conversation had run it.
   const toolName = useAgentStore((s) => {
     const calls = s.bySession[sessionId]?.toolCalls;
     if (!calls) return undefined;
-    for (let i = calls.length - 1; i >= 0; i--) {
-      if (calls[i].status === 'running') return calls[i].name;
+    // Pick the most recently STARTED top-level call, not the last array element.
+    // The array is not chronological: a subagent's roll-up re-emits its parent,
+    // and the store's `tool-start` reducer removes-then-appends, so with two live
+    // workers "last" meant "most recently updated" and the status flipped between
+    // them on every child call.
+    let newest: AgentToolCall | undefined;
+    for (const call of calls) {
+      if (call.status !== 'running' || call.parentCallId) continue;
+      if (!newest || call.startedAt > newest.startedAt) newest = call;
     }
-    return undefined;
+    if (!newest) return undefined;
+    if (isSubagentTool(newest.name)) {
+      return newest.subagent?.type ? `${newest.subagent.type} agent` : 'a subagent';
+    }
+    return newest.name;
   });
   // RequestState carries no start timestamp, so elapsed counts from when this
   // indicator appeared — it mounts with the run and stays put until text streams.
@@ -459,10 +525,13 @@ function LiveStatusRow({ sessionId }: { sessionId: string }) {
 /** Lightweight inline status while the run is paused on an AskUserQuestion. The
  *  interactive card lives above the composer; this just keeps the stream honest. */
 function WaitingForDecision() {
+  // No coloured strip: state is the icon and the typography, the same rule the
+  // rails, tab strips and message actions follow. A left bar here was the last
+  // place in the conversation layer spelling status a third way.
   return (
-    <div className="flex items-center gap-2 border-l border-accent/50 pl-3 text-[12px] text-accent animate-fade-in">
-      <Spinner size={12} />
-      <span>Waiting for your decision…</span>
+    <div className="flex items-center gap-2 px-1 text-[12px] text-accent animate-fade-in">
+      <TriangleAlert size={12} className="shrink-0" />
+      <span className="font-medium">Waiting for your decision…</span>
     </div>
   );
 }
@@ -482,8 +551,13 @@ function UserBubble({
 }) {
   const [raw, setRaw] = useState(false);
   const body = useRef<HTMLDivElement>(null);
+  // An orchestration turn Limboo composed (plan approval) renders as its summary
+  // line, with the document beneath it as a card. The raw toggle still shows the
+  // true sent text, tags and all — the display is a presentation choice, never a
+  // concealment. See ChatMessage.display.
+  const display = !raw ? message.display : undefined;
   return (
-    <div className="group flex flex-col items-end gap-1.5">
+    <div className="group flex w-full flex-col items-end gap-1.5">
       {message.attachments && message.attachments.length > 0 && (
         <MessageAttachments sessionId={message.sessionId} attachments={message.attachments} />
       )}
@@ -494,8 +568,18 @@ function UserBubble({
           raw && 'font-mono text-[11.5px] text-muted',
         )}
       >
-        {message.text}
+        {display ? display.text : message.text}
       </div>
+      {display?.body && (
+        // Wider than the bubble on purpose: this is a document, and a plan
+        // squeezed into an 85%-width right-aligned bubble is the shape that made
+        // it unreadable in the first place.
+        <div className="w-full max-w-[92%]">
+          <ProseCard label="Approved plan" defaultOpen={false} clampHeight={420}>
+            <Markdown text={display.body} />
+          </ProseCard>
+        </div>
+      )}
       <MessageActions
         sessionId={sessionId}
         message={message}
@@ -556,9 +640,15 @@ const AssistantBlock = memo(function AssistantBlock({
   onRevert?: () => void;
 }) {
   const streaming = blocks.some((b) => b.kind === 'text' && b.message.streaming);
+  // A boolean from the store keeps this memo-safe; threading it as a prop would
+  // put it in TurnView's comparator for no benefit.
+  const inlineSubagents = useSettingsStore((s) => s.settings.agent.subagents.inlineActivity);
   // Grouping is derived per render of an already-invalidated turn — settled
   // turns never reach this (TurnView's memo comparator short-circuits them).
-  const items = useMemo(() => groupBlocks(blocks), [blocks]);
+  const items = useMemo(
+    () => groupBlocks(blocks, inlineSubagents),
+    [blocks, inlineSubagents],
+  );
   const toolCalls = useMemo(
     () => blocks.filter((b): b is Extract<Block, { kind: 'tool' }> => b.kind === 'tool').map((b) => b.call),
     [blocks],
@@ -590,6 +680,9 @@ const AssistantBlock = memo(function AssistantBlock({
             );
           }
           if (it.kind === 'marker') return <InlineMarkerRow key={it.item.id} item={it.item} />;
+          if (it.kind === 'subagent') {
+            return <SubagentActivity key={it.key} call={it.call} />;
+          }
           return <ToolGroup key={it.key} calls={it.calls} />;
         })}
         {trailing}

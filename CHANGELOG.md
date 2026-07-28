@@ -7,6 +7,91 @@ All notable changes to Limboo are documented here. The format is based on
 
 ## [Unreleased]
 
+## [1.14.0] - 2026-07-29
+
+When the agent hands work to a specialist, you can finally watch it happen.
+Delegated work used to arrive as an anonymous pile of tool calls mixed into the
+main reply; it now reads as one line you can open, follow live, and take apart
+afterwards — without ever leaving the conversation.
+
+### Added
+
+- **Delegated work reads as one activity.** When the agent hands a job to a
+  specialist — exploring the repository, reviewing code, running tests — the
+  conversation shows a single line naming the worker and what it was asked to do,
+  with its progress underneath. The worker's own tool calls no longer scatter
+  through the reply as if the main agent had run them. Opening the line shows how
+  long it took, which model it used, what it read and changed, which tools and
+  connected servers it reached, what it verified, and what it concluded.
+- **Live progress in the worker's own words.** While a specialist works, it
+  reports what it is doing in plain language — "Analyzing authentication module"
+  — refreshed as it goes. When that is unavailable the progress is worked out
+  from the tools it is using, so there is always something to read.
+- **Open a worker in its own tab.** Maximize a delegation and it opens beside
+  your files as a full-width tab: live progress, everything it ran, its notes and
+  its conclusion, following along as it works. Minimizing returns it to the
+  conversation exactly where you left it — same scroll position, same sections
+  open. If the worker pauses for permission while you are watching, you can
+  answer without going back.
+- **Actions on every delegation.** Copy the conclusion or the worker's notes,
+  export the whole record as Markdown, jump to it in the work graph, or open any
+  file it changed straight into a diff. Copying while it is still working
+  captures everything that has arrived.
+- **Delegated work in the task list.** Specialists running right now appear under
+  the task they belong to, with finished ones collected below it, so a long
+  execution can be followed from the Tasks panel without reading the whole
+  conversation.
+- **Settings for delegated work.** Under Agent › Subagents you can turn the
+  inline activity off, stop requesting live progress descriptions, or stop
+  keeping a worker's notes.
+
+### Fixed
+
+- **The plan was dumped into the conversation as raw text.** Approving a plan
+  sent it to the agent, and everything sent to the agent is shown — so the whole
+  plan appeared in a chat bubble as unformatted markup, tags and all, sometimes
+  thousands of characters of it. The approval now reads as one line with the plan
+  beneath it, properly formatted and collapsed by default. Nothing is hidden:
+  viewing the message raw still shows exactly what the agent received.
+- **Checklists in plans rendered twice over.** Every `- [ ]` item drew a tick box
+  *and* a bullet, on plans that are almost entirely checklists. Ticked items are
+  now also greyed, so a plan reads like a plan.
+- **The Tasks panel could go blank.** A specialist that failed or was denied took
+  the whole panel down with it.
+- **Long output was hard to read and hard to escape.** A worker's notes and
+  conclusion ran together with everything around them at a size that fought its
+  surroundings, inside a small scrolling box that trapped the page. They are now
+  properly separated, one consistent size, and clipped with a clear way to read
+  the rest.
+- **A worker's tool list could bury everything below it.** A specialist that
+  reads thirty files pushed its own conclusion off the screen. Long lists now
+  arrive folded, with the count and anything still running or failed still
+  visible.
+- **Delegated work went unrecognized on current agent versions.** The tool that
+  starts a specialist was renamed upstream, and Limboo only recognized the old
+  name — so on any recent version delegated work was recorded as ordinary tool
+  calls and never appeared as delegation at all. Both names are now recognized.
+- **A specialist's work vanished when you sent the next message.** A worker still
+  running when you typed again had the rest of its work spill into the new turn
+  as loose tool calls. Its record also now survives restarting the app.
+- **Sessions were named after approving a plan.** An untitled session took its
+  name from the approval instead of from what you had asked for.
+
+### Security
+
+- **"Always allow" no longer grants more than you agreed to.** Allowing an action
+  for the session applied to *every* later action, whatever its kind — approving a
+  file read also pre-approved writing files and running commands, and satisfied
+  the guard on secrets like `.env` files and private keys. It now applies only to
+  the kind of action you were actually shown, and access to secrets always asks
+  on its own.
+- **A specialist's notes are treated as untrusted.** What a worker writes is
+  stored and shown as text, with a size limit, and is never fed back to the agent
+  as instructions.
+- **Approvals name the worker that asked.** A permission request raised inside a
+  delegation says so — and when it cannot be attributed with certainty, it says
+  nothing rather than guessing.
+
 ## [1.13.2] - 2026-07-28
 
 A plan you left waiting can be approved again.
@@ -839,7 +924,8 @@ operational.
 - **Unified streaming timeline** — the conversation rendered as one continuous,
   turn-grouped event stream of messages, tool calls, and status markers.
 
-[Unreleased]: https://github.com/limboo-ai/limboo/compare/v1.13.2...HEAD
+[Unreleased]: https://github.com/limboo-ai/limboo/compare/v1.14.0...HEAD
+[1.14.0]: https://github.com/limboo-ai/limboo/compare/v1.13.2...v1.14.0
 [1.13.2]: https://github.com/limboo-ai/limboo/compare/v1.13.1...v1.13.2
 [1.13.1]: https://github.com/limboo-ai/limboo/compare/v1.13.0...v1.13.1
 [1.13.0]: https://github.com/limboo-ai/limboo/compare/v1.12.0...v1.13.0

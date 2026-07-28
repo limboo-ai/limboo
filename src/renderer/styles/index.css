@@ -363,6 +363,26 @@ html[data-reduced-motion="true"] *::after {
 .limboo-md ol { list-style: decimal; }
 .limboo-md li { margin: 0.2rem 0; }
 .limboo-md li::marker { color: var(--color-faint); }
+/* Nested lists tighten rather than restart the vertical rhythm — a plan's
+   sub-steps should read as part of their parent step, not as a new block. */
+.limboo-md li > ul,
+.limboo-md li > ol { margin: 0.2rem 0; }
+
+/* GFM task lists (`- [ ]`). remark-gfm emits a real checkbox inside the <li>,
+   but the `list-style: disc` above still painted a bullet beside it — every
+   item read as "• ☐ text". Plans are almost entirely task lists, which is why
+   this one rule accounts for much of how unreadable they looked. */
+.limboo-md .contains-task-list { list-style: none; padding-left: 0.2rem; }
+.limboo-md .task-list-item { display: flex; align-items: flex-start; gap: 0.5rem; }
+.limboo-md .task-list-item::marker { content: ''; }
+.limboo-md .task-list-item input[type='checkbox'] {
+  margin-top: 0.32em;
+  flex-shrink: 0;
+  accent-color: var(--color-accent);
+}
+/* A checked item is done — state it in the typography, the way the Tasks
+   drawer already marks a completed todo. */
+.limboo-md .task-list-item:has(input:checked) { color: var(--color-faint); }
 .limboo-md a { color: var(--color-accent); }
 .limboo-md strong { font-weight: 600; color: var(--color-fg); }
 .limboo-md blockquote {

@@ -156,6 +156,30 @@ function migrate(database: Database.Database): void {
     CREATE INDEX IF NOT EXISTS idx_agent_activity_session
       ON agent_activity (session_id, created_at);
 
+    -- One row per subagent the agent delegated to (schema v17).
+    --
+    -- Tool calls in general are deliberately NOT persisted — they are runtime
+    -- state rebuilt per run. A subagent is the exception: its row is the ONLY
+    -- record of a delegation in the conversation, and losing it on restart left
+    -- the Work Graph remembering that a worker ran while the transcript showed
+    -- nothing. The payload column holds the JSON SubagentInfo, the same
+    -- shape-in-a-blob approach work_graph_nodes uses, so extending the record
+    -- needs no migration. Ring-capped per session by
+    -- settings.agent.subagents.retainRuns.
+    CREATE TABLE IF NOT EXISTS agent_subagent_runs (
+      call_id        TEXT PRIMARY KEY,
+      session_id     TEXT NOT NULL,
+      parent_call_id TEXT,
+      subagent_type  TEXT,
+      description    TEXT,
+      status         TEXT NOT NULL,
+      payload        TEXT NOT NULL,
+      started_at     INTEGER NOT NULL,
+      ended_at       INTEGER
+    );
+    CREATE INDEX IF NOT EXISTS idx_agent_subagent_runs_session
+      ON agent_subagent_runs (session_id, started_at);
+
     -- Maps a Limboo session to its Claude Code SDK session id so multi-turn
     -- conversations resume across prompts. Superseded by
     -- agent_provider_sessions (schema v12) — kept for backfill, no longer
@@ -668,6 +692,13 @@ function migrate(database: Database.Database): void {
     notNull: true,
     default: 'annotated',
   });
+
+  // How to RENDER a turn when that differs from what was sent (JSON
+  // {text, body}). Orchestration prompts Limboo composes on the user's behalf —
+  // approving a plan, regenerating one — carry a whole document plus XML tags,
+  // and without this the raw prompt reappeared in the transcript on every
+  // reload. NULL for every ordinary prompt, which is the overwhelming majority.
+  addColumnIfMissing(database, 'agent_messages', 'display', { type: 'TEXT' });
 
   const current = database
     .prepare('SELECT value FROM meta WHERE key = ?')

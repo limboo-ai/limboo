@@ -36,6 +36,10 @@ import type {
   AgentSessionSnapshot,
   AgentState,
   AgentToolCall,
+  SubagentInfo,
+  AppSettings,
+  ToolCallStatus,
+  SubagentValidationKind,
   ChatMessage,
   ClarificationDecision,
   ClarificationOption,
@@ -70,6 +74,7 @@ import { RUNNING_REQUEST_PHASES } from '@shared/types';
 import {
   ACTIVITY_LIMITS,
   AGENT_LIMITS,
+  SUBAGENT_LIMITS,
   AGENT_MODELS,
   ANTHROPIC_MODEL_ID_RE,
   CURSOR_MODEL_ID_RE,
@@ -113,6 +118,7 @@ import {
 import { HookEngine, type HookEmit } from './hooks/HookEngine';
 import type { PermissionDecisionSignal } from './graph/builder';
 import type { CursorRunOutcome, ProviderRunBridge } from './cursor/types';
+import { isSubagentTool } from '@shared/subagents';
 import { IpcEvents } from '@shared/ipc-channels';
 import { getDb } from '../db/database';
 import { logger } from '../logger';
@@ -311,8 +317,78 @@ const PLAN_SAFE_BUILTINS = new Set([
   'ListMcpResources', // enumerate resource URIs; no fetch
 ]);
 
-/** Subagent tools that accept an opt-out from the OS sandbox. */
-const SUBAGENT_TOOLS = new Set(['Task', 'Agent']);
+/** Memory tools whose use inside a worker counts as a memory lookup. */
+const MEMORY_LOOKUP_RE = /^mcp__limboo_memory__/;
+
+/**
+ * Parse a persisted {@link ChatMessage.display}. Defensive: the column is JSON
+ * written by this process, but a corrupt or hand-edited row must degrade to
+ * "render the raw text" rather than break the transcript.
+ */
+function parseDisplay(raw: string | null): ChatMessage['display'] | undefined {
+  if (!raw) return undefined;
+  try {
+    const parsed = JSON.parse(raw) as { text?: unknown; body?: unknown };
+    const text = typeof parsed?.text === 'string' ? parsed.text : '';
+    if (!text) return undefined;
+    const body = typeof parsed?.body === 'string' ? parsed.body : undefined;
+    return body ? { text, body } : { text };
+  } catch {
+    return undefined;
+  }
+}
+
+/** Limboo's own in-process retrieval bridges — never a user-facing MCP server. */
+function isInternalMcpTool(name: string): boolean {
+  return name.startsWith('mcp__limboo_memory__') || name.startsWith('mcp__limboo_search__');
+}
+
+/**
+ * Tools that count as "reading the repository" for a worker's record. Kept in
+ * step with the `read` stage in `renderer/features/workspace/subagentStages.ts`
+ * — a figure that disagreed with the stage that produced it is worse than none.
+ */
+const READ_SHAPED_TOOLS = new Set(['Read', 'Glob', 'LS', 'NotebookRead']);
+
+/**
+ * Recognize a verification command from its text — the spec's "validation steps
+ * completed".
+ *
+ * Deliberately conservative. This is EVIDENCE, not inference: an unrecognized
+ * command contributes nothing rather than being guessed into a category, so a
+ * worker that ran no verification reports none instead of a misleading zero.
+ */
+function validationKindOf(command: string): SubagentValidationKind | undefined {
+  const cmd = command.toLowerCase();
+  if (!cmd) return undefined;
+  if (/\b(jest|vitest|pytest|mocha|go test|cargo test|npm (run )?test|yarn test|pnpm test)\b/.test(cmd)) {
+    return 'test';
+  }
+  if (/\b(eslint|ruff|flake8|clippy|golangci-lint|npm run lint|yarn lint|pnpm lint)\b/.test(cmd)) {
+    return 'lint';
+  }
+  if (/\b(tsc|mypy|pyright|npm run typecheck|yarn typecheck|pnpm typecheck)\b/.test(cmd)) {
+    return 'typecheck';
+  }
+  if (/\b(cargo build|go build|make build|npm run build|yarn build|pnpm build|vite build)\b/.test(cmd)) {
+    return 'build';
+  }
+  return undefined;
+}
+
+/**
+ * Scope of a remembered "always allow this session" choice. A remembered grant
+ * must never widen past the class of operation the user was actually shown, so
+ * the three risk classes are tracked separately and secret-file access gets its
+ * own scope that no ordinary approval can satisfy.
+ */
+type RememberScope = ToolRisk | 'sensitive';
+
+/** Key for the {@link AgentManager.remembered} set. */
+function rememberKey(sessionId: string, scope: RememberScope): string {
+  return `${sessionId}:${scope}`;
+}
+
 
 /**
  * Provider tools that read an MCP RESOURCE. They take `{ server, uri }`, so they
@@ -375,7 +451,7 @@ function mcpVerdictServer(verdict: McpPlanVerdict | null): string | null {
 function isPlanSafeBuiltin(name: string, input: Record<string, unknown>): boolean {
   if (!PLAN_SAFE_BUILTINS.has(name)) return false;
   if (
-    SUBAGENT_TOOLS.has(name) &&
+    isSubagentTool(name) &&
     (input as { dangerouslyDisableSandbox?: unknown }).dangerouslyDisableSandbox === true
   ) {
     return false;
@@ -659,6 +735,8 @@ export class AgentManager {
       input: Record<string, unknown>;
       /** The full request, kept so a fresh renderer hydration can replay it via {@link getState}. */
       request: PermissionRequest;
+      /** What an "always allow this session" on THIS prompt may widen. */
+      scope: RememberScope;
     }
   >();
   /**
@@ -679,7 +757,20 @@ export class AgentManager {
       request: ClarificationRequest;
     }
   >();
-  /** Remembered "always allow" choices, keyed `sessionId:risk`. */
+  /**
+   * Remembered "always allow this session" choices, keyed by
+   * {@link rememberKey} — `sessionId:<scope>`, where scope is the tool's RISK
+   * class, or the dedicated `sensitive` scope for the secret-file guard.
+   *
+   * The scope is load-bearing. This set used to be keyed `sessionId:remember`
+   * for every entry, which meant one "always allow" on a read silently granted
+   * every later write and shell command in the session — and, because the
+   * sensitive-file guard consults the same set, unlocked `.env` files and SSH
+   * private keys too. A remembered choice now widens only the class the user was
+   * actually shown, and secret access always requires its own explicit consent.
+   * Subagents make this sharper rather than introducing it: a worker's tool
+   * calls re-enter the same gate, so a blanket grant would follow them.
+   */
   private readonly remembered = new Set<string>();
 
   constructor(
@@ -1232,9 +1323,21 @@ export class AgentManager {
       activity: this.loadActivity(sessionId),
       changes: rt ? [...rt.changes.values()] : [],
       tasks: rt ? rt.tasks : [],
-      toolCalls: rt ? rt.toolCalls : [],
+      // Live runtime calls win; persisted subagent rows fill in the delegations
+      // this process no longer holds in memory (see loadSubagentRuns).
+      toolCalls: this.mergeSubagentRuns(sessionId, rt ? rt.toolCalls : []),
       plan: this.loadPlan(sessionId),
     };
+  }
+
+  /** Merge persisted subagent rows under the live tool calls, de-duped by id. */
+  private mergeSubagentRuns(sessionId: string, live: AgentToolCall[]): AgentToolCall[] {
+    const stored = this.loadSubagentRuns(sessionId);
+    if (stored.length === 0) return live;
+    const seen = new Set(live.map((c) => c.id));
+    const extra = stored.filter((c) => !seen.has(c.id));
+    if (extra.length === 0) return live;
+    return [...extra, ...live].sort((a, b) => a.startedAt - b.startedAt);
   }
 
   /** Load the persisted diagnostics console history (global or per-session). */
@@ -1281,7 +1384,8 @@ export class AgentManager {
     this.pending.delete(decision.id);
 
     if (decision.behavior === 'allow') {
-      if (decision.remember) this.remembered.add(`${entry.sessionId}:remember`);
+      // Widen only the scope this prompt was actually about — see `remembered`.
+      if (decision.remember) this.remembered.add(rememberKey(entry.sessionId, entry.scope));
       this.diag('tool', 'info', 'Tool approved', undefined, entry.sessionId);
       entry.resolve({ behavior: 'allow', updatedInput: entry.input });
     } else {
@@ -1914,6 +2018,13 @@ export class AgentManager {
     permMode: SessionPermissionMode = 'default',
     clientMessageId?: string,
     attachmentIds?: string[],
+    /**
+     * Render this turn as something other than the prompt itself. Used only by
+     * the orchestration prompts Limboo composes on the user's behalf (plan
+     * approve / regenerate), whose raw text is a document plus XML tags rather
+     * than anything a person typed. See {@link ChatMessage.display}.
+     */
+    display?: ChatMessage['display'],
   ): Promise<void> {
     const isPlan = permMode === 'plan';
     if (this.runs.has(sessionId)) {
@@ -1947,6 +2058,7 @@ export class AgentManager {
       text: prompt,
       streaming: false,
       createdAt: Date.now(),
+      ...(display ? { display } : {}),
     };
     this.persistMessage(userMsg);
     // Bind composer drafts to this turn so the chips ride the echoed message
@@ -1957,9 +2069,19 @@ export class AgentManager {
       attachmentIds = attached.map((a) => a.id);
     }
     this.pushEvent({ kind: 'message-done', sessionId, message: userMsg });
-    this.pushActivity(sessionId, 'prompt', 'You', prompt.slice(0, ACTIVITY_LIMITS.labelMax), 'info');
+    // The timeline gets the readable line too — an approval logged as 24,000
+    // characters of plan Markdown is not an audit entry, it is noise.
+    this.pushActivity(
+      sessionId,
+      'prompt',
+      'You',
+      (display?.text ?? prompt).slice(0, ACTIVITY_LIMITS.labelMax),
+      'info',
+    );
     // Name an untitled session after its first prompt (a no-op once renamed).
-    this.sessions?.autoTitle(sessionId, prompt);
+    // Never after an orchestration prompt: "Approved the plan — …" describes
+    // Limboo's own action, not what the user set out to do.
+    if (!display) this.sessions?.autoTitle(sessionId, prompt);
     // Remember the mode so the composer restores it when this session reopens.
     this.sessions?.setMode(sessionId, permMode);
 
@@ -2520,7 +2642,14 @@ export class AgentManager {
       case 'system': {
         if (msg.subtype === 'init') {
           this.rememberProviderSession(sessionId, 'anthropic', msg.session_id);
+          break;
         }
+        // The Agent SDK's task lifecycle. These are the provider's OWN
+        // measurements of a delegation — duration, tool count, tokens, and an
+        // AI-written progress line — joined to the spawning call by
+        // `tool_use_id`. Limboo used to derive all of this by hand from the
+        // worker's child calls and drop these messages on the floor.
+        this.onTaskMessage(sessionId, msg as unknown as Record<string, unknown>);
         break;
       }
 
@@ -2540,23 +2669,35 @@ export class AgentManager {
           throw new Error(String(msg.error));
         }
         const content = (msg.message?.content ?? []) as unknown as Array<Record<string, unknown>>;
+
+        // Messages originating inside a subagent carry the spawning `Agent` call's
+        // id in `parent_tool_use_id` (Agent SDK). It is the only signal that
+        // distinguishes a subagent's work from the main agent's.
+        //
+        // THIS READ MUST STAY ABOVE THE TEXT BRANCH. With `forwardSubagentText`
+        // on, the SDK forwards a worker's own narration as assistant messages
+        // carrying this id. Finalizing text before checking it spliced that
+        // narration into the parent transcript as a top-level assistant message
+        // — and persisted it — which is exactly the context flooding delegation
+        // exists to prevent. A worker's prose belongs to the worker's row.
+        const parentId = (msg as unknown as { parent_tool_use_id?: unknown }).parent_tool_use_id;
+        const parentCallId = typeof parentId === 'string' && parentId ? parentId : undefined;
+
         const text = content
           .filter((b) => b.type === 'text' && typeof b.text === 'string')
           .map((b) => b.text as string)
           .join('');
         if (text.trim().length > 0) {
-          // Make sure a message exists even when no partial deltas were streamed
-          // (e.g. includePartialMessages produced nothing), then finalize it.
-          ensureStreaming();
-          finishStreaming(text);
+          if (parentCallId) {
+            this.appendSubagentTranscript(sessionId, parentCallId, text);
+          } else {
+            // Make sure a message exists even when no partial deltas were streamed
+            // (e.g. includePartialMessages produced nothing), then finalize it.
+            ensureStreaming();
+            finishStreaming(text);
+          }
         }
 
-        // Messages originating inside a subagent carry the spawning `Task` call's
-        // id in `parent_tool_use_id` (Agent SDK). It is the only signal that
-        // distinguishes a subagent's tool call from the main agent's, so it is
-        // threaded through rather than dropped — the Work Graph nests on it.
-        const parentId = (msg as unknown as { parent_tool_use_id?: unknown }).parent_tool_use_id;
-        const parentCallId = typeof parentId === 'string' && parentId ? parentId : undefined;
         for (const block of content) {
           if (block.type === 'tool_use') {
             this.onToolUse(
@@ -2839,6 +2980,26 @@ export class AgentManager {
             if (mapped.observeOnly) {
               // afterFileEdit: the stream's tool_call events already feed the
               // Changes tab / File History — just acknowledge.
+              //
+              // subagentStart/subagentStop: recorded onto the governance bus so
+              // a Cursor delegation is at least AUDITABLE, then acknowledged.
+              // They are deliberately not a gate (Cursor documents `ask` there
+              // as treated-as-deny, so gating could silently kill a delegation
+              // the user never saw) and deliberately not a nesting source (all
+              // four of their id fields carry the same session id, so parent
+              // linkage is not derivable). Until that changes, a Cursor run
+              // renders its tool calls flat and shows no subagent row.
+              if (event === 'subagentStart' || event === 'subagentStop') {
+                this.emitHook(
+                  sessionId,
+                  event === 'subagentStart' ? 'subagent-start' : 'subagent-stop',
+                  {
+                    tool: 'Agent',
+                    summary: 'Cursor subagent',
+                    detail: typeof mapped.input.description === 'string' ? mapped.input.description : undefined,
+                  },
+                );
+              }
               return Promise.resolve<HookDecision>({ permission: 'allow' });
             }
             const key = `${mapped.name}:${JSON.stringify(mapped.input)}`;
@@ -3188,14 +3349,38 @@ export class AgentManager {
       change: change ?? undefined,
       edit: edit ?? undefined,
       parentCallId,
+      subagent: isSubagentTool(name) ? subagentFromInput(input) : undefined,
       status: 'running',
       startedAt: Date.now(),
     };
     const rt = this.runtime(sessionId);
     rt.toolCalls = [...rt.toolCalls, call];
     this.pushEvent({ kind: 'tool-start', sessionId, call });
-    this.pushActivity(sessionId, 'tool', call.summary, call.target, 'info');
+    // A worker's OWN tool calls belong to that worker's row, not to the session
+    // timeline: recording them here listed a delegated Grep in the Activity feed
+    // as if the main agent had run it — the flat presentation the stream was
+    // rebuilt to avoid. The delegation itself is still recorded, below.
+    if (!parentCallId) {
+      this.pushActivity(sessionId, 'tool', call.summary, call.target, 'info');
+    }
     this.diag('tool', 'info', call.summary, call.target ?? call.detail, sessionId);
+
+    if (call.subagent) {
+      // A worker was delegated to. This is a lifecycle fact, not a tool result,
+      // so it also rides the governance bus — the phases already existed and
+      // until now only the commit-message one-shot ever emitted them.
+      this.emitHook(sessionId, 'subagent-start', {
+        tool: name,
+        summary: call.summary,
+        detail: call.target,
+      });
+      this.persistSubagentRun(sessionId, call);
+    } else if (parentCallId) {
+      // This call happened INSIDE a worker: roll it into that worker's record so
+      // the single inline row can answer "what did it actually do" without the
+      // renderer re-deriving orchestration facts from a flat array.
+      this.rollUpSubagentChild(sessionId, parentCallId, call);
+    }
 
     // Governance bus: an MCP tool call is executing (both providers route MCP
     // through an `mcp__<server>__<tool>` name). Distinct from the pre-tool-use
@@ -3242,6 +3427,365 @@ export class AgentManager {
     }
   }
 
+  /* ---------------------------------------------------------------- */
+  /* Subagent telemetry (Agent SDK `task_*` system messages)          */
+  /* ---------------------------------------------------------------- */
+
+  /**
+   * Apply one `task_started` / `task_progress` / `task_updated` /
+   * `task_notification` message to the worker's record.
+   *
+   * Joined by `tool_use_id` — the spawning call's id — never by array position
+   * or arrival order, for the same reason `graph/builder.ts` joins `tool-end`
+   * through a map: concurrent workers interleave, and a positional join
+   * mis-attributes every one of them.
+   *
+   * Read defensively off an untyped record: the SDK's system-message union is
+   * open and grows between releases, so an unknown subtype must be a no-op
+   * rather than a throw. Every failure is swallowed — telemetry must never be
+   * able to break a run.
+   */
+  private onTaskMessage(sessionId: string, msg: Record<string, unknown>): void {
+    try {
+      const subtype = typeof msg.subtype === 'string' ? msg.subtype : '';
+      if (!subtype.startsWith('task_')) return;
+
+      // Ambient/housekeeping tasks: the SDK explicitly asks consumers to keep
+      // these out of the inline transcript.
+      if (msg.skip_transcript === true) return;
+
+      const callId = typeof msg.tool_use_id === 'string' ? msg.tool_use_id : '';
+      if (!callId) return;
+      const rt = this.runtimes.get(sessionId);
+      const call = rt?.toolCalls.find((c) => c.id === callId);
+      if (!call?.subagent) return;
+      const info = call.subagent;
+
+      const str = (v: unknown, max: number): string | undefined =>
+        typeof v === 'string' && v.trim() ? truncate(v.trim(), max) : undefined;
+
+      if (typeof msg.task_id === 'string') info.taskId = truncate(msg.task_id, 128);
+      info.type = str(msg.subagent_type, 60) ?? info.type;
+      info.description = str(msg.description, 160) ?? info.description;
+
+      // The provider's own measurements outrank anything derived from child
+      // calls: `tool_uses` counts what the worker actually invoked, including
+      // tools whose events Limboo never saw.
+      const usage = msg.usage as { duration_ms?: number; tool_uses?: number; total_tokens?: number } | undefined;
+      if (usage && typeof usage === 'object') {
+        if (Number.isFinite(usage.duration_ms)) info.durationMs = Number(usage.duration_ms);
+        if (Number.isFinite(usage.tool_uses)) info.toolUses = Number(usage.tool_uses);
+        if (Number.isFinite(usage.total_tokens)) info.totalTokens = Number(usage.total_tokens);
+      }
+
+      if (subtype === 'task_progress') {
+        // The AI-written present-tense line ("Analyzing authentication module").
+        info.progress = str(msg.summary, 200) ?? info.progress;
+        info.lastTool = str(msg.last_tool_name, 64) ?? info.lastTool;
+      } else if (subtype === 'task_updated') {
+        const patch = msg.patch as { error?: unknown; is_backgrounded?: unknown } | undefined;
+        if (patch && typeof patch === 'object') {
+          info.error = str(patch.error, 500) ?? info.error;
+          if (patch.is_backgrounded === true) info.background = true;
+        }
+      } else if (subtype === 'task_notification') {
+        const status = msg.status;
+        if (status === 'completed' || status === 'failed' || status === 'stopped') {
+          info.outcome = status;
+        }
+        // The worker's final message, as the provider reports it. Preferred
+        // over scraping the tool_result text.
+        info.summary = str(msg.summary, this.subagentSettings().summaryMax) ?? info.summary;
+        // A worker that finished but whose progress line is stale would keep
+        // narrating after the fact.
+        info.progress = undefined;
+      }
+
+      this.pushEvent({ kind: 'tool-start', sessionId, call: { ...call } });
+      this.persistSubagentRun(sessionId, call);
+    } catch (err) {
+      logger.warn('subagent task telemetry failed', err);
+    }
+  }
+
+  /**
+   * Append a chunk of a worker's forwarded narration to its record.
+   *
+   * This is UNTRUSTED CONTENT — model output Limboo stores and renders verbatim
+   * — so it is bounded by `settings.agent.subagents.transcriptMax` and never
+   * reaches a system prompt or a context provider. It is also not the worker's
+   * reasoning: thinking blocks are filtered out upstream, and nothing here may
+   * imply the chain of thought is available.
+   */
+  private appendSubagentTranscript(sessionId: string, parentCallId: string, text: string): void {
+    try {
+      const rt = this.runtimes.get(sessionId);
+      const call = rt?.toolCalls.find((c) => c.id === parentCallId);
+      if (!call?.subagent) return;
+      const cap = this.subagentSettings().transcriptMax;
+      const next = call.subagent.transcript ? `${call.subagent.transcript}\n\n${text}` : text;
+      call.subagent.transcript = truncate(next, cap);
+      this.pushEvent({ kind: 'tool-start', sessionId, call: { ...call } });
+    } catch (err) {
+      logger.warn('subagent transcript append failed', err);
+    }
+  }
+
+  /** The clamped subagent settings block. */
+  private subagentSettings(): AppSettings['agent']['subagents'] {
+    return this.settings.getAll().agent.subagents;
+  }
+
+  /**
+   * Upsert a subagent run so the row survives a restart.
+   *
+   * Ordinary tool calls are deliberately NOT persisted — they are runtime state
+   * rebuilt per run. A subagent is the exception: its row is the only record of
+   * a delegation in the conversation, and without this the Work Graph remembered
+   * that a worker ran while the transcript showed nothing at all.
+   */
+  private persistSubagentRun(sessionId: string, call: AgentToolCall): void {
+    if (!call.subagent) return;
+    try {
+      const db = getDb();
+      db.prepare(
+        `INSERT INTO agent_subagent_runs
+           (call_id, session_id, parent_call_id, subagent_type, description, status, payload, started_at, ended_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(call_id) DO UPDATE SET
+           status = excluded.status,
+           subagent_type = excluded.subagent_type,
+           description = excluded.description,
+           payload = excluded.payload,
+           ended_at = excluded.ended_at`,
+      ).run(
+        call.id,
+        sessionId,
+        call.parentCallId ?? null,
+        call.subagent.type ?? null,
+        call.subagent.description ?? null,
+        call.status,
+        JSON.stringify(call.subagent),
+        call.startedAt,
+        call.endedAt ?? null,
+      );
+      this.pruneSubagentRuns(sessionId);
+    } catch (err) {
+      logger.warn('subagent run persist failed', err);
+    }
+  }
+
+  /** Ring-cap stored runs per session (oldest first), like work_graph_nodes. */
+  private pruneSubagentRuns(sessionId: string): void {
+    try {
+      getDb()
+        .prepare(
+          `DELETE FROM agent_subagent_runs
+             WHERE session_id = ?
+               AND call_id NOT IN (
+                 SELECT call_id FROM agent_subagent_runs
+                  WHERE session_id = ? ORDER BY started_at DESC LIMIT ?
+               )`,
+        )
+        .run(sessionId, sessionId, this.subagentSettings().retainRuns);
+    } catch {
+      /* pruning is housekeeping — never fail a run over it */
+    }
+  }
+
+  /**
+   * Rehydrate persisted subagent rows as tool calls for a session snapshot.
+   *
+   * Returns synthetic {@link AgentToolCall}s carrying only what a subagent row
+   * needs to render. A run still in flight is left to the live runtime, which
+   * always wins — these fill in the turns the process no longer has in memory.
+   */
+  private loadSubagentRuns(sessionId: string): AgentToolCall[] {
+    try {
+      const rows = getDb()
+        .prepare(
+          `SELECT call_id, parent_call_id, status, payload, started_at, ended_at
+             FROM agent_subagent_runs WHERE session_id = ? ORDER BY started_at ASC`,
+        )
+        .all(sessionId) as Array<{
+        call_id: string;
+        parent_call_id: string | null;
+        status: string;
+        payload: string;
+        started_at: number;
+        ended_at: number | null;
+      }>;
+      return rows.flatMap((r) => {
+        let info: SubagentInfo;
+        try {
+          info = JSON.parse(r.payload) as SubagentInfo;
+        } catch {
+          return [];
+        }
+        // A run that was live when the process died can never resume, so it is
+        // rehydrated as errored rather than as a row that spins forever.
+        const status: ToolCallStatus = r.status === 'running' ? 'error' : (r.status as ToolCallStatus);
+        return [
+          {
+            id: r.call_id,
+            sessionId,
+            name: 'Agent',
+            risk: 'command' as ToolRisk,
+            summary: info.type ? `${info.type} agent` : 'Subagent',
+            target: info.description,
+            parentCallId: r.parent_call_id ?? undefined,
+            subagent: info,
+            status,
+            startedAt: r.started_at,
+            endedAt: r.ended_at ?? undefined,
+          },
+        ];
+      });
+    } catch (err) {
+      logger.warn('subagent run load failed', err);
+      return [];
+    }
+  }
+
+  /**
+   * Fold one of a worker's own tool calls into the spawning call's record.
+   *
+   * Mutates the parent call in place and re-emits it, because `tool-start` is
+   * the only event carrying a whole {@link AgentToolCall} — the renderer's
+   * reducer de-dupes on id, so re-pushing the parent is how a live subagent row
+   * updates its counters while it runs. Every failure is swallowed: an
+   * observability roll-up must never be able to break a run.
+   */
+  private rollUpSubagentChild(sessionId: string, parentCallId: string, child: AgentToolCall): void {
+    try {
+      const rt = this.runtimes.get(sessionId);
+      const parent = rt?.toolCalls.find((c) => c.id === parentCallId);
+      if (!parent?.subagent) return;
+      const info = parent.subagent;
+
+      const cap = this.rollupCap();
+      const push = (list: string[], value: string): void => {
+        const v = truncate(value, SUBAGENT_LIMITS.fieldMax);
+        if (v && !list.includes(v) && list.length < cap) list.push(v);
+      };
+
+      push(info.tools ?? (info.tools = []), child.name);
+
+      // Limboo's OWN retrieval bridges are not "MCP servers the worker reached"
+      // — they are the app's internal memory/search plumbing, and every other
+      // site in this file excludes them. Counting them here made a plain memory
+      // lookup report a phantom server alongside its memoryLookups increment.
+      if (child.name.startsWith('mcp__') && !isInternalMcpTool(child.name)) {
+        const server = child.name.split('__')[1];
+        if (server) push(info.mcpServers ?? (info.mcpServers = []), server);
+      }
+      if (MEMORY_LOOKUP_RE.test(child.name)) info.memoryLookups = (info.memoryLookups ?? 0) + 1;
+      // Every read-shaped tool, matching the `read` stage in subagentStages.ts.
+      // Counting only `Read` under-reported a worker that explored with Glob/LS.
+      if (READ_SHAPED_TOOLS.has(child.name)) info.filesRead = (info.filesRead ?? 0) + 1;
+
+      const childChange = child.change;
+      if (childChange) {
+        const changed = info.filesChanged ?? (info.filesChanged = []);
+        const existing = changed.find((c) => c.path === childChange.path);
+        if (existing) {
+          // A worker editing the same file twice is one changed file with the
+          // combined diffstat, not two rows.
+          existing.adds += childChange.adds;
+          existing.dels += childChange.dels;
+        } else if (changed.length < cap) {
+          changed.push({ ...childChange });
+        }
+      }
+
+      // Verification the worker actually ran — the spec's "validation steps".
+      // Recognized from the command text, never assumed: a worker that ran no
+      // tests must produce an empty list so the row omits the line rather than
+      // claiming zero.
+      if (child.name === 'Bash') {
+        const kind = validationKindOf(child.detail ?? child.target ?? '');
+        if (kind) {
+          const list = info.validations ?? (info.validations = []);
+          if (list.length < cap) {
+            list.push({
+              kind,
+              command: truncate(child.detail ?? child.target ?? '', SUBAGENT_LIMITS.fieldMax),
+              // Optimistic until tool-end settles it; patched in onToolResult.
+              ok: true,
+            });
+          }
+        }
+      }
+      this.pushEvent({ kind: 'tool-start', sessionId, call: { ...parent } });
+    } catch (err) {
+      logger.warn('subagent roll-up failed', err);
+    }
+  }
+
+  /** Record a permission outcome against the worker that raised it, if any. */
+  private rollUpSubagentPermission(sessionId: string, parentCallId: string, denied: boolean): void {
+    try {
+      const rt = this.runtimes.get(sessionId);
+      const parent = rt?.toolCalls.find((c) => c.id === parentCallId);
+      if (!parent?.subagent) return;
+      const p = parent.subagent.permissions ?? (parent.subagent.permissions = { prompted: 0, denied: 0 });
+      p.prompted += 1;
+      if (denied) p.denied += 1;
+      this.pushEvent({ kind: 'tool-start', sessionId, call: { ...parent } });
+    } catch (err) {
+      logger.warn('subagent permission roll-up failed', err);
+    }
+  }
+
+  /** The configured roll-up cap, clamped by SettingsManager. */
+  private rollupCap(): number {
+    return this.settings.getAll().agent.subagents.rollupMax;
+  }
+
+  /** Mark the validation step a worker's failed command corresponds to. */
+  private settleSubagentValidation(sessionId: string, child: AgentToolCall): void {
+    try {
+      const rt = this.runtimes.get(sessionId);
+      const parent = rt?.toolCalls.find((c) => c.id === child.parentCallId);
+      if (!parent?.subagent?.validations) return;
+      const list = parent.subagent.validations;
+      const command = truncate(child.detail ?? child.target ?? '', SUBAGENT_LIMITS.fieldMax);
+      const entry = list.find((v) => v.command === command && v.ok);
+      if (!entry) return;
+      entry.ok = false;
+      this.pushEvent({ kind: 'tool-start', sessionId, call: { ...parent } });
+    } catch (err) {
+      logger.warn('subagent validation settle failed', err);
+    }
+  }
+
+  /**
+   * The spawning call that owns a permission prompt raised right now, or
+   * undefined when it cannot be determined soundly.
+   *
+   * The SDK does not pass `parent_tool_use_id` to `canUseTool`, so attribution
+   * has to come from elsewhere. Two sources, in order:
+   *
+   *  1. **The task stream.** `task_progress` reports `last_tool_name` per
+   *     worker, so a prompt for tool X while exactly one live worker is running
+   *     X is that worker's. This resolves the common concurrent case.
+   *  2. **Sole worker.** With exactly one worker in flight there is no ambiguity.
+   *
+   * When neither applies the answer is undefined — attributing a prompt to the
+   * wrong worker is worse than not attributing it, so ambiguity yields nothing
+   * and the dialog renders exactly as it does without subagents.
+   */
+  private subagentOwningPrompt(sessionId: string, toolName?: string): AgentToolCall | undefined {
+    const rt = this.runtimes.get(sessionId);
+    if (!rt) return undefined;
+    const live = rt.toolCalls.filter((c) => c.subagent && c.status === 'running');
+    if (live.length === 0) return undefined;
+    if (live.length === 1) return live[0];
+    if (!toolName) return undefined;
+    const matches = live.filter((c) => c.subagent?.lastTool === toolName);
+    return matches.length === 1 ? matches[0] : undefined;
+  }
+
   private onToolResult(
     sessionId: string,
     toolUseId: string,
@@ -3263,6 +3807,51 @@ export class AgentManager {
     const read =
       status === 'done' && call.name === 'Read' ? readFromResult(output, call.target) : null;
     if (read) call.read = read;
+
+    // A worker's verification command settling decides whether that validation
+    // step passed. Recorded optimistically on start; corrected here.
+    if (call.parentCallId && call.name === 'Bash' && status === 'error') {
+      this.settleSubagentValidation(sessionId, call);
+    }
+
+    if (call.subagent) {
+      // The Agent tool's result IS the worker's final message — the distilled
+      // summary the parent receives. It was previously discarded (only Read
+      // output was kept), which left the completion row with nothing to show.
+      //
+      // `task_notification` is the better source and may already have set it, so
+      // it is not overwritten: the harness's own report beats scraped text. An
+      // ERRORED result is never stored as a summary at all — an interrupt
+      // message ("Interrupted before it finished.") presented under "returned
+      // summary" would be Limboo's words in the worker's mouth.
+      const text = typeof output === 'string' ? output.trim() : '';
+      if (text && status === 'done' && !call.subagent.summary) {
+        call.subagent.summary = truncate(text, this.subagentSettings().summaryMax);
+      }
+      if (text && status === 'error') {
+        call.subagent.error = truncate(text, 500);
+        call.subagent.outcome = call.subagent.outcome ?? 'failed';
+      }
+      const agentId = text.match(/agentId:\s*([\w-]+)/)?.[1];
+      if (agentId && !call.subagent.type) call.subagent.type = agentId;
+      if (!call.subagent.outcome) call.subagent.outcome = status === 'error' ? 'failed' : 'completed';
+      this.emitHook(sessionId, 'subagent-stop', {
+        tool: call.name,
+        summary: call.summary,
+        detail: call.subagent.summary,
+        severity: status === 'error' ? 'error' : 'info',
+      });
+      // One timeline entry per delegation, replacing the worker's suppressed
+      // internals with the fact that actually belongs in the session record.
+      this.pushActivity(
+        sessionId,
+        'tool',
+        `${call.summary} ${status === 'error' ? 'failed' : 'completed'}`,
+        call.subagent.description,
+        status === 'error' ? 'warning' : 'success',
+      );
+    }
+
     this.pushEvent({
       kind: 'tool-end',
       sessionId,
@@ -3270,6 +3859,12 @@ export class AgentManager {
       status,
       read: read ?? undefined,
     });
+    // The subagent record only exists on the whole-call event, so re-emit the
+    // settled parent to carry its summary + final counters to the renderer.
+    if (call.subagent) {
+      this.pushEvent({ kind: 'tool-start', sessionId, call: { ...call } });
+      this.persistSubagentRun(sessionId, call);
+    }
     this.emitHook(sessionId, 'post-tool-use', {
       tool: call.name,
       summary: call.summary,
@@ -3526,7 +4121,13 @@ export class AgentManager {
     const body = plan.markdown.trim().slice(0, AGENT_LIMITS.planPromptMax);
     const prompt = body ? `${instruction}\n\n<approved-plan>\n${body}\n</approved-plan>` : instruction;
     try {
-      await this.send(sessionId, prompt, mode);
+      // The prompt is a document plus XML tags — correct to SEND, unreadable to
+      // SHOW. The turn renders as one line with the plan beneath it as rendered
+      // Markdown; the raw view still reveals exactly what the model received.
+      await this.send(sessionId, prompt, mode, undefined, undefined, {
+        text: plan.title ? `Approved the plan — ${plan.title}` : 'Approved the plan',
+        ...(body ? { body } : {}),
+      });
     } catch (err) {
       // The approval never took effect — put the plan back so Approve renders
       // again. Without this the session is stranded: 'implementing' hides the
@@ -3801,6 +4402,20 @@ export class AgentManager {
       canUseTool: this.makeCanUseTool(sessionId, cwd, permMode),
       maxTurns: agent.maxTurns,
       includePartialMessages: true,
+      // Subagent observability. Both default to OFF in the SDK, which is why a
+      // delegation used to arrive as nothing but its child tool calls and a
+      // final result — everything else the inline row shows had to be guessed.
+      //
+      //  - forwardSubagentText: the worker's own narration, tagged with
+      //    `parent_tool_use_id`. Routed into the worker's row by handleMessage
+      //    (which reads that id BEFORE finalizing text — see the comment there);
+      //    it must never reach the parent transcript.
+      //  - agentProgressSummaries: a present-tense line refreshed while the
+      //    worker runs, produced by periodically forking its conversation. Costs
+      //    little (it reuses the worker's prompt cache) but it is a real cost,
+      //    so it stays user-controllable.
+      forwardSubagentText: agent.subagents.forwardText,
+      agentProgressSummaries: agent.subagents.progressSummaries,
       abortController: abort,
       settingSources: ['user', 'project', 'local'],
       thinking: mapThinking(agent.thinking),
@@ -3952,6 +4567,14 @@ export class AgentManager {
     } catch {
       /* observability must never change a permission outcome */
     }
+    // Attribute a PROMPTED decision to the worker that raised it, when exactly
+    // one worker is in flight. Auto-resolved gates are excluded: they are not
+    // user-visible events, so counting them would inflate the row's permission
+    // figure with decisions nobody was asked to make.
+    if (gate.prompted && !isSubagentTool(toolName)) {
+      const owner = this.subagentOwningPrompt(sessionId, toolName);
+      if (owner) this.rollUpSubagentPermission(sessionId, owner.id, decision === 'deny');
+    }
     return result;
   }
 
@@ -3972,7 +4595,7 @@ export class AgentManager {
       // subagent tools as well as Bash: the flag is on all of their input
       // schemas, and only Bash used to be recorded.
       if (
-        (toolName === 'Bash' || SUBAGENT_TOOLS.has(toolName)) &&
+        (toolName === 'Bash' || isSubagentTool(toolName)) &&
         (input as { dangerouslyDisableSandbox?: unknown }).dangerouslyDisableSandbox === true
       ) {
         this.pushActivity(
@@ -4035,7 +4658,11 @@ export class AgentManager {
       // sensitive access always asks (unless "always allow this session" was
       // chosen). Mirrors the declarative `ask` rules in cursor/permissions.ts.
       if (touchesSensitiveFile(toolName, input)) {
-        if (this.remembered.has(`${sessionId}:remember`)) {
+        // Only a remembered choice made on a SECRET-file prompt satisfies this.
+        // An "always allow" on an ordinary read or edit must never unlock
+        // `.env` files or private keys — including for a subagent, whose calls
+        // re-enter this same gate.
+        if (this.remembered.has(rememberKey(sessionId, 'sensitive'))) {
           return { behavior: 'allow', updatedInput: input };
         }
         const risk = classifyTool(toolName);
@@ -4049,7 +4676,7 @@ export class AgentManager {
           createdAt: Date.now(),
         };
         if (gate) gate.prompted = true;
-        return this.promptForApproval(sessionId, input, request, signal);
+        return this.promptForApproval(sessionId, input, request, signal, 'sensitive');
       }
 
       // Limboo's own memory + search tools are internal and strictly read-only —
@@ -4251,7 +4878,9 @@ export class AgentManager {
       if (mode.permissionMode === 'auto' || autoRead) {
         return { behavior: 'allow', updatedInput: input };
       }
-      if (this.remembered.has(`${sessionId}:remember`)) {
+      // A remembered choice satisfies only its own risk class: "always allow"
+      // on a read never pre-approves a write or a shell command.
+      if (this.remembered.has(rememberKey(sessionId, effectiveRisk))) {
         return { behavior: 'allow', updatedInput: input };
       }
 
@@ -4266,7 +4895,9 @@ export class AgentManager {
         createdAt: Date.now(),
       };
       if (gate) gate.prompted = true;
-      return this.promptForApproval(sessionId, input, request, signal);
+      // Store the grant under the SAME class the check above reads, so a
+      // remembered choice can neither over- nor under-apply.
+      return this.promptForApproval(sessionId, input, request, signal, effectiveRisk);
   }
 
   /**
@@ -4282,7 +4913,20 @@ export class AgentManager {
     input: Record<string, unknown>,
     request: PermissionRequest,
     signal: AbortSignal,
+    /** What "always allow this session" widens here. Defaults to the tool's risk. */
+    scope: RememberScope = request.risk,
   ): Promise<PermissionResult> {
+    // Every prompt funnels through here, so this is the one place that can tag a
+    // request with the worker that raised it without each construction site
+    // having to remember to. Undefined when the delegation is ambiguous — see
+    // subagentOwningPrompt.
+    if (!isSubagentTool(request.tool)) {
+      const owner = this.subagentOwningPrompt(sessionId, request.tool);
+      if (owner) {
+        request.parentCallId = owner.id;
+        request.subagentType = owner.subagent?.type;
+      }
+    }
     this.pushActivity(sessionId, 'permission', `Asked to ${request.summary}`, undefined, 'warning');
     this.diag('tool', 'warning', `Approval requested: ${request.summary}`, request.detail, sessionId);
     this.emitHook(sessionId, 'permission-request', {
@@ -4306,6 +4950,7 @@ export class AgentManager {
         sessionId,
         input,
         request,
+        scope,
         resolve: (r) => {
           signal.removeEventListener('abort', onAbort);
           resolve(r);
@@ -4330,17 +4975,32 @@ export class AgentManager {
   private persistMessage(m: ChatMessage): void {
     getDb()
       .prepare(
-        'INSERT OR REPLACE INTO agent_messages (id, session_id, role, text, created_at) VALUES (?, ?, ?, ?, ?)',
+        'INSERT OR REPLACE INTO agent_messages (id, session_id, role, text, created_at, display) VALUES (?, ?, ?, ?, ?, ?)',
       )
-      .run(m.id, m.sessionId, m.role, m.text, m.createdAt);
+      .run(
+        m.id,
+        m.sessionId,
+        m.role,
+        m.text,
+        m.createdAt,
+        // NULL for every ordinary prompt; the raw text stays authoritative.
+        m.display ? JSON.stringify(m.display) : null,
+      );
   }
 
   private loadMessages(sessionId: string): ChatMessage[] {
     const rows = getDb()
       .prepare(
-        'SELECT id, session_id, role, text, created_at FROM agent_messages WHERE session_id = ? ORDER BY created_at ASC',
+        'SELECT id, session_id, role, text, created_at, display FROM agent_messages WHERE session_id = ? ORDER BY created_at ASC',
       )
-      .all(sessionId) as Array<{ id: string; session_id: string; role: string; text: string; created_at: number }>;
+      .all(sessionId) as Array<{
+      id: string;
+      session_id: string;
+      role: string;
+      text: string;
+      created_at: number;
+      display: string | null;
+    }>;
     // Rehydrate the attachment chips of sent turns (message_id links the rows).
     const byMessage = new Map<string, ChatMessage['attachments']>();
     if (this.attachments) {
@@ -4359,6 +5019,7 @@ export class AgentManager {
       streaming: false,
       createdAt: r.created_at,
       attachments: byMessage.get(r.id),
+      ...(parseDisplay(r.display) ? { display: parseDisplay(r.display) } : {}),
     }));
   }
 
@@ -5050,8 +5711,49 @@ function touchesSensitiveFile(toolName: string, input: Record<string, unknown>):
   return false;
 }
 
+/** The Agent tool's `subagent_type`, normalized to a display name. */
+function subagentTypeOf(input: Record<string, unknown>): string | undefined {
+  const raw = input.subagent_type ?? input.subagentType ?? input.agent_type;
+  const t = typeof raw === 'string' ? raw.trim() : '';
+  return t ? truncate(t, 60) : undefined;
+}
+
+/** The Agent tool's `description` — the one-line task given to the worker. */
+function subagentDescriptionOf(input: Record<string, unknown>): string | undefined {
+  const raw = input.description ?? input.task;
+  const d = typeof raw === 'string' ? raw.trim() : '';
+  return d ? truncate(d, 160) : undefined;
+}
+
+/**
+ * Seed a {@link SubagentInfo} from the Agent tool's input.
+ *
+ * Only what the parent actually declared: the counters are filled in later from
+ * the worker's own child calls. `model` is read opportunistically because Claude
+ * may pass a per-invocation model override, but it is left undefined rather than
+ * guessed from session settings — a worker's model resolves through the
+ * environment, the invocation, its definition, and only then the session, so
+ * showing the session's model would frequently be a lie.
+ */
+function subagentFromInput(input: Record<string, unknown>): SubagentInfo {
+  const model = typeof input.model === 'string' ? input.model.trim() : '';
+  return {
+    type: subagentTypeOf(input),
+    description: subagentDescriptionOf(input),
+    model: model ? truncate(model, 60) : undefined,
+    background: input.run_in_background === true ? true : undefined,
+  };
+}
+
 function summarizeTool(name: string, input: Record<string, unknown>, risk: ToolRisk): string {
   const file = filePathOf(input);
+  if (isSubagentTool(name)) {
+    // The worker's identity is the summary. `Run Task` (the old `default:` fall
+    // through) told the user nothing, and the description is exactly the
+    // distilled statement of intent the parent wrote for the delegation.
+    const type = subagentTypeOf(input);
+    return type ? `${type} agent` : 'Subagent';
+  }
   switch (name) {
     case 'Read':
       return `Read ${file ? shortPath(file) : 'a file'}`;
@@ -5079,6 +5781,9 @@ function summarizeTool(name: string, input: Record<string, unknown>, risk: ToolR
 
 /** The inline "target" shown in chat for a tool — a URL, query, or path. */
 function toolTarget(name: string, input: Record<string, unknown>): string | undefined {
+  // For a subagent the target is what it was asked to do, so the single inline
+  // row reads "Explore agent — find every call site of resolveSessionRoot".
+  if (isSubagentTool(name)) return subagentDescriptionOf(input);
   if (name === 'WebSearch') return truncate(String(input.query ?? ''), 120) || undefined;
   if (name === 'WebFetch') return truncate(String(input.url ?? ''), 160) || undefined;
   if (name === 'Bash') return truncate(String(input.command ?? ''), 120) || undefined;
@@ -5088,6 +5793,13 @@ function toolTarget(name: string, input: Record<string, unknown>): string | unde
 }
 
 function permissionDetail(name: string, input: Record<string, unknown>): string | undefined {
+  if (isSubagentTool(name)) {
+    // The prompt is the ONLY content that crosses from parent to worker (the
+    // worker's context starts fresh), so it is the whole of what approving this
+    // delegation authorizes. Show it verbatim, bounded.
+    const prompt = typeof input.prompt === 'string' ? input.prompt : '';
+    return truncate(prompt, 2_000) || subagentDescriptionOf(input);
+  }
   if (name === 'Bash') return String(input.command ?? '');
   if (name === 'Edit') {
     const oldS = String(input.old_string ?? '');

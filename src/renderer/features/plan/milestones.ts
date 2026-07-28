@@ -12,6 +12,7 @@
  * Pure function over the session snapshot: no store access, no clock, no IPC.
  */
 import type { AgentToolCall, PlanStatus } from '@shared/types';
+import { SUBAGENT_TOOL_NAMES } from '@shared/subagents';
 
 export type MilestoneState = 'pending' | 'active' | 'done';
 
@@ -55,7 +56,10 @@ const STAGES: ReadonlyArray<{ id: string; label: string; tools: ReadonlySet<stri
   {
     id: 'decompose',
     label: 'Decomposing the requirements',
-    tools: new Set(['TodoWrite', 'Task']),
+    // Both spellings of the subagent tool — see `@shared/subagents`. Listing
+    // only `Task` meant a delegating plan run on a current SDK never lit this
+    // milestone.
+    tools: new Set(['TodoWrite', ...SUBAGENT_TOOL_NAMES]),
   },
 ];
 

@@ -24,6 +24,7 @@
  */
 import crypto from 'node:crypto';
 import { GRAPH_LIMITS } from '@shared/constants';
+import { isSubagentTool } from '@shared/subagents';
 import type {
   AgentEvent,
   AgentToolCall,
@@ -299,7 +300,11 @@ function freshState(provider: 'anthropic' | 'cursor'): SessionState {
  */
 export function nodeKindForTool(call: AgentToolCall): WorkGraphNodeKind {
   const name = call.name;
-  if (name === 'Task') return 'subagent';
+  // Both spellings: Claude Code renamed `Task` to `Agent` in v2.1.63 and current
+  // SDK releases emit `Agent` in tool_use blocks. Testing only `Task` here made
+  // the `subagent` node kind unreachable on every current release — subagent
+  // work landed as `investigation`/`command` nodes on the main spine instead.
+  if (isSubagentTool(name)) return 'subagent';
   if (name.startsWith('mcp__limboo_search__')) return 'search';
   if (name.startsWith('mcp__limboo_memory__')) return 'memory';
   if (name.startsWith('mcp__')) return 'mcp';
@@ -1073,7 +1078,11 @@ export class WorkGraphBuilder {
   private toolMeta(kind: WorkGraphNodeKind, call: AgentToolCall): unknown {
     switch (kind) {
       case 'subagent':
-        return { toolName: call.name, childCount: 0 };
+        return {
+          toolName: call.name,
+          childCount: 0,
+          subagentType: clean(call.subagent?.type, GRAPH_LIMITS.textMax),
+        };
       case 'search':
         return { tool: call.name, query: clean(call.target, GRAPH_LIMITS.textMax) };
       case 'memory':
@@ -1122,7 +1131,13 @@ export class WorkGraphBuilder {
       status: statusForTool(status),
       endedAt: at,
       meta:
-        existing.kind === 'search' || existing.kind === 'mcp' || existing.kind === 'terminal'
+        existing.kind === 'search' ||
+        existing.kind === 'mcp' ||
+        existing.kind === 'terminal' ||
+        // A subagent's duration is the headline fact about a delegation — how
+        // long the parent waited on it — so it is measured like the other
+        // long-running kinds rather than left for a reader to subtract.
+        existing.kind === 'subagent'
           ? { ...existing.meta, durationMs: at - existing.startedAt }
           : existing.meta,
     } as WorkGraphNode;

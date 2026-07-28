@@ -18,7 +18,7 @@
  * filled/accented state plates for the same reason.
  */
 import { useState } from 'react';
-import { MessageSquare, Pin, X } from 'lucide-react';
+import { Bot, MessageSquare, Pin, X } from 'lucide-react';
 import { cn } from '@/renderer/lib/cn';
 import { getFileIcon } from '@/renderer/lib/fileIcons';
 import {
@@ -95,23 +95,28 @@ function DocumentTab({
 }) {
   const isConversation = entry.ref.kind === 'conversation';
   const isReleaseNotes = entry.ref.kind === 'release-notes';
+  const isSubagent = entry.ref.kind === 'subagent';
   // The file's own icon, not a generic diff glyph — a diff tab should read as
   // the same kind of object as every other editor tab.
-  const spec = isConversation || isReleaseNotes ? null : getFileIcon(entry.title);
+  const spec = isConversation || isReleaseNotes || isSubagent ? null : getFileIcon(entry.title);
   // A release is not a file and not a conversation, and there is no glyph that
   // says "release" without inventing one — so the tab is its label. Everything
   // else in the strip names an object you could point at on disk; this one
   // names a version, and the version IS the identity.
-  const Icon = isReleaseNotes ? null : (spec?.icon ?? MessageSquare);
+  // A subagent tab gets the Bot glyph — it names a worker, not a file, and the
+  // strip's other tabs are all files or the conversation.
+  const Icon = isReleaseNotes ? null : isSubagent ? Bot : (spec?.icon ?? MessageSquare);
   const path =
-    entry.ref.kind === 'conversation' || entry.ref.kind === 'release-notes'
+    entry.ref.kind === 'conversation' ||
+    entry.ref.kind === 'release-notes' ||
+    entry.ref.kind === 'subagent'
       ? undefined
       : entry.ref.path;
   const staged = entry.ref.kind === 'diff' && entry.ref.staged;
   const baseRef = entry.ref.kind === 'diff' ? entry.ref.baseRef : undefined;
 
   const title = [
-    path ?? (isReleaseNotes ? entry.title : 'Conversation'),
+    path ?? (isReleaseNotes || isSubagent ? entry.title : 'Conversation'),
     staged ? 'staged' : undefined,
     baseRef ? `vs ${baseRef}` : undefined,
   ]

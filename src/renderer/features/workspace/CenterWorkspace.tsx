@@ -36,6 +36,7 @@ import { DiffWorkspace } from '@/renderer/features/git/diff/DiffWorkspace';
 import { ReleaseNotesDocument } from '@/renderer/features/updates/ReleaseNotesDocument';
 import { useReleaseNotes, useReleaseNotesTab } from '@/renderer/features/updates/useReleaseNotes';
 import { DocumentTabs } from './DocumentTabs';
+import { SubagentWorkspace } from './SubagentWorkspace';
 
 export function CenterWorkspace() {
   const session = useSessionStore((s) =>
@@ -95,6 +96,13 @@ export function CenterWorkspace() {
           />
         ) : activeDoc.ref.kind === 'release-notes' ? (
           <ReleaseNotesDocument key={activeDoc.id} version={activeDoc.ref.version} />
+        ) : activeDoc.ref.kind === 'subagent' ? (
+          <SubagentWorkspace
+            key={activeDoc.id}
+            documentId={activeDoc.id}
+            sessionId={session.id}
+            callId={activeDoc.ref.callId}
+          />
         ) : (
           <div className="flex min-h-0 flex-1 items-center justify-center text-[12px] text-faint">
             {activeDoc.ref.path}
