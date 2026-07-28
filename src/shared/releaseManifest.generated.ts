@@ -24,6 +24,65 @@ import type { ReleaseIndexEntry, ReleaseManifestEntry } from './release';
 /** Newest first. */
 export const RELEASE_MANIFESTS: ReleaseManifestEntry[] = [
   {
+    "version": "1.13.1",
+    "date": "2026-07-28",
+    "channel": "stable",
+    "codename": null,
+    "gitTag": "v1.13.1",
+    "commit": null,
+    "buildNumber": null,
+    "summary": "Stopping the agent mid-task no longer breaks your next message.",
+    "sections": [
+      {
+        "category": "fixed",
+        "title": "Fixed",
+        "items": [
+          {
+            "lead": "A run stopped while a tool was working would break the following message",
+            "text": "Pressing Stop while the agent was reading a file or running a command left the\n  provider's own conversation ending on a request it never got an answer to — a\n  shape it rejects every time it is replayed. The next thing you sent failed\n  before the agent ever saw it, with a line of internal diagnostic text\n  (`[ede_diagnostic] … stop_reason=tool_use`) shown as the error. Stopping now\n  clears that conversation as it happens, so the next message starts clean. Your\n  transcript, activity and checkpoints are untouched and still shown."
+          },
+          {
+            "lead": "The automatic recovery for it rarely ran",
+            "text": "The same failure reaches the app\n  in two different forms depending on how the underlying process ends, and only\n  one of them was recognised — which is why the error appeared to come and go at\n  random. Both forms are now read from the provider's structured result rather\n  than by matching English text, so recovery is consistent. Recovery also no\n  longer requires a stored conversation to exist, so the first message in a\n  session can recover too."
+          },
+          {
+            "lead": "Internal diagnostics are no longer shown as the error",
+            "text": "An interrupted turn\n  now reads \"The previous turn was interrupted before it finished — retrying.\"\n  The same applies to other run-ending conditions that previously surfaced raw\n  provider text: reaching the turn limit, an oversized prompt, an image that\n  could not be read, and a run stopped by a configured hook. Full diagnostics\n  remain in Settings › Agent › Diagnostics and the log file."
+          },
+          {
+            "lead": "Tool chips could spin forever",
+            "text": "A tool interrupted before it reported back\n  stayed marked as running for the rest of the session. Interrupted tools are now\n  settled when the run ends."
+          },
+          {
+            "lead": "Answering a clarification could hang after Stop",
+            "text": "Stopping a run released\n  pending permission prompts but not pending clarification questions.\n\nCursor sessions get the same handling: both providers share one classifier, so an\ninterrupted turn behaves and reads identically whichever agent is running."
+          }
+        ],
+        "markdown": "- **A run stopped while a tool was working would break the following message.**\n  Pressing Stop while the agent was reading a file or running a command left the\n  provider's own conversation ending on a request it never got an answer to — a\n  shape it rejects every time it is replayed. The next thing you sent failed\n  before the agent ever saw it, with a line of internal diagnostic text\n  (`[ede_diagnostic] … stop_reason=tool_use`) shown as the error. Stopping now\n  clears that conversation as it happens, so the next message starts clean. Your\n  transcript, activity and checkpoints are untouched and still shown.\n- **The automatic recovery for it rarely ran.** The same failure reaches the app\n  in two different forms depending on how the underlying process ends, and only\n  one of them was recognised — which is why the error appeared to come and go at\n  random. Both forms are now read from the provider's structured result rather\n  than by matching English text, so recovery is consistent. Recovery also no\n  longer requires a stored conversation to exist, so the first message in a\n  session can recover too.\n- **Internal diagnostics are no longer shown as the error.** An interrupted turn\n  now reads \"The previous turn was interrupted before it finished — retrying.\"\n  The same applies to other run-ending conditions that previously surfaced raw\n  provider text: reaching the turn limit, an oversized prompt, an image that\n  could not be read, and a run stopped by a configured hook. Full diagnostics\n  remain in Settings › Agent › Diagnostics and the log file.\n- **Tool chips could spin forever.** A tool interrupted before it reported back\n  stayed marked as running for the rest of the session. Interrupted tools are now\n  settled when the run ends.\n- **Answering a clarification could hang after Stop.** Stopping a run released\n  pending permission prompts but not pending clarification questions.\n\nCursor sessions get the same handling: both providers share one classifier, so an\ninterrupted turn behaves and reads identically whichever agent is running."
+      }
+    ],
+    "contributors": [],
+    "pullRequests": [],
+    "mergedBranches": [],
+    "assets": [],
+    "signing": [],
+    "stats": {
+      "commits": null,
+      "filesChanged": null,
+      "additions": null,
+      "deletions": null
+    },
+    "links": {
+      "release": "https://github.com/limboo-ai/limboo/releases/tag/v1.13.1",
+      "compare": "https://github.com/limboo-ai/limboo/compare/v1.13.0...v1.13.1",
+      "tag": "https://github.com/limboo-ai/limboo/releases/tag/v1.13.1",
+      "milestone": null
+    },
+    "checksumManifest": "SHA256SUMS",
+    "provenanceRepo": "limboo-ai/limboo",
+    "markdown": "Stopping the agent mid-task no longer breaks your next message.\n\n### Fixed\n\n- **A run stopped while a tool was working would break the following message.**\n  Pressing Stop while the agent was reading a file or running a command left the\n  provider's own conversation ending on a request it never got an answer to — a\n  shape it rejects every time it is replayed. The next thing you sent failed\n  before the agent ever saw it, with a line of internal diagnostic text\n  (`[ede_diagnostic] … stop_reason=tool_use`) shown as the error. Stopping now\n  clears that conversation as it happens, so the next message starts clean. Your\n  transcript, activity and checkpoints are untouched and still shown.\n- **The automatic recovery for it rarely ran.** The same failure reaches the app\n  in two different forms depending on how the underlying process ends, and only\n  one of them was recognised — which is why the error appeared to come and go at\n  random. Both forms are now read from the provider's structured result rather\n  than by matching English text, so recovery is consistent. Recovery also no\n  longer requires a stored conversation to exist, so the first message in a\n  session can recover too.\n- **Internal diagnostics are no longer shown as the error.** An interrupted turn\n  now reads \"The previous turn was interrupted before it finished — retrying.\"\n  The same applies to other run-ending conditions that previously surfaced raw\n  provider text: reaching the turn limit, an oversized prompt, an image that\n  could not be read, and a run stopped by a configured hook. Full diagnostics\n  remain in Settings › Agent › Diagnostics and the log file.\n- **Tool chips could spin forever.** A tool interrupted before it reported back\n  stayed marked as running for the rest of the session. Interrupted tools are now\n  settled when the run ends.\n- **Answering a clarification could hang after Stop.** Stopping a run released\n  pending permission prompts but not pending clarification questions.\n\nCursor sessions get the same handling: both providers share one classifier, so an\ninterrupted turn behaves and reads identically whichever agent is running."
+  },
+  {
     "version": "1.13.0",
     "date": "2026-07-28",
     "channel": "stable",
@@ -111,7 +170,7 @@ export const RELEASE_MANIFESTS: ReleaseManifestEntry[] = [
     },
     "links": {
       "release": "https://github.com/limboo-ai/limboo/releases/tag/v1.13.0",
-      "compare": null,
+      "compare": "https://github.com/limboo-ai/limboo/compare/v1.12.0...v1.13.0",
       "tag": "https://github.com/limboo-ai/limboo/releases/tag/v1.13.0",
       "milestone": null
     },
@@ -177,7 +236,7 @@ export const RELEASE_MANIFESTS: ReleaseManifestEntry[] = [
     },
     "links": {
       "release": "https://github.com/limboo-ai/limboo/releases/tag/v1.12.0",
-      "compare": null,
+      "compare": "https://github.com/limboo-ai/limboo/compare/v1.11.0...v1.12.0",
       "tag": "https://github.com/limboo-ai/limboo/releases/tag/v1.12.0",
       "milestone": null
     },
@@ -262,7 +321,7 @@ export const RELEASE_MANIFESTS: ReleaseManifestEntry[] = [
     },
     "links": {
       "release": "https://github.com/limboo-ai/limboo/releases/tag/v1.11.0",
-      "compare": null,
+      "compare": "https://github.com/limboo-ai/limboo/compare/v1.10.0...v1.11.0",
       "tag": "https://github.com/limboo-ai/limboo/releases/tag/v1.11.0",
       "milestone": null
     },
@@ -377,127 +436,18 @@ export const RELEASE_MANIFESTS: ReleaseManifestEntry[] = [
     "checksumManifest": "SHA256SUMS",
     "provenanceRepo": "limboo-ai/limboo",
     "markdown": "Plan and Ask are read-only modes, and they enforced that by refusing anything\nthey could not prove safe. Because nothing could prove a third-party tool safe,\nboth modes blocked every MCP server you had connected — and the agent's own\nresearch subagents — in every project, with no prompt and no way to allow them.\nRead-only now means read-only rather than unusable. The plan itself also leaves\nthe side drawer and appears in the conversation, where the work is.\n\n### Fixed\n\n- **Connected MCP tools were blocked while planning, with no way through.** A\n  tool from a server you added yourself — a database browser, a deployment\n  client — was refused in Plan and Ask even when it only reads, and the refusal\n  offered no way to permit it. Servers now carry a **Plan & Ask access** setting,\n  and read-only tools work in both modes.\n- **The agent could not delegate research while planning.** Spawning a subagent\n  was treated as a mutating command and blocked outright, so planning a large\n  change could not fan out to explore the codebase first — in any project. A\n  subagent performs no work of its own, and everything it goes on to do is\n  checked by the same permission gate under the same mode, so it can still only\n  read while a plan is being written.\n- **A Plan or Ask run using Cursor could fail before it started.** A missing\n  default in the permission configuration threw as the run was assembled.\n- **Cursor mislabelled MCP tool calls.** Tool names arriving from Cursor's hooks\n  were reformatted before they were recognized, so a server's tools were shown\n  under a mangled name and were never matched against that server's own\n  permissions.\n- **Editing an MCP server discarded everything known about its tools.** Saving an\n  unrelated field — a rename, a timeout — cleared the cached tool list until the\n  next successful health probe, which also meant a server briefly lost the\n  read-only information its permissions depend on.\n- **A blocked tool now says what to change.** Every denial pointed at the same\n  setting, even when the setting was already correct and the real cause was a\n  server that was unknown, belonged to another project, or was not trusted.\n\n### Added\n\n- **Plan & Ask access, per MCP server.** Three choices: *Blocked* (nothing runs\n  in the read-only modes), *Read-only tools* (only the tools that server declares\n  read-only), or *Whole server* (you vouch for it). A server that declares\n  nothing says so in its settings rather than silently allowing nothing, and\n  tools it does declare read-only are marked in its tool list.\n- **The plan appears in the conversation.** It used to live only in the narrow\n  Tasks drawer, so a long plan read as raw Markdown next to the work it\n  describes. It now renders as text at full width in the stream, with copy, a\n  Markdown view, collapse, and a control that opens the full panel. Approving no\n  longer means leaving the conversation to find the button.\n\n### Changed\n\n- **A run's MCP servers come from its own project.** They were resolved from\n  whichever project happened to be open, so switching or closing a project while\n  the agent was working changed which servers it was allowed to use mid-run — a\n  trusted server would start asking for approval, and a permitted one could be\n  refused. The set is now fixed when the run starts, from the session's own\n  project.\n\n### Security\n\n- **A server's claim to be read-only is not taken on faith.** Servers may declare\n  which of their tools only read. Following the Model Context Protocol's own\n  guidance, that declaration is honored only for servers you have marked trusted;\n  for anything else it is shown as information and the tool still asks. Choosing\n  *Whole server* is recorded as your assertion, not the server's.\n- **Permitting a tool while planning never widens it elsewhere.** The read-only\n  allowance applies to Plan and Ask alone; in the normal modes every one of these\n  tools still asks exactly as before, and the workspace, app-data and\n  sensitive-file guards run ahead of it unchanged.\n- **A subagent that asks to run outside the sandbox is refused while planning**\n  and recorded in the timeline, alongside the existing audit for shell commands\n  that do the same."
-  },
-  {
-    "version": "1.9.0",
-    "date": "2026-07-27",
-    "channel": "stable",
-    "codename": null,
-    "gitTag": "v1.9.0",
-    "commit": null,
-    "buildNumber": null,
-    "summary": "Fixes the Linux updater, which could never finish. On Arch and Manjaro the\npublished package declared dependencies that no longer exist, so `pacman -U`\nfailed every single time — after the user had already typed their password. The\nrelease document also drops its badges and coloured glyphs, and contributors now\nappear with their real profile picture and name.",
-    "sections": [
-      {
-        "category": "fixed",
-        "title": "Fixed",
-        "items": [
-          {
-            "lead": "The `.pacman` package could never install",
-            "text": "electron-builder's default\n  dependency list for that target still names `http-parser` (dropped from Arch)\n  and `libappindicator-gtk3` (AUR-only), so every self-update ended in\n  `cannot resolve \"http-parser\"` and the app stayed on the old version.\n  `pacman.depends` is now declared explicitly and every entry is verified present\n  in core/extra."
-          },
-          {
-            "lead": "\"Restart & install\" froze the app, prompted twice, then killed it",
-            "text": "electron-updater runs the system package manager with a synchronous,\n  shell-quoted spawn, which blocks the main process for the entire\n  authorization — nineteen seconds in the reported case — and then fires a\n  *second* password prompt (`pacman -Sy`) when the first attempt fails. Limboo\n  now owns the privileged install: argv-only, asynchronous, one prompt, no\n  retry that re-prompts, and the window stays responsive throughout."
-          },
-          {
-            "lead": "A refused install no longer force-quits the app",
-            "text": "The four-second quit\n  watchdog fired unconditionally, so an install the package manager had already\n  rejected still terminated the app — the update appeared to do nothing except\n  close the window. The watchdog is now armed only once the installer handoff is\n  confirmed."
-          },
-          {
-            "lead": "An install that fails now says so",
-            "text": "electron-updater reports this class of\n  failure on an event rather than by throwing, so `install()` returned success\n  and the UI stayed silent. The real error is captured and surfaced."
-          },
-          {
-            "lead": "Quitting Limboo no longer asks for your password",
-            "text": "`autoInstallOnAppQuit`\n  re-ran the whole privileged install on every ordinary quit, blocking shutdown\n  behind a polkit dialog. It is disabled for the Linux package formats."
-          },
-          {
-            "lead": "The Linux updater can no longer pick the wrong package manager",
-            "text": "The\n  `package-type` marker baked into the build is cross-checked against the tooling\n  actually present on the machine, so a stale marker cannot select a package\n  manager that is not installed."
-          },
-          {
-            "lead": "\"Keep running in tray\" finally does something",
-            "text": "The setting had shipped\n  since the first release with no main-process consumer at all: nothing could\n  veto a window close, so closing always quit the app and the tray icon vanished\n  with it. Closing now hides to the tray, the tray can restore or recreate the\n  window, and a one-time notification says where the app went. If the tray icon\n  could not be created, closing still quits — being left with no window *and* no\n  icon is worse than not having the feature."
-          }
-        ],
-        "markdown": "- **The `.pacman` package could never install.** electron-builder's default\n  dependency list for that target still names `http-parser` (dropped from Arch)\n  and `libappindicator-gtk3` (AUR-only), so every self-update ended in\n  `cannot resolve \"http-parser\"` and the app stayed on the old version.\n  `pacman.depends` is now declared explicitly and every entry is verified present\n  in core/extra.\n- **\"Restart & install\" froze the app, prompted twice, then killed it.**\n  electron-updater runs the system package manager with a synchronous,\n  shell-quoted spawn, which blocks the main process for the entire\n  authorization — nineteen seconds in the reported case — and then fires a\n  *second* password prompt (`pacman -Sy`) when the first attempt fails. Limboo\n  now owns the privileged install: argv-only, asynchronous, one prompt, no\n  retry that re-prompts, and the window stays responsive throughout.\n- **A refused install no longer force-quits the app.** The four-second quit\n  watchdog fired unconditionally, so an install the package manager had already\n  rejected still terminated the app — the update appeared to do nothing except\n  close the window. The watchdog is now armed only once the installer handoff is\n  confirmed.\n- **An install that fails now says so.** electron-updater reports this class of\n  failure on an event rather than by throwing, so `install()` returned success\n  and the UI stayed silent. The real error is captured and surfaced.\n- **Quitting Limboo no longer asks for your password.** `autoInstallOnAppQuit`\n  re-ran the whole privileged install on every ordinary quit, blocking shutdown\n  behind a polkit dialog. It is disabled for the Linux package formats.\n- **The Linux updater can no longer pick the wrong package manager.** The\n  `package-type` marker baked into the build is cross-checked against the tooling\n  actually present on the machine, so a stale marker cannot select a package\n  manager that is not installed.\n- **\"Keep running in tray\" finally does something.** The setting had shipped\n  since the first release with no main-process consumer at all: nothing could\n  veto a window close, so closing always quit the app and the tray icon vanished\n  with it. Closing now hides to the tray, the tray can restore or recreate the\n  window, and a one-time notification says where the app went. If the tray icon\n  could not be created, closing still quits — being left with no window *and* no\n  icon is worse than not having the feature."
-      },
-      {
-        "category": "added",
-        "title": "Added",
-        "items": [
-          {
-            "lead": "Contributors show their real profile picture and name",
-            "text": "Resolved at build\n  time through the forge's own commit-email-to-account mapping and embedded in\n  the release manifest, so the picture ships inside the build that describes it.\n  Anyone the lookup cannot resolve keeps their initials."
-          },
-          {
-            "lead": "When an update cannot install itself, Limboo hands you the command that\n  will",
-            "text": "The exact `sudo pacman -U …` (or `dpkg`/`dnf`) line for the file\n  already downloaded, copyable from the update ribbon."
-          }
-        ],
-        "markdown": "- **Contributors show their real profile picture and name.** Resolved at build\n  time through the forge's own commit-email-to-account mapping and embedded in\n  the release manifest, so the picture ships inside the build that describes it.\n  Anyone the lookup cannot resolve keeps their initials.\n- **When an update cannot install itself, Limboo hands you the command that\n  will.** The exact `sudo pacman -U …` (or `dpkg`/`dnf`) line for the file\n  already downloaded, copyable from the update ribbon."
-      },
-      {
-        "category": "changed",
-        "title": "Changed",
-        "items": [
-          {
-            "lead": "The release document has no badges and no decorative icons",
-            "text": "Status reads as\n  words — \"Stable\", \"Running now\", \"Windows: self-signed\" — and every section is\n  identified by its name alone. The category glyphs are gone, and so is the\n  colour coding: what matters most is simply listed first, which survives a\n  screenshot, colour-blindness, and the Markdown export in a way a red triangle\n  does not."
-          },
-          {
-            "lead": "The update ribbon reports the whole install",
-            "text": "It now has a real \"Installing\"\n  state that cannot be dismissed mid-flight, a determinate progress bar, and a\n  restart button with proper pressed, focused, disabled and busy states."
-          },
-          {
-            "lead": "Prerelease rows in the release history print their channel correctly",
-            "text": "The\n  list showed a lowercase `beta` where the header showed `Beta`; both now read\n  from one table."
-          }
-        ],
-        "markdown": "- **The release document has no badges and no decorative icons.** Status reads as\n  words — \"Stable\", \"Running now\", \"Windows: self-signed\" — and every section is\n  identified by its name alone. The category glyphs are gone, and so is the\n  colour coding: what matters most is simply listed first, which survives a\n  screenshot, colour-blindness, and the Markdown export in a way a red triangle\n  does not.\n- **The update ribbon reports the whole install.** It now has a real \"Installing\"\n  state that cannot be dismissed mid-flight, a determinate progress bar, and a\n  restart button with proper pressed, focused, disabled and busy states.\n- **Prerelease rows in the release history print their channel correctly.** The\n  list showed a lowercase `beta` where the header showed `Beta`; both now read\n  from one table."
-      },
-      {
-        "category": "security",
-        "title": "Security",
-        "items": [
-          {
-            "lead": "Embedded avatars are screened before they are displayed",
-            "text": "The build-time\n  fetch is HTTPS-only and host-allowlisted, follows redirects manually so every\n  hop is re-checked, caps the response while streaming, and identifies images by\n  their magic bytes rather than a declared content type. The renderer re-screens\n  the value before it reaches an image tag, rejecting anything that is not a\n  base64 raster data URI — a manifest is data even when the file it arrived in is\n  ours. Contributor email addresses remain lookup keys and are never written into\n  the manifest."
-          },
-          {
-            "lead": "The privileged Linux install passes no shell",
-            "text": "The package manager is\n  invoked with an argument vector rather than a quoted `/bin/bash -c` string."
-          }
-        ],
-        "markdown": "- **Embedded avatars are screened before they are displayed.** The build-time\n  fetch is HTTPS-only and host-allowlisted, follows redirects manually so every\n  hop is re-checked, caps the response while streaming, and identifies images by\n  their magic bytes rather than a declared content type. The renderer re-screens\n  the value before it reaches an image tag, rejecting anything that is not a\n  base64 raster data URI — a manifest is data even when the file it arrived in is\n  ours. Contributor email addresses remain lookup keys and are never written into\n  the manifest.\n- **The privileged Linux install passes no shell.** The package manager is\n  invoked with an argument vector rather than a quoted `/bin/bash -c` string."
-      }
-    ],
-    "contributors": [],
-    "pullRequests": [],
-    "mergedBranches": [],
-    "assets": [],
-    "signing": [],
-    "stats": {
-      "commits": null,
-      "filesChanged": null,
-      "additions": null,
-      "deletions": null
-    },
-    "links": {
-      "release": "https://github.com/limboo-ai/limboo/releases/tag/v1.9.0",
-      "compare": "https://github.com/limboo-ai/limboo/compare/v1.8.0...v1.9.0",
-      "tag": "https://github.com/limboo-ai/limboo/releases/tag/v1.9.0",
-      "milestone": null
-    },
-    "checksumManifest": "SHA256SUMS",
-    "provenanceRepo": "limboo-ai/limboo",
-    "markdown": "Fixes the Linux updater, which could never finish. On Arch and Manjaro the\npublished package declared dependencies that no longer exist, so `pacman -U`\nfailed every single time — after the user had already typed their password. The\nrelease document also drops its badges and coloured glyphs, and contributors now\nappear with their real profile picture and name.\n\n### Fixed\n\n- **The `.pacman` package could never install.** electron-builder's default\n  dependency list for that target still names `http-parser` (dropped from Arch)\n  and `libappindicator-gtk3` (AUR-only), so every self-update ended in\n  `cannot resolve \"http-parser\"` and the app stayed on the old version.\n  `pacman.depends` is now declared explicitly and every entry is verified present\n  in core/extra.\n- **\"Restart & install\" froze the app, prompted twice, then killed it.**\n  electron-updater runs the system package manager with a synchronous,\n  shell-quoted spawn, which blocks the main process for the entire\n  authorization — nineteen seconds in the reported case — and then fires a\n  *second* password prompt (`pacman -Sy`) when the first attempt fails. Limboo\n  now owns the privileged install: argv-only, asynchronous, one prompt, no\n  retry that re-prompts, and the window stays responsive throughout.\n- **A refused install no longer force-quits the app.** The four-second quit\n  watchdog fired unconditionally, so an install the package manager had already\n  rejected still terminated the app — the update appeared to do nothing except\n  close the window. The watchdog is now armed only once the installer handoff is\n  confirmed.\n- **An install that fails now says so.** electron-updater reports this class of\n  failure on an event rather than by throwing, so `install()` returned success\n  and the UI stayed silent. The real error is captured and surfaced.\n- **Quitting Limboo no longer asks for your password.** `autoInstallOnAppQuit`\n  re-ran the whole privileged install on every ordinary quit, blocking shutdown\n  behind a polkit dialog. It is disabled for the Linux package formats.\n- **The Linux updater can no longer pick the wrong package manager.** The\n  `package-type` marker baked into the build is cross-checked against the tooling\n  actually present on the machine, so a stale marker cannot select a package\n  manager that is not installed.\n- **\"Keep running in tray\" finally does something.** The setting had shipped\n  since the first release with no main-process consumer at all: nothing could\n  veto a window close, so closing always quit the app and the tray icon vanished\n  with it. Closing now hides to the tray, the tray can restore or recreate the\n  window, and a one-time notification says where the app went. If the tray icon\n  could not be created, closing still quits — being left with no window *and* no\n  icon is worse than not having the feature.\n\n### Added\n\n- **Contributors show their real profile picture and name.** Resolved at build\n  time through the forge's own commit-email-to-account mapping and embedded in\n  the release manifest, so the picture ships inside the build that describes it.\n  Anyone the lookup cannot resolve keeps their initials.\n- **When an update cannot install itself, Limboo hands you the command that\n  will.** The exact `sudo pacman -U …` (or `dpkg`/`dnf`) line for the file\n  already downloaded, copyable from the update ribbon.\n\n### Changed\n\n- **The release document has no badges and no decorative icons.** Status reads as\n  words — \"Stable\", \"Running now\", \"Windows: self-signed\" — and every section is\n  identified by its name alone. The category glyphs are gone, and so is the\n  colour coding: what matters most is simply listed first, which survives a\n  screenshot, colour-blindness, and the Markdown export in a way a red triangle\n  does not.\n- **The update ribbon reports the whole install.** It now has a real \"Installing\"\n  state that cannot be dismissed mid-flight, a determinate progress bar, and a\n  restart button with proper pressed, focused, disabled and busy states.\n- **Prerelease rows in the release history print their channel correctly.** The\n  list showed a lowercase `beta` where the header showed `Beta`; both now read\n  from one table.\n\n### Security\n\n- **Embedded avatars are screened before they are displayed.** The build-time\n  fetch is HTTPS-only and host-allowlisted, follows redirects manually so every\n  hop is re-checked, caps the response while streaming, and identifies images by\n  their magic bytes rather than a declared content type. The renderer re-screens\n  the value before it reaches an image tag, rejecting anything that is not a\n  base64 raster data URI — a manifest is data even when the file it arrived in is\n  ours. Contributor email addresses remain lookup keys and are never written into\n  the manifest.\n- **The privileged Linux install passes no shell.** The package manager is\n  invoked with an argument vector rather than a quoted `/bin/bash -c` string."
   }
 ];
 
 /** Every released version, newest first. */
 export const RELEASE_INDEX: ReleaseIndexEntry[] = [
+  {
+    "version": "1.13.1",
+    "date": "2026-07-28",
+    "channel": "stable",
+    "summary": "Stopping the agent mid-task no longer breaks your next message.",
+    "detailed": true
+  },
   {
     "version": "1.13.0",
     "date": "2026-07-28",
@@ -531,7 +481,7 @@ export const RELEASE_INDEX: ReleaseIndexEntry[] = [
     "date": "2026-07-27",
     "channel": "stable",
     "summary": "Fixes the Linux updater, which could never finish. On Arch and Manjaro the\npublished package declared dependencies that no longer exist, so `pacman -U`\nfailed every single time — after the user had already typed their password. The\nrelease document also drops its badges and coloured glyphs, and contributors now\nappear with their real profile picture and name.",
-    "detailed": true
+    "detailed": false
   },
   {
     "version": "1.8.0",

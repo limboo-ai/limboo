@@ -101,6 +101,14 @@ import {
   type EffectiveSandbox,
 } from './sandbox/policy';
 import { isReadOnlyShellCommand } from './agent/readOnlyCommands';
+import {
+  AgentRunError,
+  classifyTerminalResult,
+  isAgentRunError,
+  joinErrors,
+  terminalResultFromText,
+  type TerminalResult,
+} from './agent/terminalResult';
 import { HookEngine, type HookEmit } from './hooks/HookEngine';
 import type { PermissionDecisionSignal } from './graph/builder';
 import type { CursorRunOutcome, ProviderRunBridge } from './cursor/types';
@@ -402,6 +410,43 @@ interface Classification {
   recoverable: boolean;
 }
 
+/**
+ * Normalize an SDK `result` message into a {@link TerminalResult}.
+ *
+ * Two things here are easy to get wrong and were both wrong before:
+ *
+ *  1. `SDKResultError` has **no `result` field** — the payload is `errors[]`,
+ *     joined the way the SDK's own reducer joins it. Reading `result` yields ''
+ *     and degrades every failure to its bare subtype.
+ *  2. `is_error` is carried on the SUCCESS shape too, and the SDK treats
+ *     `subtype === 'success' && is_error` as a failure. Testing the subtype
+ *     alone reports those runs as successful.
+ */
+function readTerminalResult(msg: SDKMessage): TerminalResult {
+  const m = msg as unknown as {
+    subtype?: string;
+    is_error?: boolean;
+    result?: unknown;
+    errors?: unknown;
+    stop_reason?: unknown;
+    terminal_reason?: unknown;
+    permission_denials?: unknown;
+  };
+  const ok = m.subtype === 'success' && !m.is_error;
+  const errors = Array.isArray(m.errors) ? m.errors.map((e) => String(e ?? '')) : [];
+  const successText = typeof m.result === 'string' ? m.result : '';
+  const text = ok ? successText : joinErrors(errors) || successText || String(m.subtype ?? '');
+  return {
+    ok,
+    subtype: typeof m.subtype === 'string' ? m.subtype : undefined,
+    stopReason: typeof m.stop_reason === 'string' ? m.stop_reason : null,
+    terminalReason: typeof m.terminal_reason === 'string' ? m.terminal_reason : undefined,
+    errors,
+    denials: Array.isArray(m.permission_denials) ? m.permission_denials.length : undefined,
+    text,
+  };
+}
+
 function classifyAgentError(raw: string): Classification {
   const t = raw.toLowerCase();
 
@@ -521,8 +566,14 @@ interface ActiveRun {
   settled: Promise<void>;
   /** Whether this run is a read-only plan run or a normal implement run. */
   mode: AgentMode;
-  /** Terminal SDK result for the active attempt (drives outcome classification). */
-  result?: { ok: boolean; text: string };
+  /**
+   * Terminal SDK result for the active attempt (drives outcome classification).
+   * Holds the FULL structured record — `errors[]`, `stop_reason`,
+   * `terminal_reason` — not just a string: an `SDKResultError` has no `result`
+   * field, so a text-only shape silently degrades every failure to its bare
+   * subtype and no classifier can act on it.
+   */
+  result?: TerminalResult;
   /** Set true once an ExitPlanMode plan was captured (suppresses the failure throw). */
   planCaptured?: boolean;
   /** Set once this run has taken its single automatic pre-write checkpoint. */
@@ -1326,6 +1377,31 @@ export class AgentManager {
   stop(sessionId: string): void {
     const run = this.runs.get(sessionId);
     if (!run) return;
+
+    // Stopping kills the provider mid-turn. If a tool call is unanswered at
+    // this moment, the provider's own transcript is left ending in a tool_use
+    // with no tool_result — a shape it rejects on EVERY replay. The stored
+    // resume/chat id points straight at it, so the next message would fail with
+    // `[ede_diagnostic] … stop_reason=tool_use` before the user typed anything
+    // wrong. Forget the id here, while we still know a tool was in flight:
+    // recovering after the fact costs the user a failed turn, and detecting it
+    // after the fact depends on which of two provider error paths wins a race.
+    // Only the PROVIDER's conversation memory resets — Limboo's transcript,
+    // activity and checkpoints are untouched and keep rendering.
+    if (this.hasRunningToolCalls(sessionId)) {
+      const provider = providerForModel(this.settings.getAll().agent.model);
+      if (this.loadProviderSession(sessionId, provider)) {
+        this.forgetProviderSession(sessionId, provider);
+        this.diag(
+          'recovery',
+          'info',
+          'Stopped mid-tool — the next message starts a fresh provider conversation',
+          undefined,
+          sessionId,
+        );
+      }
+    }
+
     run.abort.abort();
     try {
       run.query?.close?.();
@@ -1336,6 +1412,14 @@ export class AgentManager {
     for (const [id, entry] of this.pending) {
       if (entry.sessionId === sessionId) {
         this.pending.delete(id);
+        entry.resolve({ behavior: 'deny', message: 'Run stopped by the user.', interrupt: true });
+      }
+    }
+    // Clarifications block canUseTool exactly like permissions do; draining only
+    // `pending` left them to unwind via their abort listener alone.
+    for (const [id, entry] of this.pendingClarifications) {
+      if (entry.sessionId === sessionId) {
+        this.pendingClarifications.delete(id);
         entry.resolve({ behavior: 'deny', message: 'Run stopped by the user.', interrupt: true });
       }
     }
@@ -1926,7 +2010,13 @@ export class AgentManager {
     permMode: SessionPermissionMode,
   ): Promise<void> {
     let attempt = 0;
+    // Two INDEPENDENT one-shot budgets. Dropping a stored resume id and
+    // retrying-from-scratch are different remedies: the first only applies when
+    // a row exists, and gating the second on the first (as this loop used to)
+    // meant a session with no stored id got no recovery at all. Separate flags
+    // give each remedy exactly one shot and still make the loop terminating.
     let resumeDropped = false;
+    let freshRetried = false;
     for (;;) {
       try {
         await this.runOnce(sessionId, prompt, abort, permMode);
@@ -1961,18 +2051,67 @@ export class AgentManager {
         const raw = err instanceof Error ? err.message : String(err);
         const provider = providerForModel(this.settings.getAll().agent.model);
 
-        // Corrupted-resume self-heal. Claude: the CLI's `[ede_diagnostic] …
-        // stop_reason=tool_use` result means the resumed transcript ends in a
-        // tool_use with no tool_result (a prior run died mid-tool). Cursor:
-        // the stored chat id no longer resolves. Either way, resuming fails
-        // identically every turn — drop the stored id once and retry fresh
-        // (Limboo's own transcript/history is unaffected).
-        const resumeCorrupted =
-          provider === 'cursor'
-            ? isCursorResumeCorruption(raw)
-            : raw.includes('ede_diagnostic') ||
-              (raw.includes('returned an error result') && raw.includes('stop_reason=tool_use'));
-        if (resumeCorrupted && !resumeDropped && this.loadProviderSession(sessionId, provider)) {
+        // ---- Structured terminal-result classification (preferred path) ----
+        // Prefer the record carried by AgentRunError. Fall back to parsing the
+        // thrown TEXT, because the SDK replaces a transport error with
+        // `Claude Code returned an error result: <errors joined>` — the same
+        // failure reaches us as data on one path and as prose on the other, and
+        // only normalizing both makes detection deterministic instead of a race.
+        const terminal = isAgentRunError(err) ? err.terminal : terminalResultFromText(raw);
+        const structured = terminal ? classifyTerminalResult(terminal) : null;
+
+        // Structured verdict wins when there is one; otherwise fall through to
+        // the provider regex classifiers, which still own the rate-limit / auth
+        // / transport shapes that never appear as a terminal_reason. Resolved
+        // BEFORE the retry-fresh check so a Cursor verdict — which carries its
+        // own `retryFresh` — gets the same remedy as a Claude one.
+        const cls =
+          structured ??
+          (provider === 'cursor' ? classifyCursorError(redact(raw)) : classifyAgentError(redact(raw)));
+        // These two are optional across the three classifier shapes — only the
+        // terminal-result and Cursor classifiers supply them — so read them
+        // through one widened view rather than leaning on `in`-narrowing across
+        // a three-way union.
+        const { retryFresh, message } = cls as { retryFresh?: boolean; message?: string };
+        // `userMessage` is the ONLY string allowed into the conversation. The
+        // raw provider prose stays in the diagnostics console and the log.
+        const userMessage = message || redact(raw);
+
+        // An interrupted turn leaves the provider transcript ending in a tool
+        // call with no result; replaying it via the stored resume/chat id fails
+        // identically every time. Retry FRESH — and do so whether or not a
+        // stored id exists, since the failure is a turn-level artifact that a
+        // clean conversation clears (anthropics/claude-agent-sdk-typescript#366:
+        // the next well-formed prompt is answered normally). Limboo's own
+        // transcript, activity and checkpoints are untouched.
+        if (retryFresh && !freshRetried) {
+          freshRetried = true;
+          const hadResume = Boolean(this.loadProviderSession(sessionId, provider));
+          if (hadResume && !resumeDropped) {
+            resumeDropped = true;
+            this.forgetProviderSession(sessionId, provider);
+          }
+          this.diag(
+            'recovery',
+            'warning',
+            hadResume
+              ? 'Turn was interrupted — dropping the stored conversation and retrying fresh'
+              : 'Turn was interrupted — retrying',
+            redact(raw),
+            sessionId,
+          );
+          continue;
+        }
+
+        // Cursor's own resume-token corruption (the stored chat id no longer
+        // resolves server-side) is not a terminal-result shape — keep its
+        // dedicated matcher, with the same one-shot drop-and-retry remedy.
+        if (
+          provider === 'cursor' &&
+          isCursorResumeCorruption(raw) &&
+          !resumeDropped &&
+          this.loadProviderSession(sessionId, provider)
+        ) {
           resumeDropped = true;
           this.forgetProviderSession(sessionId, provider);
           this.diag(
@@ -1985,8 +2124,6 @@ export class AgentManager {
           continue; // retry — the next attempt no longer finds a resume id
         }
 
-        const cls =
-          provider === 'cursor' ? classifyCursorError(redact(raw)) : classifyAgentError(redact(raw));
         this.diag('recovery', cls.recoverable ? 'warning' : 'error', `Run error (${cls.outcome})`, redact(raw), sessionId);
 
         if (cls.outcome === 'rate-limited' && cls.rateLimit) {
@@ -2012,7 +2149,7 @@ export class AgentManager {
         }
         if (cls.outcome === 'context-overflow') {
           this.completeRequest(sessionId, 'context-overflow', 'Context window exceeded.');
-          this.pushEvent({ kind: 'error', sessionId, message: redact(raw), outcome: 'context-overflow' });
+          this.pushEvent({ kind: 'error', sessionId, message: userMessage, outcome: 'context-overflow' });
           this.pushActivity(sessionId, 'error', 'Context window exceeded', undefined, 'warning');
           return; // capability stays ready — this is request-local
         }
@@ -2030,14 +2167,16 @@ export class AgentManager {
           continue; // retry — runOnce reuses buildOptions → options.resume
         }
 
-        // Exhausted or non-recoverable.
+        // Exhausted or non-recoverable. The log keeps the raw provider text;
+        // the conversation gets `userMessage` (identical to the raw text unless
+        // the terminal-result classifier supplied plain-English copy).
         logger.error('Agent run failed', redact(raw));
-        this.completeRequest(sessionId, cls.outcome, redact(raw));
-        this.pushEvent({ kind: 'error', sessionId, message: redact(raw), outcome: cls.outcome });
-        this.pushActivity(sessionId, 'error', 'Agent error', redact(raw).slice(0, ACTIVITY_LIMITS.detailMax), 'danger');
+        this.completeRequest(sessionId, cls.outcome, userMessage);
+        this.pushEvent({ kind: 'error', sessionId, message: userMessage, outcome: cls.outcome });
+        this.pushActivity(sessionId, 'error', 'Agent error', userMessage.slice(0, ACTIVITY_LIMITS.detailMax), 'danger');
         if (cls.recoverable) {
           // A transport error whose recovery budget is spent — capability degraded.
-          this.setLifecycle('failed', { error: redact(raw) });
+          this.setLifecycle('failed', { error: userMessage });
         }
         // Otherwise a request-local failure: the agent itself stays ready (the
         // outer send() finally restores 'ready' since the capability is healthy).
@@ -2127,11 +2266,17 @@ export class AgentManager {
     // reusing the exact streaming closures above so everything downstream
     // (events, persistence, plan artifacts, UI) behaves identically.
     if (providerForModel(agent.model) === 'cursor') {
-      await this.runCursorOnce(sessionId, prompt, cwd, abort, permMode, {
-        ensureStreaming,
-        queueDelta,
-        finishStreaming,
-      });
+      try {
+        await this.runCursorOnce(sessionId, prompt, cwd, abort, permMode, {
+          ensureStreaming,
+          queueDelta,
+          finishStreaming,
+        });
+      } finally {
+        // Same reconciliation the Claude branch does — a Cursor run cut mid-tool
+        // would otherwise leave its chip spinning for the session's lifetime.
+        this.settleOrphanedToolCalls(sessionId);
+      }
       return;
     }
 
@@ -2282,6 +2427,12 @@ export class AgentManager {
       }
     } finally {
       finishStreaming();
+      // A tool call whose tool_result never arrives (interrupt, process death,
+      // an aborted stream) would otherwise stay `running` in the runtime
+      // forever and spin its chip for the rest of the session. Nothing else
+      // reconciles it, because the reconciling signal is the message that never
+      // came.
+      this.settleOrphanedToolCalls(sessionId);
     }
 
     // A captured plan halts the read-only run via an ExitPlanMode interrupt;
@@ -2290,10 +2441,38 @@ export class AgentManager {
 
     // A non-success terminal result is surfaced as a throw so the recovery loop
     // can classify it (rate-limit / auth / context / transient / hard failure).
+    // AgentRunError carries the STRUCTURED record, so the loop classifies on
+    // `terminal_reason` / `stop_reason` rather than on provider prose.
     const result = this.runs.get(sessionId)?.result;
     if (result && !result.ok && !abort.signal.aborted) {
-      throw new Error(result.text || 'The run ended with errors.');
+      throw new AgentRunError(result);
     }
+  }
+
+  /**
+   * Settle any tool call still marked `running` for this session. Called when a
+   * run unwinds — normally there is nothing to do, and on an interrupted run
+   * this is what stops the UI showing work that will never finish.
+   */
+  private settleOrphanedToolCalls(sessionId: string): void {
+    const rt = this.runtimes.get(sessionId);
+    if (!rt) return;
+    for (const call of rt.toolCalls) {
+      if (call.status === 'running') {
+        this.onToolResult(sessionId, call.id, 'error', 'Interrupted before it finished.');
+      }
+    }
+  }
+
+  /**
+   * Whether this session has a tool call the provider has not yet reported a
+   * result for. Aborting in that window is what leaves the provider transcript
+   * structurally invalid — see the note in {@link stop}.
+   */
+  private hasRunningToolCalls(sessionId: string): boolean {
+    const rt = this.runtimes.get(sessionId);
+    if (!rt) return false;
+    return rt.toolCalls.some((c) => c.status === 'running');
   }
 
   /* ---------------------------------------------------------------- */
@@ -2376,9 +2555,7 @@ export class AgentManager {
 
       case 'result': {
         finishStreaming();
-        const ok = msg.subtype === 'success';
-        const resultText = 'result' in msg && typeof msg.result === 'string' ? msg.result : '';
-        this.recordRunResult(sessionId, ok, resultText, resultText || String(msg.subtype ?? ''));
+        this.recordRunResult(sessionId, readTerminalResult(msg));
         break;
       }
 
@@ -2393,10 +2570,15 @@ export class AgentManager {
    * classification, emits the result event, and celebrates success. Failure
    * paths are owned by runWithRecovery (classified + surfaced there).
    */
-  private recordRunResult(sessionId: string, ok: boolean, text: string, storedText?: string): void {
+  private recordRunResult(sessionId: string, terminal: TerminalResult): void {
     const run = this.runs.get(sessionId);
-    if (run) run.result = { ok, text: storedText ?? text };
-    this.pushEvent({ kind: 'result', sessionId, ok, text });
+    if (run) run.result = terminal;
+    const { ok } = terminal;
+    // The renderer's result event carries the SUCCESS text only. A failure's
+    // text is raw provider prose (`[ede_diagnostic] …`) and is surfaced instead
+    // by runWithRecovery as plain-English copy; the raw form stays in the
+    // diagnostics console. See agent/terminalResult.ts.
+    this.pushEvent({ kind: 'result', sessionId, ok, text: ok ? terminal.text : '' });
     if (ok) {
       this.pushActivity(sessionId, 'result', 'Completed', undefined, 'success');
       this.diag('request', 'info', 'Run completed', undefined, sessionId);
@@ -2584,7 +2766,16 @@ export class AgentManager {
           this.rememberProviderSession(sessionId, 'cursor', chatId);
         }
       },
-      onResult: (ok, text) => this.recordRunResult(sessionId, ok, text),
+      // Cursor reports a plain ok/text pair; normalize it into the same
+      // structured record the Claude path produces so both providers reach one
+      // classifier (agent/terminalResult.ts).
+      onResult: (ok, text) =>
+        this.recordRunResult(sessionId, {
+          ok,
+          subtype: ok ? 'success' : 'error_during_execution',
+          errors: ok || !text ? [] : [text],
+          text,
+        }),
       diag: (category, severity, label, detail) =>
         this.diag(category as DiagnosticCategory, severity, label, detail, sessionId),
     };

@@ -10,6 +10,7 @@
  * marker on that path lets one string carry everything the classifier needs.
  */
 import type { AgentLifecycleStatus, RateLimitInfo, RequestOutcome } from '@shared/types';
+import { TERMINAL_COPY } from '../agent/terminalResult';
 
 export interface CursorClassification {
   outcome: RequestOutcome;
@@ -18,6 +19,17 @@ export interface CursorClassification {
   rateLimit?: RateLimitInfo;
   /** True when a transparent recovery retry is warranted. */
   recoverable: boolean;
+  /**
+   * True when the retry must start a FRESH conversation (drop the stored chat
+   * id). Same contract as the Claude side's TerminalClassification.
+   */
+  retryFresh?: boolean;
+  /**
+   * Plain-English copy for the conversation, drawn from the SHARED
+   * {@link TERMINAL_COPY} table so Cursor and Claude describe the same event
+   * with the same words. Absent = no better wording than the raw text.
+   */
+  message?: string;
 }
 
 /**
@@ -47,13 +59,33 @@ export function classifyCursorError(raw: string): CursorClassification {
   if (/context (window|length|limit)|prompt is too long|maximum context|too many tokens|context_length/.test(t)) {
     return { outcome: 'context-overflow', recoverable: false };
   }
+  // Interrupted turn — the Cursor twin of the Claude `[ede_diagnostic] …
+  // stop_reason=tool_use` shape. `--resume <chatId>` replays a chat whose last
+  // turn was cut mid-tool, so it fails identically forever: the retry has to
+  // start a fresh chat, not reuse the id.
+  if (
+    /\b(interrupted|aborted|cancell?ed)\b[^\n]{0,40}\b(turn|tool|stream|request)\b/.test(t) ||
+    /\btool (call|use)\b[^\n]{0,40}\b(no result|without a result|unanswered|incomplete)\b/.test(t)
+  ) {
+    return {
+      outcome: 'failed',
+      recoverable: true,
+      retryFresh: true,
+      message: TERMINAL_COPY.interrupted,
+    };
+  }
   // Transient transport / process death / provider overload — retry once via
   // the existing recovery budget. Includes the documented ended-early shape.
   if (
     raw.includes(NO_RESULT_MARKER) ||
     /econnreset|etimedout|epipe|enotfound|eai_again|socket hang up|connection (reset|refused|closed)|stream (closed|ended|error)|network|fetch failed|\b50[023]\b|\b529\b|overloaded|temporarily unavailable/.test(t)
   ) {
-    return { outcome: 'failed', lifecycle: 'reconnecting', recoverable: true };
+    return {
+      outcome: 'failed',
+      lifecycle: 'reconnecting',
+      recoverable: true,
+      message: TERMINAL_COPY.providerError,
+    };
   }
   // Default: request-local failure; capability stays healthy.
   return { outcome: 'failed', recoverable: false };

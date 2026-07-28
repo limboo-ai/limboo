@@ -7,6 +7,42 @@ All notable changes to Limboo are documented here. The format is based on
 
 ## [Unreleased]
 
+## [1.13.1] - 2026-07-28
+
+Stopping the agent mid-task no longer breaks your next message.
+
+### Fixed
+
+- **A run stopped while a tool was working would break the following message.**
+  Pressing Stop while the agent was reading a file or running a command left the
+  provider's own conversation ending on a request it never got an answer to — a
+  shape it rejects every time it is replayed. The next thing you sent failed
+  before the agent ever saw it, with a line of internal diagnostic text
+  (`[ede_diagnostic] … stop_reason=tool_use`) shown as the error. Stopping now
+  clears that conversation as it happens, so the next message starts clean. Your
+  transcript, activity and checkpoints are untouched and still shown.
+- **The automatic recovery for it rarely ran.** The same failure reaches the app
+  in two different forms depending on how the underlying process ends, and only
+  one of them was recognised — which is why the error appeared to come and go at
+  random. Both forms are now read from the provider's structured result rather
+  than by matching English text, so recovery is consistent. Recovery also no
+  longer requires a stored conversation to exist, so the first message in a
+  session can recover too.
+- **Internal diagnostics are no longer shown as the error.** An interrupted turn
+  now reads "The previous turn was interrupted before it finished — retrying."
+  The same applies to other run-ending conditions that previously surfaced raw
+  provider text: reaching the turn limit, an oversized prompt, an image that
+  could not be read, and a run stopped by a configured hook. Full diagnostics
+  remain in Settings › Agent › Diagnostics and the log file.
+- **Tool chips could spin forever.** A tool interrupted before it reported back
+  stayed marked as running for the rest of the session. Interrupted tools are now
+  settled when the run ends.
+- **Answering a clarification could hang after Stop.** Stopping a run released
+  pending permission prompts but not pending clarification questions.
+
+Cursor sessions get the same handling: both providers share one classifier, so an
+interrupted turn behaves and reads identically whichever agent is running.
+
 ## [1.13.0] - 2026-07-28
 
 The conversation stops being something you only read. Every message now carries
@@ -756,7 +792,11 @@ operational.
 - **Unified streaming timeline** — the conversation rendered as one continuous,
   turn-grouped event stream of messages, tool calls, and status markers.
 
-[Unreleased]: https://github.com/limboo-ai/limboo/compare/v1.10.0...HEAD
+[Unreleased]: https://github.com/limboo-ai/limboo/compare/v1.13.1...HEAD
+[1.13.1]: https://github.com/limboo-ai/limboo/compare/v1.13.0...v1.13.1
+[1.13.0]: https://github.com/limboo-ai/limboo/compare/v1.12.0...v1.13.0
+[1.12.0]: https://github.com/limboo-ai/limboo/compare/v1.11.0...v1.12.0
+[1.11.0]: https://github.com/limboo-ai/limboo/compare/v1.10.0...v1.11.0
 [1.10.0]: https://github.com/limboo-ai/limboo/compare/v1.9.0...v1.10.0
 [1.9.0]: https://github.com/limboo-ai/limboo/compare/v1.8.0...v1.9.0
 [1.8.0]: https://github.com/limboo-ai/limboo/compare/v1.7.0...v1.8.0
