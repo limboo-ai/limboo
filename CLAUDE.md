@@ -855,16 +855,32 @@ Memory, Search, Resume and the Work Graph. Full doc:
 
 ### The conversation timeline: message actions + conversation revert
 
-Every block in the stream is actionable, and Plan Mode has exactly two surfaces.
+Every turn in the stream is actionable, and Plan Mode has exactly two surfaces.
 All of it is provider-neutral — nothing below reads which adapter produced the
 message.
 
 - **Message actions** (`features/workspace/MessageActions.tsx`) — an icon-only
-  toolbar on every user and assistant message, revealed by `group-hover` **and**
+  toolbar on the **user turn only**, revealed by `group-hover` **and**
   `focus-within` (a toolbar reachable only by mouse is not reachable). Copy,
   Copy as Markdown, Quote, Reference in Prompt, Select Text, View Raw, Export,
   Open in New Session, Pin to Memory, Regenerate, Revert. Active state is the
   **accent icon**, never a strip (§4b).
+  - **There is no toolbar in the assistant stream, and none may be added.** A
+    reply is not one document: it arrives as several text blocks split by tool
+    calls, so a per-block toolbar meant several per answer — each reserving a
+    row of layout (they hide with `opacity`, not `display`) and cutting a
+    continuous stream into separately-framed cards. The prompt is the turn's one
+    stable anchor and carries its actions. Export is therefore **turn-scoped**:
+    `TurnView` hands `UserBubble` the turn's `replies` alongside `toolCalls`, and
+    `turnToMarkdown` writes prompt + replies + tools as one document. Copy and
+    Copy as Markdown stay **message-scoped** — their labels say "Copy", and
+    widening them to a whole turn would make them a different button. Copying a
+    reply is served by `CodeBlock`'s own `CopyButton`.
+  - **`AssistantBlock`'s content column is `gap-1.5`** — the single class
+    governing the distance between every consecutive assistant sub-item (text,
+    tool group, marker, subagent row, trailing status). Deliberately tight: the
+    larger spacing lives on turn boundaries (`gap-4` within a turn, `gap-6`
+    between turns), so the reply itself reads as one continuous stream.
   - **`ChatMessage.text` is already Markdown** — both providers stream Markdown
     source and the renderer only ever parses it for display. So
     `lib/messageMarkdown.ts` returns the SOURCE; it never serializes rendered

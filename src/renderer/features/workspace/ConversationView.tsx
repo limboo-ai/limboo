@@ -391,6 +391,13 @@ const TurnView = memo(function TurnView({
     .filter((b): b is Extract<Block, { kind: 'tool' }> => b.kind === 'tool')
     .map((b) => b.call);
 
+  // The turn's assistant replies. The action toolbar mounts on the user bubble
+  // only, so Export has to reach the answers from there — otherwise it would
+  // write out a prompt with nothing following it.
+  const replies = turn.blocks
+    .filter((b): b is Extract<Block, { kind: 'text' }> => b.kind === 'text')
+    .map((b) => b.message);
+
   return (
     // The anchor the ConversationRail scrolls to (and observes for the "current
     // turn" tick). `scroll-mt-4` keeps the prompt clear of the scroller's top
@@ -405,20 +412,12 @@ const TurnView = memo(function TurnView({
           sessionId={sessionId}
           message={user}
           toolCalls={userToolCalls}
+          replies={replies}
           onRegenerate={onRegenerate}
           onRevert={onRevert}
         />
       )}
-      {showAssistant && (
-        <AssistantBlock
-          sessionId={sessionId}
-          blocks={turn.blocks}
-          trailing={trailing}
-          prompt={user}
-          onRegenerate={onRegenerate}
-          onRevert={onRevert}
-        />
-      )}
+      {showAssistant && <AssistantBlock blocks={turn.blocks} trailing={trailing} />}
     </div>
   );
 }, turnsEqual);
@@ -540,12 +539,15 @@ function UserBubble({
   sessionId,
   message,
   toolCalls,
+  replies,
   onRegenerate,
   onRevert,
 }: {
   sessionId: string;
   message: ChatMessage;
   toolCalls: AgentToolCall[];
+  /** This turn's assistant replies — the toolbar's Export covers the whole turn. */
+  replies: ChatMessage[];
   onRegenerate?: () => void;
   onRevert?: () => void;
 }) {
@@ -589,6 +591,7 @@ function UserBubble({
         onRegenerate={onRegenerate}
         onRevert={onRevert}
         toolCalls={toolCalls}
+        replies={replies}
       />
     </div>
   );
@@ -624,20 +627,11 @@ function MessageAttachments({
  *  chronologically-interleaved sub-items (text, tool rows, status markers, and an
  *  optional trailing approval). */
 const AssistantBlock = memo(function AssistantBlock({
-  sessionId,
   blocks,
   trailing,
-  prompt = null,
-  onRegenerate,
-  onRevert,
 }: {
-  sessionId?: string;
   blocks: Block[];
   trailing?: ReactNode;
-  /** The user prompt this block answers — carried into exports and regenerate. */
-  prompt?: ChatMessage | null;
-  onRegenerate?: () => void;
-  onRevert?: () => void;
 }) {
   const streaming = blocks.some((b) => b.kind === 'text' && b.message.streaming);
   // A boolean from the store keeps this memo-safe; threading it as a prop would
@@ -649,35 +643,19 @@ const AssistantBlock = memo(function AssistantBlock({
     () => groupBlocks(blocks, inlineSubagents),
     [blocks, inlineSubagents],
   );
-  const toolCalls = useMemo(
-    () => blocks.filter((b): b is Extract<Block, { kind: 'tool' }> => b.kind === 'tool').map((b) => b.call),
-    [blocks],
-  );
   return (
     <div className="flex gap-3 animate-fade-in">
       <div className="mt-1 flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-surface-2">
         <Logo size={16} className={streaming ? 'animate-pulse' : undefined} />
       </div>
-      <div className="flex min-w-0 flex-1 flex-col gap-3 pt-0.5">
+      {/* The stream's vertical rhythm. This single gap separates every consecutive
+          sub-item (text, tool group, marker, subagent row, trailing status), and it
+          is deliberately tight: the agent's output is one continuous reply, not a
+          stack of cards. Turn boundaries are what carry the larger spacing. */}
+      <div className="flex min-w-0 flex-1 flex-col gap-1.5 pt-0.5">
         {items.map((it) => {
           if (it.kind === 'text') {
-            // Without a session there is nowhere for the actions to write
-            // (quote, new session, memory), so the plain body renders instead.
-            return sessionId ? (
-              <AssistantText
-                key={it.message.id}
-                sessionId={sessionId}
-                message={it.message}
-                prompt={prompt}
-                toolCalls={toolCalls}
-                onRegenerate={onRegenerate}
-                onRevert={onRevert}
-              />
-            ) : (
-              <div key={it.message.id}>
-                <Markdown text={it.message.text} streaming={it.message.streaming} />
-              </div>
-            );
+            return <AssistantText key={it.message.id} message={it.message} />;
           }
           if (it.kind === 'marker') return <InlineMarkerRow key={it.item.id} item={it.item} />;
           if (it.kind === 'subagent') {
@@ -691,53 +669,19 @@ const AssistantBlock = memo(function AssistantBlock({
   );
 });
 
-function AssistantText({
-  sessionId,
-  message,
-  prompt,
-  toolCalls,
-  onRegenerate,
-  onRevert,
-}: {
-  sessionId: string;
-  message: ChatMessage;
-  prompt: ChatMessage | null;
-  toolCalls: AgentToolCall[];
-  onRegenerate?: () => void;
-  onRevert?: () => void;
-}) {
-  const [raw, setRaw] = useState(false);
-  const body = useRef<HTMLDivElement>(null);
+/** One streamed assistant text block. Purely presentational: the turn's actions
+ *  live on the user bubble, so the agent's output stays chrome-free and reads as
+ *  one continuous stream rather than a stack of separately-framed blocks. */
+function AssistantText({ message }: { message: ChatMessage }) {
   // A streaming message with no text yet is the pre-first-token moment — reserve
-  // the reply's shape with a shimmer skeleton until the first delta lands. No
-  // toolbar either: there is nothing to copy, quote or export yet.
+  // the reply's shape with a shimmer skeleton until the first delta lands.
   if (message.streaming && message.text.trim().length === 0) return <MessageSkeleton />;
   return (
-    <div className="group">
-      <div ref={body}>
-        {raw ? (
-          <pre className="overflow-auto rounded-md border border-line bg-surface-2 px-3 py-2 font-mono text-[11.5px] leading-relaxed text-muted">
-            {message.text}
-          </pre>
-        ) : (
-          <Markdown text={message.text} streaming={message.streaming} />
-        )}
-        {message.streaming && !raw && (
-          <span className="ml-0.5 inline-block h-3.5 w-[2px] translate-y-0.5 animate-pulse bg-accent align-middle" />
-        )}
-      </div>
-      <MessageActions
-        sessionId={sessionId}
-        message={message}
-        raw={raw}
-        onToggleRaw={() => setRaw((v) => !v)}
-        onSelectText={() => selectNodeText(body.current)}
-        onRegenerate={onRegenerate}
-        onRevert={onRevert}
-        toolCalls={toolCalls}
-        promptMessage={prompt}
-        className="mt-1"
-      />
+    <div>
+      <Markdown text={message.text} streaming={message.streaming} />
+      {message.streaming && (
+        <span className="ml-0.5 inline-block h-3.5 w-[2px] translate-y-0.5 animate-pulse bg-accent align-middle" />
+      )}
     </div>
   );
 }
