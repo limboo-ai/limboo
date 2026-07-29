@@ -171,11 +171,27 @@ export class CursorRuntime {
 
         if (ev.type === 'result') {
           sawResult = true;
-          const r = ev as { is_error?: boolean; subtype?: string; result?: string };
+          const r = ev as {
+            is_error?: boolean;
+            subtype?: string;
+            result?: string;
+            duration_ms?: number;
+          };
           const ok = r.is_error !== true && (r.subtype === undefined || r.subtype === 'success');
           const text =
             typeof r.result === 'string' ? r.result.slice(0, CURSOR_LIMITS.runResultTextMax) : '';
           outcome.result = { ok, text };
+          // `duration_ms` is the ONLY quantitative field on Cursor's entire
+          // stream — no tokens, no cost, no context window, no quota. Forward
+          // it so the one thing this provider does measure is not discarded
+          // too; every other runtime section hides itself via the capability
+          // table rather than showing a fabricated zero.
+          bridge.onUsage?.({
+            durationMs:
+              typeof r.duration_ms === 'number' && Number.isFinite(r.duration_ms)
+                ? r.duration_ms
+                : undefined,
+          });
           bridge.finishStreaming();
           bridge.onResult(ok, text);
           continue;

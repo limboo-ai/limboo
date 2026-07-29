@@ -29,6 +29,8 @@ This page mirrors that file. When in doubt, the source file is authoritative.
 | Update    | `update:getState`, `update:check`, `update:download`, `update:install` |
 | Memory    | `memory:list`, `memory:get`, `memory:search`, `memory:create`, `memory:update`, `memory:delete`, `memory:archive`, `memory:pin`, `memory:listProposals`, `memory:acceptProposal`, `memory:rejectProposal` |
 | Search    | `search:global`, `search:files`, `search:symbols`, `search:reindex`, `search:getStatus`, `search:historyList`, `search:historyClear`, `search:savedList`, `search:savedCreate`, `search:savedDelete` |
+| Work Graph | `graph:get`, `graph:query`, `graph:nodeDetail`, `graph:export`, `graph:save`, `graph:findByRef`, `graph:prune`, `graph:clear`, `graph:exportSubgraph`, `graph:runStats`, `graph:saveBatch` |
+| Runtime telemetry | `runtime:getSnapshot`, `runtime:getHistory`, `runtime:setWatching`, `runtime:export`, `runtime:save`, `runtime:clearHistory` |
 | Voice     | `voice:getState`, `voice:start`, `voice:stop`, `voice:cancel`, `voice:stopSpeaking`, `voice:speak`, `voice:models:list`, `voice:models:download`, `voice:models:pause`, `voice:models:resume`, `voice:models:cancel`, `voice:models:remove`, `voice:models:verify`, `voice:models:reveal` |
 
 There is also one fire-and-forget renderer -> main channel (`IpcSends`, via
@@ -43,6 +45,7 @@ There is also one fire-and-forget renderer -> main channel (`IpcSends`, via
 | `command:invoke` | A native menu / tray item asks the renderer to run a command id. |
 | `workspace:changed` | The active workspace changed. |
 | `workspaces:updated` | The set of registered workspaces changed. |
+| `runtime:changed` | A coalesced Runtime Telemetry snapshot for one session, or a reset. |
 | `sessions:updated` | The set of sessions changed. |
 | `session:active-changed` | The active session changed. |
 | `agent:state-changed` | Agent runtime state changed (status / install / request). |

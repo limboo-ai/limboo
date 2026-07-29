@@ -68,6 +68,11 @@ import type {
   WorkGraphRef,
   WorkGraphSnapshot,
   GraphExportFormat,
+  GraphRunStat,
+  RuntimePush,
+  RuntimeSnapshot,
+  RuntimeUsageHistory,
+  RuntimeExportFormat,
   SavedSearch,
   SearchFilter,
   ServiceInfo,
@@ -690,8 +695,10 @@ const graphApi = {
     sessionId: string,
     format: GraphExportFormat | 'svg' | 'png',
     content?: string,
+    /** Scope anchor: write this node's subgraph instead of the whole session. */
+    scopeNodeId?: string,
   ): Promise<{ saved: boolean; path?: string }> =>
-    ipcRenderer.invoke(IpcChannels.graphSave, sessionId, format, content),
+    ipcRenderer.invoke(IpcChannels.graphSave, sessionId, format, content, scopeNodeId),
   /** Resolve an entity (commit, message, terminal, memory…) to its node id. */
   findByRef: (sessionId: string, ref: WorkGraphRef): Promise<string | null> =>
     ipcRenderer.invoke(IpcChannels.graphFindByRef, sessionId, ref),
@@ -704,6 +711,62 @@ const graphApi = {
   /** Incremental deltas (appended nodes/edges) or a reset signal. */
   onChanged: (cb: (push: WorkGraphPush) => void): (() => void) =>
     subscribe<WorkGraphPush>(IpcEvents.graphChanged, cb),
+  /** Export only the selected node's bounded subgraph. */
+  exportSubgraph: (
+    sessionId: string,
+    nodeId: string,
+    format: GraphExportFormat,
+  ): Promise<string> =>
+    ipcRenderer.invoke(IpcChannels.graphExportSubgraph, sessionId, nodeId, format),
+  /** Per-run statistics, joined to the Runtime Telemetry rollups by run id. */
+  runStats: (sessionId: string): Promise<GraphRunStat[]> =>
+    ipcRenderer.invoke(IpcChannels.graphRunStats, sessionId),
+  /**
+   * Write one file per session into a directory the USER picks. Main owns the
+   * directory the same way it owns the path in `save`.
+   */
+  saveBatch: (
+    sessionIds: string[],
+    format: GraphExportFormat,
+  ): Promise<{ saved: number; dir?: string }> =>
+    ipcRenderer.invoke(IpcChannels.graphSaveBatch, sessionIds, format),
+};
+
+/**
+ * Runtime Telemetry — the provider-neutral runtime metrics service.
+ *
+ * Read + maintenance only. Every metric is an optional capability the running
+ * adapter reports; the renderer reads `snapshot.capabilities` and never the
+ * provider id, so a section hides itself when the provider cannot measure it.
+ */
+const runtimeApi = {
+  /** The current normalized snapshot, or null when telemetry is disabled. */
+  getSnapshot: (sessionId: string): Promise<RuntimeSnapshot | null> =>
+    ipcRenderer.invoke(IpcChannels.runtimeGetSnapshot, sessionId),
+  /** Rolling-window trend points. `disabled` when persistence is off. */
+  getHistory: (sessionId: string): Promise<RuntimeUsageHistory[]> =>
+    ipcRenderer.invoke(IpcChannels.runtimeGetHistory, sessionId),
+  /**
+   * Declare whether this window shows the inspector. With nothing watching,
+   * main keeps ingesting (history stays complete) but pushes only at run
+   * boundaries — which is what makes the live animation free when it is closed.
+   */
+  setWatching: (watching: boolean): Promise<void> =>
+    ipcRenderer.invoke(IpcChannels.runtimeSetWatching, watching),
+  /** Serialize telemetry to a string, for the clipboard. Size-capped in main. */
+  export: (sessionId: string, format: RuntimeExportFormat): Promise<string> =>
+    ipcRenderer.invoke(IpcChannels.runtimeExport, sessionId, format),
+  /** Write an export to a file the USER picks (main owns the path). */
+  save: (
+    sessionId: string,
+    format: RuntimeExportFormat,
+  ): Promise<{ saved: boolean; path?: string }> =>
+    ipcRenderer.invoke(IpcChannels.runtimeSave, sessionId, format),
+  /** Erase every persisted telemetry row. */
+  clearHistory: (): Promise<void> => ipcRenderer.invoke(IpcChannels.runtimeClearHistory),
+  /** Coalesced snapshots for one session, or a reset signal. */
+  onChanged: (cb: (push: RuntimePush) => void): (() => void) =>
+    subscribe<RuntimePush>(IpcEvents.runtimeChanged, cb),
 };
 
 const hooksApi = {
@@ -843,6 +906,7 @@ const limbooApi = {
   attachment: attachmentApi,
   mcp: mcpApi,
   graph: graphApi,
+  runtime: runtimeApi,
 };
 
 contextBridge.exposeInMainWorld('limboo', limbooApi);

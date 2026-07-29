@@ -33,6 +33,7 @@ import { useAttachmentStore } from '@/renderer/stores/useAttachmentStore';
 import { useResumeStore } from '@/renderer/stores/useResumeStore';
 import { useHookStore } from '@/renderer/stores/useHookStore';
 import { useGraphStore } from '@/renderer/stores/useGraphStore';
+import { useRuntimeStore } from '@/renderer/stores/useRuntimeStore';
 
 export function App() {
   useKeyboardShortcuts();
@@ -83,6 +84,8 @@ export function App() {
     useHookStore.getState().hydrate();
     // Subscribe to Work Graph deltas + follow the selected session.
     useGraphStore.getState().hydrate();
+    // Subscribe to Runtime Telemetry snapshots (drives the ring + inspector).
+    useRuntimeStore.getState().hydrate();
   }, []);
 
   return (

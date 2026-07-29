@@ -24,6 +24,139 @@ import type { ReleaseIndexEntry, ReleaseManifestEntry } from './release';
 /** Newest first. */
 export const RELEASE_MANIFESTS: ReleaseManifestEntry[] = [
   {
+    "version": "1.15.0",
+    "date": "2026-07-29",
+    "channel": "stable",
+    "codename": null,
+    "gitTag": "v1.15.0",
+    "commit": null,
+    "buildNumber": null,
+    "summary": "You can now see what a long session is actually costing you. A small ring beside\nthe composer status fills as the conversation consumes the model's context\nwindow, and hovering it opens a live breakdown of where that context went —\nwhich is the difference between noticing you are running out and finding out\nwhen the agent starts forgetting.",
+    "sections": [
+      {
+        "category": "added",
+        "title": "Added",
+        "items": [
+          {
+            "lead": "A live runtime ring beside the agent status",
+            "text": "It fills as the context\n  window fills, turns amber and then red as it runs low, and breathes while the\n  agent is working. It is there from the moment a session opens — before\n  anything has been measured it shows as unmeasured rather than as empty, which\n  are different things."
+          },
+          {
+            "lead": "Hover it for the full picture",
+            "text": "A floating panel shows how much of the\n  context window is used and left, how much is reserved for the reply, roughly\n  how many more exchanges fit before the conversation has to be compressed, and\n  when compression last happened."
+          },
+          {
+            "lead": "See what filled the context",
+            "text": "A single bar splits the window into who took\n  what: your conversation, results from tools, answers from connected servers,\n  recalled memories, retrieved project context, the repository delta, and staged\n  attachments. Hovering any band names the part of Limboo responsible for it."
+          },
+          {
+            "lead": "Nothing is guessed at",
+            "text": "The total, the window size and the reservation are\n  measured by the provider. The split beneath them is Limboo counting what it\n  composed, and is marked with a `~` everywhere it appears. When those estimates\n  would exceed what was actually measured — after a compression, or on a resumed\n  conversation — the split is dropped rather than quietly rescaled to fit."
+          },
+          {
+            "lead": "Rate limits before they stop you",
+            "text": "Rolling usage windows now come from the\n  provider's own updates as they arrive, with how much is consumed, when it\n  resets, and whether you are drawing on overage. Until now Limboo learned about\n  a limit by reading the error after you had already hit it."
+          },
+          {
+            "lead": "Usage over time",
+            "text": "Long-running windows keep a local trend so you can see a\n  week's consumption building rather than only today's number."
+          },
+          {
+            "lead": "Execution detail on demand",
+            "text": "Active model, mode, time to first token,\n  generation speed, run duration, cache reads, an estimated cost, retries, the\n  worktree, connected servers, index status and attachment count."
+          },
+          {
+            "lead": "It says what a provider cannot tell it",
+            "text": "Cursor's command-line interface\n  reports no token counts and no quotas, so those sections say exactly that,\n  naming the limitation instead of showing a zero that reads as \"nothing used\".\n  Every metric is something the running agent declares it can measure, so a\n  future agent lights up whatever it supports with no change to the interface."
+          },
+          {
+            "lead": "Run costs in the work graph",
+            "text": "A new Stats tab lists each run with its shape\n  and its cost side by side — nodes, tools, errors, duration, tokens, peak\n  context and estimated spend."
+          },
+          {
+            "lead": "More ways to export a work graph",
+            "text": "NDJSON, GraphML and PlantUML join the\n  existing formats, you can export just the selected part of a graph rather than\n  the whole session, optionally include run costs, and export every session at\n  once into a folder you pick."
+          },
+          {
+            "lead": "Settings under Agent › Runtime Indicators",
+            "text": "Turn the whole thing off, or\n  tune the ring's size, thickness, position and what it measures; choose\n  percentages or token counts; reorder or collapse panel sections; set the\n  thresholds that turn it amber, red, or raise a notification; and control how\n  long usage history is kept."
+          }
+        ],
+        "markdown": "- **A live runtime ring beside the agent status.** It fills as the context\n  window fills, turns amber and then red as it runs low, and breathes while the\n  agent is working. It is there from the moment a session opens — before\n  anything has been measured it shows as unmeasured rather than as empty, which\n  are different things.\n- **Hover it for the full picture.** A floating panel shows how much of the\n  context window is used and left, how much is reserved for the reply, roughly\n  how many more exchanges fit before the conversation has to be compressed, and\n  when compression last happened.\n- **See what filled the context.** A single bar splits the window into who took\n  what: your conversation, results from tools, answers from connected servers,\n  recalled memories, retrieved project context, the repository delta, and staged\n  attachments. Hovering any band names the part of Limboo responsible for it.\n- **Nothing is guessed at.** The total, the window size and the reservation are\n  measured by the provider. The split beneath them is Limboo counting what it\n  composed, and is marked with a `~` everywhere it appears. When those estimates\n  would exceed what was actually measured — after a compression, or on a resumed\n  conversation — the split is dropped rather than quietly rescaled to fit.\n- **Rate limits before they stop you.** Rolling usage windows now come from the\n  provider's own updates as they arrive, with how much is consumed, when it\n  resets, and whether you are drawing on overage. Until now Limboo learned about\n  a limit by reading the error after you had already hit it.\n- **Usage over time.** Long-running windows keep a local trend so you can see a\n  week's consumption building rather than only today's number.\n- **Execution detail on demand.** Active model, mode, time to first token,\n  generation speed, run duration, cache reads, an estimated cost, retries, the\n  worktree, connected servers, index status and attachment count.\n- **It says what a provider cannot tell it.** Cursor's command-line interface\n  reports no token counts and no quotas, so those sections say exactly that,\n  naming the limitation instead of showing a zero that reads as \"nothing used\".\n  Every metric is something the running agent declares it can measure, so a\n  future agent lights up whatever it supports with no change to the interface.\n- **Run costs in the work graph.** A new Stats tab lists each run with its shape\n  and its cost side by side — nodes, tools, errors, duration, tokens, peak\n  context and estimated spend.\n- **More ways to export a work graph.** NDJSON, GraphML and PlantUML join the\n  existing formats, you can export just the selected part of a graph rather than\n  the whole session, optionally include run costs, and export every session at\n  once into a folder you pick.\n- **Settings under Agent › Runtime Indicators.** Turn the whole thing off, or\n  tune the ring's size, thickness, position and what it measures; choose\n  percentages or token counts; reorder or collapse panel sections; set the\n  thresholds that turn it amber, red, or raise a notification; and control how\n  long usage history is kept."
+      },
+      {
+        "category": "security",
+        "title": "Security",
+        "items": [
+          {
+            "lead": "Nothing that identifies your machine leaves the main process",
+            "text": "Worktree\n  paths are reduced to a name rather than a full path to your home directory,\n  the provider's conversation id is shown truncated with no way to reveal the\n  rest, and the one place a raw error message is surfaced has secrets and paths\n  stripped from it first."
+          },
+          {
+            "lead": "Stored usage cannot contain your work",
+            "text": "The tables behind the history have\n  no column that can hold a prompt, a message, a file path or a tool input, so\n  an export cannot leak them — and exports are assembled field by field rather\n  than dumped wholesale. Turning off \"Store usage history\" genuinely stops all\n  writing, for deployments that forbid keeping it."
+          },
+          {
+            "lead": "No new network access",
+            "text": "Every number comes from the stream Limboo already\n  receives to display the conversation. Nothing is polled and nothing is sent."
+          }
+        ],
+        "markdown": "- **Nothing that identifies your machine leaves the main process.** Worktree\n  paths are reduced to a name rather than a full path to your home directory,\n  the provider's conversation id is shown truncated with no way to reveal the\n  rest, and the one place a raw error message is surfaced has secrets and paths\n  stripped from it first.\n- **Stored usage cannot contain your work.** The tables behind the history have\n  no column that can hold a prompt, a message, a file path or a tool input, so\n  an export cannot leak them — and exports are assembled field by field rather\n  than dumped wholesale. Turning off \"Store usage history\" genuinely stops all\n  writing, for deployments that forbid keeping it.\n- **No new network access.** Every number comes from the stream Limboo already\n  receives to display the conversation. Nothing is polled and nothing is sent."
+      },
+      {
+        "category": "fixed",
+        "title": "Fixed",
+        "items": [
+          {
+            "lead": "The work graph panel crashed the drawer",
+            "text": "Opening it threw immediately and\n  took the surrounding panel down with it."
+          },
+          {
+            "lead": "Threshold sliders were unusable",
+            "text": "Ring size, thickness and every warning\n  threshold were squeezed into a sliver at the edge of their row, so touching\n  one snapped it to its lowest value. They now use the same full-width slider as\n  the rest of settings."
+          },
+          {
+            "lead": "The runtime panel could be cut off",
+            "text": "It was allowed to grow taller than the\n  workspace it opens inside, which clipped the bottom of it on shorter windows.\n  It is now capped, with only the context section open by default."
+          },
+          {
+            "lead": "Injected memory and context counts were wrong",
+            "text": "The panel reported the\n  configured maximum rather than how many were actually recalled."
+          },
+          {
+            "lead": "Runtime updates could keep running after you closed the window",
+            "text": "Closing or\n  reloading a window while the panel was open left Limboo updating at full rate\n  for a window that no longer existed."
+          },
+          {
+            "lead": "Negative values were mangled in exported spreadsheets",
+            "text": "A guard against\n  spreadsheet formula injection was also catching negative numbers and turning\n  them into text."
+          }
+        ],
+        "markdown": "- **The work graph panel crashed the drawer.** Opening it threw immediately and\n  took the surrounding panel down with it.\n- **Threshold sliders were unusable.** Ring size, thickness and every warning\n  threshold were squeezed into a sliver at the edge of their row, so touching\n  one snapped it to its lowest value. They now use the same full-width slider as\n  the rest of settings.\n- **The runtime panel could be cut off.** It was allowed to grow taller than the\n  workspace it opens inside, which clipped the bottom of it on shorter windows.\n  It is now capped, with only the context section open by default.\n- **Injected memory and context counts were wrong.** The panel reported the\n  configured maximum rather than how many were actually recalled.\n- **Runtime updates could keep running after you closed the window.** Closing or\n  reloading a window while the panel was open left Limboo updating at full rate\n  for a window that no longer existed.\n- **Negative values were mangled in exported spreadsheets.** A guard against\n  spreadsheet formula injection was also catching negative numbers and turning\n  them into text."
+      }
+    ],
+    "contributors": [],
+    "pullRequests": [],
+    "mergedBranches": [],
+    "assets": [],
+    "signing": [],
+    "stats": {
+      "commits": null,
+      "filesChanged": null,
+      "additions": null,
+      "deletions": null
+    },
+    "links": {
+      "release": "https://github.com/limboo-ai/limboo/releases/tag/v1.15.0",
+      "compare": "https://github.com/limboo-ai/limboo/compare/v1.14.0...v1.15.0",
+      "tag": "https://github.com/limboo-ai/limboo/releases/tag/v1.15.0",
+      "milestone": null
+    },
+    "checksumManifest": "SHA256SUMS",
+    "provenanceRepo": "limboo-ai/limboo",
+    "markdown": "You can now see what a long session is actually costing you. A small ring beside\nthe composer status fills as the conversation consumes the model's context\nwindow, and hovering it opens a live breakdown of where that context went —\nwhich is the difference between noticing you are running out and finding out\nwhen the agent starts forgetting.\n\n### Added\n\n- **A live runtime ring beside the agent status.** It fills as the context\n  window fills, turns amber and then red as it runs low, and breathes while the\n  agent is working. It is there from the moment a session opens — before\n  anything has been measured it shows as unmeasured rather than as empty, which\n  are different things.\n- **Hover it for the full picture.** A floating panel shows how much of the\n  context window is used and left, how much is reserved for the reply, roughly\n  how many more exchanges fit before the conversation has to be compressed, and\n  when compression last happened.\n- **See what filled the context.** A single bar splits the window into who took\n  what: your conversation, results from tools, answers from connected servers,\n  recalled memories, retrieved project context, the repository delta, and staged\n  attachments. Hovering any band names the part of Limboo responsible for it.\n- **Nothing is guessed at.** The total, the window size and the reservation are\n  measured by the provider. The split beneath them is Limboo counting what it\n  composed, and is marked with a `~` everywhere it appears. When those estimates\n  would exceed what was actually measured — after a compression, or on a resumed\n  conversation — the split is dropped rather than quietly rescaled to fit.\n- **Rate limits before they stop you.** Rolling usage windows now come from the\n  provider's own updates as they arrive, with how much is consumed, when it\n  resets, and whether you are drawing on overage. Until now Limboo learned about\n  a limit by reading the error after you had already hit it.\n- **Usage over time.** Long-running windows keep a local trend so you can see a\n  week's consumption building rather than only today's number.\n- **Execution detail on demand.** Active model, mode, time to first token,\n  generation speed, run duration, cache reads, an estimated cost, retries, the\n  worktree, connected servers, index status and attachment count.\n- **It says what a provider cannot tell it.** Cursor's command-line interface\n  reports no token counts and no quotas, so those sections say exactly that,\n  naming the limitation instead of showing a zero that reads as \"nothing used\".\n  Every metric is something the running agent declares it can measure, so a\n  future agent lights up whatever it supports with no change to the interface.\n- **Run costs in the work graph.** A new Stats tab lists each run with its shape\n  and its cost side by side — nodes, tools, errors, duration, tokens, peak\n  context and estimated spend.\n- **More ways to export a work graph.** NDJSON, GraphML and PlantUML join the\n  existing formats, you can export just the selected part of a graph rather than\n  the whole session, optionally include run costs, and export every session at\n  once into a folder you pick.\n- **Settings under Agent › Runtime Indicators.** Turn the whole thing off, or\n  tune the ring's size, thickness, position and what it measures; choose\n  percentages or token counts; reorder or collapse panel sections; set the\n  thresholds that turn it amber, red, or raise a notification; and control how\n  long usage history is kept.\n\n### Security\n\n- **Nothing that identifies your machine leaves the main process.** Worktree\n  paths are reduced to a name rather than a full path to your home directory,\n  the provider's conversation id is shown truncated with no way to reveal the\n  rest, and the one place a raw error message is surfaced has secrets and paths\n  stripped from it first.\n- **Stored usage cannot contain your work.** The tables behind the history have\n  no column that can hold a prompt, a message, a file path or a tool input, so\n  an export cannot leak them — and exports are assembled field by field rather\n  than dumped wholesale. Turning off \"Store usage history\" genuinely stops all\n  writing, for deployments that forbid keeping it.\n- **No new network access.** Every number comes from the stream Limboo already\n  receives to display the conversation. Nothing is polled and nothing is sent.\n\n### Fixed\n\n- **The work graph panel crashed the drawer.** Opening it threw immediately and\n  took the surrounding panel down with it.\n- **Threshold sliders were unusable.** Ring size, thickness and every warning\n  threshold were squeezed into a sliver at the edge of their row, so touching\n  one snapped it to its lowest value. They now use the same full-width slider as\n  the rest of settings.\n- **The runtime panel could be cut off.** It was allowed to grow taller than the\n  workspace it opens inside, which clipped the bottom of it on shorter windows.\n  It is now capped, with only the context section open by default.\n- **Injected memory and context counts were wrong.** The panel reported the\n  configured maximum rather than how many were actually recalled.\n- **Runtime updates could keep running after you closed the window.** Closing or\n  reloading a window while the panel was open left Limboo updating at full rate\n  for a window that no longer existed.\n- **Negative values were mangled in exported spreadsheets.** A guard against\n  spreadsheet formula injection was also catching negative numbers and turning\n  them into text."
+  },
+  {
     "version": "1.14.0",
     "date": "2026-07-29",
     "channel": "stable",
@@ -372,77 +505,18 @@ export const RELEASE_MANIFESTS: ReleaseManifestEntry[] = [
     "checksumManifest": "SHA256SUMS",
     "provenanceRepo": "limboo-ai/limboo",
     "markdown": "The conversation stops being something you only read. Every message now carries\nits own actions on hover, and any turn can be rolled back — the workspace returns\nto how it was before the agent touched it, including deleting files it created,\nwith the rollback recorded rather than hidden. Plan Mode also stops saying the\nsame thing three times.\n\n### Added\n\n- **Actions on every message.** Hovering a message (or reaching it with the\n  keyboard) reveals a row of actions: copy, copy as Markdown, quote it into the\n  composer, reference it in your next prompt, select its text, view it raw,\n  export it, open it as a new session, pin it to memory, regenerate it, or revert\n  to it. Copying an answer that is still being written captures everything that\n  has arrived so far rather than making you wait.\n- **Revert a turn.** Reverting restores the workspace to the checkpoint taken\n  before that turn and drops the conversation after it, so the agent's memory and\n  your files agree again. You are shown exactly what will change first — files\n  restored, files removed, messages dropped — and a safety checkpoint of the\n  current state is taken before anything moves. Only the session's own worktree\n  is touched, so work running in parallel is unaffected.\n- **Live planning progress in the conversation.** While a plan is being written,\n  the stream now names what the agent is doing — reading the repository,\n  searching, indexing symbols, decomposing the requirements — with each finished\n  step settling into a checked line.\n\n### Changed\n\n- **Plan Mode reads once, not three times.** The large plan card is gone from the\n  conversation; the stream carries a single line and the approval buttons, and\n  the Task panel holds the plan itself. That panel is now just two sections —\n  Implementation plan and Live progress — instead of a plan, a duplicate outline\n  of the plan, and a checklist of the same tasks. Live progress is always shown\n  while work is running, rather than appearing only when the outline failed to\n  match.\n- **One in-progress indicator everywhere.** The planning placeholder, the plan\n  header, and each running task now use the same loader the agent uses while it\n  writes, instead of three different spinners and a large completion checkmark.\n- **Restoring a checkpoint now truly undoes the work.** Files the agent created\n  after the checkpoint used to survive a restore and be left behind; they are\n  removed now, and the restore reports how many files it restored and removed.\n  Untracked files that already existed are never touched.\n\n### Fixed\n\n- **Checkpoint comparisons could not see new files.** Both the \"what changed\n  since this checkpoint\" view and the restore itself compared against staged\n  changes only, so a file the agent created and never staged was invisible —\n  the diff under-reported it and a restore left it behind. Both now compare\n  against the full working state, including files that were never staged.\n- **The selected session no longer has a coloured bar.** It reads by its\n  background and a bolder title, matching the tabs elsewhere in the app.\n\n### Removed\n\n- Four Task-panel settings that no longer controlled anything visible (\"stream\n  tasks as they appear\", \"auto-expand new tasks\", \"collapse completed tasks\", and\n  \"show task durations\")."
-  },
-  {
-    "version": "1.12.0",
-    "date": "2026-07-27",
-    "channel": "stable",
-    "codename": null,
-    "gitTag": "v1.12.0",
-    "commit": null,
-    "buildNumber": null,
-    "summary": "Sessions run in a git worktree, and Limboo puts that worktree inside its own\napplication data folder. A safety rule meant to keep the agent out of Limboo's\ndatabase read the whole folder as off limits — so in a worktree session the\nagent was refused the moment it tried to write its first file, in what was\nactually its own working directory. Approving a plan could fail for a reason\nthat was never true, and leave the session unable to try again. The plan card\nalso stops appearing before there is a plan to read.",
-    "sections": [
-      {
-        "category": "fixed",
-        "title": "Fixed",
-        "items": [
-          {
-            "lead": "The agent could not write anything in a worktree session",
-            "text": "Every file it\n  tried to create was refused as \"Limboo's own app data\", because sessions check\n  out into a folder that lives inside Limboo's data directory. The rule now\n  covers only what it was written to protect — the database, your settings, and\n  the encrypted secret store — and the rest of that directory, including the\n  worktree the agent works in, is ordinary ground. Cursor runs were blocked by a\n  second copy of the same rule and are fixed with it."
-          },
-          {
-            "lead": "Commands were refused for mentioning a filename",
-            "text": "Anything containing the\n  text `limboo.db` was blocked wherever it ran, so a plain search of your own\n  source could be denied. Only the real, full path to the database is protected\n  now."
-          },
-          {
-            "lead": "Approving a plan could fail with \"the agent is already working on this\n  session\"",
-            "text": "The plan appears while the run that wrote it is still finishing, so\n  a quick click arrived a fraction of a second early and was turned away.\n  Approving now waits for that run to finish instead of refusing, and the buttons\n  are held until it has."
-          },
-          {
-            "lead": "A failed approval left the plan unusable",
-            "text": "The plan was marked as being\n  carried out before the work had actually started, so when it did not start,\n  the approval buttons never came back and the session could not be recovered.\n  The plan is restored when the run fails to begin."
-          }
-        ],
-        "markdown": "- **The agent could not write anything in a worktree session.** Every file it\n  tried to create was refused as \"Limboo's own app data\", because sessions check\n  out into a folder that lives inside Limboo's data directory. The rule now\n  covers only what it was written to protect — the database, your settings, and\n  the encrypted secret store — and the rest of that directory, including the\n  worktree the agent works in, is ordinary ground. Cursor runs were blocked by a\n  second copy of the same rule and are fixed with it.\n- **Commands were refused for mentioning a filename.** Anything containing the\n  text `limboo.db` was blocked wherever it ran, so a plain search of your own\n  source could be denied. Only the real, full path to the database is protected\n  now.\n- **Approving a plan could fail with \"the agent is already working on this\n  session\".** The plan appears while the run that wrote it is still finishing, so\n  a quick click arrived a fraction of a second early and was turned away.\n  Approving now waits for that run to finish instead of refusing, and the buttons\n  are held until it has.\n- **A failed approval left the plan unusable.** The plan was marked as being\n  carried out before the work had actually started, so when it did not start,\n  the approval buttons never came back and the session could not be recovered.\n  The plan is restored when the run fails to begin."
-      },
-      {
-        "category": "changed",
-        "title": "Changed",
-        "items": [
-          {
-            "lead": "The plan card waits for the plan",
-            "text": "It used to appear as soon as planning\n  started, showing a title and an \"Analyzing the repository\" line above the\n  composer while the agent's actual reasoning streamed past it further up. It now\n  appears with the proposal it is asking you to approve. Progress while planning\n  reads where the rest of the run does — in the conversation."
-          }
-        ],
-        "markdown": "- **The plan card waits for the plan.** It used to appear as soon as planning\n  started, showing a title and an \"Analyzing the repository\" line above the\n  composer while the agent's actual reasoning streamed past it further up. It now\n  appears with the proposal it is asking you to approve. Progress while planning\n  reads where the rest of the run does — in the conversation."
-      }
-    ],
-    "contributors": [],
-    "pullRequests": [],
-    "mergedBranches": [],
-    "assets": [],
-    "signing": [],
-    "stats": {
-      "commits": null,
-      "filesChanged": null,
-      "additions": null,
-      "deletions": null
-    },
-    "links": {
-      "release": "https://github.com/limboo-ai/limboo/releases/tag/v1.12.0",
-      "compare": "https://github.com/limboo-ai/limboo/compare/v1.11.0...v1.12.0",
-      "tag": "https://github.com/limboo-ai/limboo/releases/tag/v1.12.0",
-      "milestone": null
-    },
-    "checksumManifest": "SHA256SUMS",
-    "provenanceRepo": "limboo-ai/limboo",
-    "markdown": "Sessions run in a git worktree, and Limboo puts that worktree inside its own\napplication data folder. A safety rule meant to keep the agent out of Limboo's\ndatabase read the whole folder as off limits — so in a worktree session the\nagent was refused the moment it tried to write its first file, in what was\nactually its own working directory. Approving a plan could fail for a reason\nthat was never true, and leave the session unable to try again. The plan card\nalso stops appearing before there is a plan to read.\n\n### Fixed\n\n- **The agent could not write anything in a worktree session.** Every file it\n  tried to create was refused as \"Limboo's own app data\", because sessions check\n  out into a folder that lives inside Limboo's data directory. The rule now\n  covers only what it was written to protect — the database, your settings, and\n  the encrypted secret store — and the rest of that directory, including the\n  worktree the agent works in, is ordinary ground. Cursor runs were blocked by a\n  second copy of the same rule and are fixed with it.\n- **Commands were refused for mentioning a filename.** Anything containing the\n  text `limboo.db` was blocked wherever it ran, so a plain search of your own\n  source could be denied. Only the real, full path to the database is protected\n  now.\n- **Approving a plan could fail with \"the agent is already working on this\n  session\".** The plan appears while the run that wrote it is still finishing, so\n  a quick click arrived a fraction of a second early and was turned away.\n  Approving now waits for that run to finish instead of refusing, and the buttons\n  are held until it has.\n- **A failed approval left the plan unusable.** The plan was marked as being\n  carried out before the work had actually started, so when it did not start,\n  the approval buttons never came back and the session could not be recovered.\n  The plan is restored when the run fails to begin.\n\n### Changed\n\n- **The plan card waits for the plan.** It used to appear as soon as planning\n  started, showing a title and an \"Analyzing the repository\" line above the\n  composer while the agent's actual reasoning streamed past it further up. It now\n  appears with the proposal it is asking you to approve. Progress while planning\n  reads where the rest of the run does — in the conversation."
   }
 ];
 
 /** Every released version, newest first. */
 export const RELEASE_INDEX: ReleaseIndexEntry[] = [
+  {
+    "version": "1.15.0",
+    "date": "2026-07-29",
+    "channel": "stable",
+    "summary": "You can now see what a long session is actually costing you. A small ring beside\nthe composer status fills as the conversation consumes the model's context\nwindow, and hovering it opens a live breakdown of where that context went —\nwhich is the difference between noticing you are running out and finding out\nwhen the agent starts forgetting.",
+    "detailed": true
+  },
   {
     "version": "1.14.0",
     "date": "2026-07-29",
@@ -476,7 +550,7 @@ export const RELEASE_INDEX: ReleaseIndexEntry[] = [
     "date": "2026-07-27",
     "channel": "stable",
     "summary": "Sessions run in a git worktree, and Limboo puts that worktree inside its own\napplication data folder. A safety rule meant to keep the agent out of Limboo's\ndatabase read the whole folder as off limits — so in a worktree session the\nagent was refused the moment it tried to write its first file, in what was\nactually its own working directory. Approving a plan could fail for a reason\nthat was never true, and leave the session unable to try again. The plan card\nalso stops appearing before there is a plan to read.",
-    "detailed": true
+    "detailed": false
   },
   {
     "version": "1.11.0",

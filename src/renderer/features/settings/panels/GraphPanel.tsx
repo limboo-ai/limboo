@@ -21,6 +21,7 @@ import { GRAPH_LIMITS, clamp } from '@shared/constants';
 import type { GraphExportTarget } from '@shared/types';
 import { useSettingsStore } from '@/renderer/stores/useSettingsStore';
 import { useGraphStore } from '@/renderer/stores/useGraphStore';
+import { useSessionStore } from '@/renderer/stores/useSessionStore';
 import { useUIStore } from '@/renderer/stores/useUIStore';
 import { ActionButton, Field, Section, SegmentedControl, Select, Toggle } from '../controls';
 
@@ -51,6 +52,8 @@ export function GraphPanel() {
   const addToast = useUIStore((s) => s.addToast);
   const pruneGraph = useGraphStore((s) => s.prune);
   const clearGraph = useGraphStore((s) => s.clear);
+  const saveBatch = useGraphStore((s) => s.saveBatch);
+  const sessions = useSessionStore((s) => s.sessions);
 
   const set = <K extends keyof typeof graph>(key: K, value: (typeof graph)[K]): void =>
     void update({ graph: { [key]: value } });
@@ -401,21 +404,81 @@ export function GraphPanel() {
             <Field
               id="graphExportFormat"
               label="Export as"
-              hint="Format used by the panel's copy and save buttons. JSON, CSV and Markdown are data; Mermaid and DOT render as diagrams elsewhere; HTML is a self-contained report; SVG and PNG capture the picture."
+              hint="Format used by the panel's copy and save buttons. JSON, NDJSON, CSV and Markdown are data; Mermaid, DOT and PlantUML render as diagrams elsewhere; GraphML opens in Gephi, yEd and Cytoscape; HTML is a self-contained report; SVG and PNG capture the picture."
             >
               <Select<GraphExportTarget>
                 value={graph.exportFormat}
                 options={[
                   { value: 'json', label: 'JSON' },
+                  { value: 'ndjson', label: 'NDJSON (line-delimited)' },
                   { value: 'md', label: 'Markdown' },
                   { value: 'mermaid', label: 'Mermaid' },
                   { value: 'dot', label: 'Graphviz DOT' },
+                  { value: 'puml', label: 'PlantUML' },
+                  { value: 'graphml', label: 'GraphML' },
                   { value: 'csv', label: 'CSV' },
                   { value: 'html', label: 'HTML report' },
                   { value: 'svg', label: 'SVG' },
                   { value: 'png', label: 'PNG' },
                 ]}
                 onChange={(v) => set('exportFormat', v)}
+              />
+            </Field>
+            <Field
+              id="graphExportScope"
+              label="Export scope"
+              hint="Whole session, or just the selected node's subgraph — the same bounded traversal the panel uses to focus a node."
+            >
+              <SegmentedControl
+                value={graph.exportScope}
+                options={[
+                  { value: 'session', label: 'Session' },
+                  { value: 'selection', label: 'Selection' },
+                ]}
+                onChange={(v) => set('exportScope', v)}
+              />
+            </Field>
+            <Field
+              id="graphExportTelemetry"
+              label="Include run telemetry"
+              hint="Adds each run's duration, tokens, peak context and estimated cost to the export. Applies to JSON, NDJSON, Markdown, CSV and HTML — a Mermaid, DOT or PlantUML diagram has no column to put a number in."
+            >
+              <Toggle
+                checked={graph.exportTelemetry}
+                onChange={(v) => set('exportTelemetry', v)}
+              />
+            </Field>
+            <Field
+              id="graphBatchExport"
+              label="Export every session"
+              hint="Writes one file per session into a folder you pick, in the format above. Sessions with no recorded graph are skipped."
+            >
+              <ActionButton
+                label="Export all…"
+                onClick={() => {
+                  // Image formats are a picture of a layout, and there is no
+                  // layout for a session that is not on screen — so a batch
+                  // export offers only the data formats.
+                  const format = graph.exportFormat;
+                  if (format === 'svg' || format === 'png') {
+                    addToast({
+                      title: 'Pick a data format',
+                      description:
+                        'SVG and PNG capture the on-screen canvas, so they cannot be exported in bulk.',
+                      tone: 'warning',
+                    });
+                    return;
+                  }
+                  const ids = sessions.map((s) => s.id);
+                  void saveBatch(ids, format).then((saved) => {
+                    if (saved > 0) {
+                      addToast({
+                        title: `Exported ${saved} session${saved === 1 ? '' : 's'}`,
+                        tone: 'success',
+                      });
+                    }
+                  });
+                }}
               />
             </Field>
             <Field

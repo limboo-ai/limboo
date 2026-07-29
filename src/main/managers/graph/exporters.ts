@@ -15,7 +15,16 @@ import type { WorkGraphEdge, WorkGraphNode } from '@shared/types';
 import { EDGE_VERB } from './vocabulary';
 
 /** Formats produced here. The renderer adds `svg` and `png` on top. */
-export type GraphDataFormat = 'json' | 'md' | 'mermaid' | 'dot' | 'csv' | 'html';
+export type GraphDataFormat =
+  | 'json'
+  | 'md'
+  | 'mermaid'
+  | 'dot'
+  | 'csv'
+  | 'html'
+  | 'ndjson'
+  | 'graphml'
+  | 'puml';
 
 /** File extension for a format — used to name the save dialog's default file. */
 export const FORMAT_EXTENSION: Record<GraphDataFormat | 'svg' | 'png', string> = {
@@ -25,6 +34,9 @@ export const FORMAT_EXTENSION: Record<GraphDataFormat | 'svg' | 'png', string> =
   dot: 'dot',
   csv: 'csv',
   html: 'html',
+  ndjson: 'ndjson',
+  graphml: 'graphml',
+  puml: 'puml',
   svg: 'svg',
   png: 'png',
 };
@@ -37,9 +49,42 @@ export const FORMAT_LABEL: Record<GraphDataFormat | 'svg' | 'png', string> = {
   dot: 'Graphviz DOT',
   csv: 'CSV',
   html: 'HTML document',
+  ndjson: 'NDJSON (line-delimited)',
+  graphml: 'GraphML (Gephi / yEd / Cytoscape)',
+  puml: 'PlantUML',
   svg: 'SVG image',
   png: 'PNG image',
 };
+
+/**
+ * Per-run telemetry, optionally joined into an export.
+ *
+ * Deliberately a narrow record rather than the telemetry types: the graph
+ * exporters must not depend on the telemetry subsystem, and the join is by
+ * `runId` alone — no telemetry text of any kind enters the graph.
+ */
+export interface RunTelemetry {
+  runId: string;
+  durationMs?: number;
+  totalTokens?: number;
+  costEstimateUsd?: number;
+  peakContextTokens?: number;
+}
+
+/**
+ * Formats that can carry telemetry columns.
+ *
+ * Mermaid, DOT and PlantUML are excluded on purpose: a diagram has nowhere to
+ * put a number without turning node labels into data dumps, which is exactly
+ * what makes a rendered graph unreadable.
+ */
+export const TELEMETRY_CAPABLE_FORMATS: readonly GraphDataFormat[] = [
+  'json',
+  'md',
+  'csv',
+  'html',
+  'ndjson',
+];
 
 /** Render one of the data formats. */
 export function exportGraph(
@@ -48,21 +93,33 @@ export function exportGraph(
   nodes: WorkGraphNode[],
   edges: WorkGraphEdge[],
   truncated: boolean,
+  telemetry?: RunTelemetry[],
 ): string {
+  const runs = telemetry && telemetry.length > 0 ? indexTelemetry(telemetry) : undefined;
   switch (format) {
     case 'md':
-      return exportMarkdown(sessionId, nodes, edges, truncated);
+      return exportMarkdown(sessionId, nodes, edges, truncated, runs);
     case 'mermaid':
       return exportMermaid(nodes, edges);
     case 'dot':
       return exportDot(sessionId, nodes, edges);
     case 'csv':
-      return exportCsv(nodes, edges);
+      return exportCsv(nodes, edges, runs);
     case 'html':
-      return exportHtml(sessionId, nodes, edges, truncated);
+      return exportHtml(sessionId, nodes, edges, truncated, runs);
+    case 'ndjson':
+      return exportNdjson(sessionId, nodes, edges, truncated, runs);
+    case 'graphml':
+      return exportGraphml(nodes, edges);
+    case 'puml':
+      return exportPuml(sessionId, nodes, edges);
     default:
-      return exportJson(sessionId, nodes, edges, truncated);
+      return exportJson(sessionId, nodes, edges, truncated, runs);
   }
+}
+
+function indexTelemetry(telemetry: RunTelemetry[]): Map<string, RunTelemetry> {
+  return new Map(telemetry.map((t) => [t.runId, t]));
 }
 
 /** Serialize the graph as JSON — the lossless, machine-readable form. */
@@ -71,6 +128,7 @@ export function exportJson(
   nodes: WorkGraphNode[],
   edges: WorkGraphEdge[],
   truncated = false,
+  runs?: Map<string, RunTelemetry>,
 ): string {
   return JSON.stringify(
     {
@@ -83,10 +141,123 @@ export function exportJson(
       edgeCount: edges.length,
       nodes,
       edges,
+      ...(runs ? { telemetry: [...runs.values()] } : {}),
     },
     null,
     2,
   );
+}
+
+/**
+ * One JSON object per line — the form you stream, `grep`, and feed to `jq`
+ * without loading the whole graph into memory. It exists because `json` is
+ * capped by `exportBytesMax`, so a long session's lossless export has to be
+ * something a tool can read incrementally.
+ */
+export function exportNdjson(
+  sessionId: string,
+  nodes: WorkGraphNode[],
+  edges: WorkGraphEdge[],
+  truncated = false,
+  runs?: Map<string, RunTelemetry>,
+): string {
+  const lines: string[] = [];
+  lines.push(
+    JSON.stringify({
+      type: 'meta',
+      format: 'limboo.workgraph.ndjson.v1',
+      sessionId,
+      exportedAt: Date.now(),
+      truncated,
+      nodeCount: nodes.length,
+      edgeCount: edges.length,
+    }),
+  );
+  for (const n of nodes) lines.push(JSON.stringify({ type: 'node', ...n }));
+  for (const e of edges) lines.push(JSON.stringify({ type: 'edge', ...e }));
+  if (runs) {
+    for (const t of runs.values()) lines.push(JSON.stringify({ type: 'telemetry', ...t }));
+  }
+  return `${lines.join('\n')}\n`;
+}
+
+/**
+ * GraphML — the interchange format Gephi, yEd and Cytoscape all read. Node and
+ * edge attributes are declared as typed `<key>` elements so those tools can
+ * filter and lay out on them rather than treating everything as a label.
+ */
+export function exportGraphml(nodes: WorkGraphNode[], edges: WorkGraphEdge[]): string {
+  const keys = [
+    '<key id="d_kind" for="node" attr.name="kind" attr.type="string"/>',
+    '<key id="d_status" for="node" attr.name="status" attr.type="string"/>',
+    '<key id="d_provider" for="node" attr.name="provider" attr.type="string"/>',
+    '<key id="d_title" for="node" attr.name="title" attr.type="string"/>',
+    '<key id="d_detail" for="node" attr.name="detail" attr.type="string"/>',
+    '<key id="d_run" for="node" attr.name="runId" attr.type="string"/>',
+    '<key id="d_started" for="node" attr.name="startedAt" attr.type="long"/>',
+    '<key id="e_kind" for="edge" attr.name="kind" attr.type="string"/>',
+    '<key id="e_derived" for="edge" attr.name="derived" attr.type="boolean"/>',
+  ];
+  const body: string[] = [];
+  for (const n of nodes) {
+    body.push(
+      `    <node id="${xmlAttr(n.id)}">`,
+      `      <data key="d_kind">${xmlText(n.kind)}</data>`,
+      `      <data key="d_status">${xmlText(n.status)}</data>`,
+      `      <data key="d_provider">${xmlText(n.provider)}</data>`,
+      `      <data key="d_title">${xmlText(n.title)}</data>`,
+      `      <data key="d_detail">${xmlText(n.detail ?? '')}</data>`,
+      `      <data key="d_run">${xmlText(n.runId)}</data>`,
+      `      <data key="d_started">${n.startedAt}</data>`,
+      '    </node>',
+    );
+  }
+  for (const e of edges) {
+    body.push(
+      `    <edge source="${xmlAttr(e.src)}" target="${xmlAttr(e.dst)}">`,
+      `      <data key="e_kind">${xmlText(e.kind)}</data>`,
+      `      <data key="e_derived">${e.derived ? 'true' : 'false'}</data>`,
+      '    </edge>',
+    );
+  }
+  return [
+    '<?xml version="1.0" encoding="UTF-8"?>',
+    '<graphml xmlns="http://graphml.graphdrawing.org/xmlns">',
+    ...keys.map((k) => `  ${k}`),
+    '  <graph id="limboo" edgedefault="directed">',
+    ...body,
+    '  </graph>',
+    '</graphml>',
+  ].join('\n');
+}
+
+/**
+ * PlantUML — for toolchains that render `.puml` in CI or a wiki but have no
+ * Mermaid pipeline. Uses the same shape vocabulary as the Mermaid export so the
+ * two diagrams read identically.
+ */
+export function exportPuml(
+  sessionId: string,
+  nodes: WorkGraphNode[],
+  edges: WorkGraphEdge[],
+): string {
+  const lines: string[] = ['@startuml', `title Work graph — session ${pumlText(sessionId)}`, ''];
+  const alias = new Map<string, string>();
+  nodes.forEach((n, i) => alias.set(n.id, `n${i}`));
+  for (const n of nodes) {
+    lines.push(`${pumlShape(n)} "${pumlText(n.title)}" as ${alias.get(n.id)}`);
+  }
+  lines.push('');
+  for (const e of edges) {
+    const src = alias.get(e.src);
+    const dst = alias.get(e.dst);
+    if (!src || !dst) continue;
+    // Derived edges render dashed, exactly as they do on the canvas — an
+    // inferred edge must never be able to masquerade as an observed one.
+    lines.push(`${src} ${e.derived ? '..>' : '-->'} ${dst} : ${pumlText(EDGE_VERB[e.kind])}`);
+  }
+  lines.push('', '@enduml');
+  return lines.join('\n');
 }
 
 /**
@@ -99,6 +270,7 @@ export function exportMarkdown(
   nodes: WorkGraphNode[],
   edges: WorkGraphEdge[],
   truncated = false,
+  runs?: Map<string, RunTelemetry>,
 ): string {
   const lines: string[] = [];
   lines.push('# Work Graph');
@@ -116,6 +288,8 @@ export function exportMarkdown(
     // An absent objective means the run's root fell outside the retained
     // window — say that, rather than implying the work had no request.
     lines.push(`## ${objective ? objective.title : 'Earlier work (objective not retained)'}`);
+    const telemetry = runTelemetryLine(runs?.get(runId));
+    if (telemetry) lines.push(`_${telemetry}_`);
     lines.push('');
 
     for (const n of members) {
@@ -216,7 +390,11 @@ export function exportDot(
  * one file (a blank line between them), because a graph is not one table and
  * pretending otherwise would lose the edges.
  */
-export function exportCsv(nodes: WorkGraphNode[], edges: WorkGraphEdge[]): string {
+export function exportCsv(
+  nodes: WorkGraphNode[],
+  edges: WorkGraphEdge[],
+  runs?: Map<string, RunTelemetry>,
+): string {
   const lines: string[] = [];
   lines.push('# nodes');
   lines.push('id,kind,provider,status,title,detail,run_id,seq,started_at,ended_at,ref_kind,ref_id');
@@ -257,6 +435,24 @@ export function exportCsv(nodes: WorkGraphNode[], edges: WorkGraphEdge[]): strin
         .join(','),
     );
   }
+  if (runs && runs.size > 0) {
+    lines.push('');
+    lines.push('# run telemetry');
+    lines.push('run_id,duration_ms,total_tokens,peak_context_tokens,cost_estimate_usd');
+    for (const t of runs.values()) {
+      lines.push(
+        [
+          t.runId,
+          t.durationMs === undefined ? '' : String(t.durationMs),
+          t.totalTokens === undefined ? '' : String(t.totalTokens),
+          t.peakContextTokens === undefined ? '' : String(t.peakContextTokens),
+          t.costEstimateUsd === undefined ? '' : String(t.costEstimateUsd),
+        ]
+          .map(csvCell)
+          .join(','),
+      );
+    }
+  }
   return lines.join('\n');
 }
 
@@ -270,6 +466,7 @@ export function exportHtml(
   nodes: WorkGraphNode[],
   edges: WorkGraphEdge[],
   truncated = false,
+  runs?: Map<string, RunTelemetry>,
 ): string {
   const byId = new Map(nodes.map((n) => [n.id, n]));
   const sections: string[] = [];
@@ -284,8 +481,10 @@ export function exportHtml(
           `<td class="d">${htmlText(summarize(n))}</td></tr>`,
       )
       .join('\n');
+    const telemetry = runTelemetryLine(runs?.get(runId));
     sections.push(
       `<section><h2>${htmlText(objective?.title ?? 'Earlier work (objective not retained)')}</h2>` +
+        (telemetry ? `<p class="d">${htmlText(telemetry)}</p>` : '') +
         `<table>${rows}</table></section>`,
     );
   }
@@ -448,4 +647,60 @@ function htmlText(text: string): string {
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;');
+}
+
+/** XML text content. Also strips the control characters XML 1.0 forbids. */
+function xmlText(text: string): string {
+  return text
+    // XML 1.0 forbids most C0 controls outright; strip rather than escape.
+    // eslint-disable-next-line no-control-regex
+    .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g, '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .slice(0, 400);
+}
+
+/** XML attribute value — quotes matter here in a way they do not in text. */
+function xmlAttr(text: string): string {
+  return xmlText(text).replace(/"/g, '&quot;').replace(/'/g, '&apos;');
+}
+
+/** PlantUML treats quotes and newlines as syntax; strip rather than escape. */
+function pumlText(text: string): string {
+  return text.replace(/["\n\r]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 120);
+}
+
+/** PlantUML element keyword, matching the Mermaid/DOT shape vocabulary. */
+function pumlShape(n: WorkGraphNode): string {
+  switch (n.kind) {
+    case 'objective':
+    case 'completion':
+      return 'usecase';
+    case 'approval':
+      return 'control';
+    case 'git':
+    case 'file':
+    case 'artifact':
+      return 'artifact';
+    case 'mcp':
+      return 'interface';
+    case 'terminal':
+    case 'service':
+      return 'node';
+    default:
+      return 'rectangle';
+  }
+}
+
+/** A one-line telemetry suffix for a run heading. Omits what was not measured. */
+function runTelemetryLine(t: RunTelemetry | undefined): string {
+  if (!t) return '';
+  const parts: string[] = [];
+  if (t.durationMs !== undefined) parts.push(`${(t.durationMs / 1000).toFixed(1)}s`);
+  if (t.totalTokens !== undefined) parts.push(`${t.totalTokens} tokens`);
+  if (t.peakContextTokens !== undefined) parts.push(`peak ${t.peakContextTokens} ctx`);
+  // The tilde is the disclaimer: this is a client-side estimate, not billing.
+  if (t.costEstimateUsd !== undefined) parts.push(`~$${t.costEstimateUsd.toFixed(4)}`);
+  return parts.join(' · ');
 }

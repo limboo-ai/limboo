@@ -1,7 +1,7 @@
 import type { AppSettings, WorkspaceConfig } from './types';
 
 /** Bumped whenever the {@link AppSettings} shape changes incompatibly. */
-export const SETTINGS_VERSION = 24;
+export const SETTINGS_VERSION = 25;
 
 /**
  * The agent providers Limboo can run (Claude Code = Anthropic via the Agent
@@ -606,6 +606,71 @@ export const GRAPH_LIMITS = {
   exportBytesMax: 25_000_000,
   /** Consecutive persist failures before the panel shows a health banner. */
   healthFailureThreshold: 3,
+  /** Max sessions one batch export may cover. */
+  batchSessionsMax: 50,
+} as const;
+
+/**
+ * Bounds + caps for Runtime Telemetry. `{min,max,default}` entries are
+ * user-configurable and clamped on every read; bare numbers are hard caps.
+ *
+ * Every ring/cap here exists because the sources are high-frequency: a
+ * `message_delta` arrives many times a second and a `tool_progress` heartbeat
+ * once per second per tool. Observability must never be able to grow memory,
+ * the database, or the IPC volume without limit.
+ */
+export const TELEMETRY_LIMITS = {
+  /** Snapshot-coalescing window (ms). A burst of deltas becomes one push. */
+  updateFrequency: { min: 100, max: 5_000, default: 250 },
+  /** Clock-driven refresh while the inspector is open (0 = off). */
+  idleRefreshMs: { min: 0, max: 60_000, default: 5_000 },
+  /** Days of usage history kept (0 = keep forever). */
+  retentionDays: { min: 0, max: 365, default: 90 },
+  /** Run rollups kept per session. */
+  retainRuns: { min: 10, max: 2_000, default: 200 },
+  ringSize: { min: 14, max: 28, default: 18 },
+  ringStroke: { min: 2, max: 6, default: 4 },
+  /** Percent of context REMAINING below which the ring turns warning. */
+  warnRemainingPct: { min: 5, max: 50, default: 25 },
+  /** Percent of context REMAINING below which the ring turns danger. */
+  criticalRemainingPct: { min: 1, max: 25, default: 10 },
+  /** Notify below this percent remaining (0 = off). */
+  notifyRemainingPct: { min: 0, max: 50, default: 15 },
+  /** Quota utilization (%) above which the long-term meter turns warning. */
+  warnQuotaPct: { min: 50, max: 99, default: 80 },
+
+  /* --- hard caps --- */
+  /** One persisted quota sample per window per bucket. */
+  sampleBucketMs: 5 * 60_000,
+  /** Max trend points one history read returns. */
+  historyPoints: 180,
+  /** Max in-flight tool rows carried on a snapshot. */
+  maxToolRows: 8,
+  /**
+   * Ring of recently-seen assistant `message.id`s, used to deduplicate
+   * `message_start`. Parallel tool calls emit several assistant messages
+   * sharing one id with identical usage — Anthropic documents this, and
+   * without the dedupe the context gauge multiplies by the fan-out width.
+   */
+  seenMessageIds: 64,
+  /** Ring of prompt-growth samples backing the remaining-turns projection. */
+  growthSamples: 32,
+  /** Minimum growth samples before a projection is offered at all. */
+  growthMinSamples: 3,
+  /** Max chars kept for a tool name on a snapshot (never its input). */
+  toolNameMax: 64,
+  /** Max chars kept for a health error line (redacted first). */
+  errorMax: 200,
+  /**
+   * Divisor turning a MEASURED character count into an ESTIMATED token count.
+   * A constant, not a measurement — which is precisely why every segment
+   * derived from it is labelled an estimate in the UI. There is deliberately
+   * no bundled tokenizer: a tokenizer dependency for a hover card is not
+   * justified, and it would still be wrong for cached and compacted content.
+   */
+  charsPerToken: 3.6,
+  /** Max bytes one `runtime:export` result may produce. */
+  exportBytesMax: 8_000_000,
 } as const;
 
 /** Bounds + caps for the Voice subsystem (main + renderer both clamp). */
@@ -922,6 +987,44 @@ export const DEFAULT_SETTINGS: AppSettings = {
     },
 
     exportFormat: 'json',
+    exportScope: 'session',
+    exportTelemetry: false,
+  },
+  runtime: {
+    enabled: true,
+    persist: true,
+    updateFrequency: TELEMETRY_LIMITS.updateFrequency.default,
+    idleRefreshMs: TELEMETRY_LIMITS.idleRefreshMs.default,
+    retentionDays: TELEMETRY_LIMITS.retentionDays.default,
+    retainRuns: TELEMETRY_LIMITS.retainRuns.default,
+
+    indicator: true,
+    anchor: 'composer',
+    pinned: false,
+    ringSize: TELEMETRY_LIMITS.ringSize.default,
+    ringStroke: TELEMETRY_LIMITS.ringStroke.default,
+    ringLabel: false,
+    ringMetric: 'context-used',
+    animation: 'subtle',
+
+    layout: 'expanded',
+    sectionOrder: ['context', 'requests', 'longterm', 'provider'],
+    // Context open, everything else collapsed. The inspector is a hover card
+    // inside an `overflow-hidden` workspace card, so its height is a hard
+    // constraint rather than a preference — and context is the one resource
+    // that matters continuously during a long session. The collapsed headers
+    // still carry their summary `aside`, so nothing is hidden, only folded.
+    collapsedSections: ['requests', 'longterm', 'provider'],
+    showEstimates: true,
+    tokenDisplay: 'percent',
+    showCostEstimate: true,
+    showHistory: true,
+    highContrast: false,
+
+    warnRemainingPct: TELEMETRY_LIMITS.warnRemainingPct.default,
+    criticalRemainingPct: TELEMETRY_LIMITS.criticalRemainingPct.default,
+    notifyRemainingPct: TELEMETRY_LIMITS.notifyRemainingPct.default,
+    warnQuotaPct: TELEMETRY_LIMITS.warnQuotaPct.default,
   },
   mcp: {
     enabled: true,
@@ -1011,7 +1114,7 @@ export function clamp(value: number, min: number, max: number): number {
 /* ------------------------------------------------------------------ */
 
 /** Bumped whenever the workspace DB schema changes incompatibly. */
-export const WORKSPACE_SCHEMA_VERSION = 17;
+export const WORKSPACE_SCHEMA_VERSION = 18;
 
 /** Input caps the main process enforces on renderer-supplied session values. */
 export const SESSION_LIMITS = {

@@ -192,6 +192,29 @@ html[data-reduced-motion="true"] *::after {
   animation: limboo-shimmer 1.4s ease-in-out infinite;
 }
 
+/* Runtime Inspector ring. `animate-spin-slow` marks an INDETERMINATE ring —
+   the provider has not reported a context window yet, so there is no
+   denominator to draw an arc against. It must never be confused with 0%:
+   "not measured yet" and "empty" are opposite claims. `animate-pulse-soft`
+   marks a live run. Both are collapsed by the global reduced-motion rule
+   above, and the component also drops them under `animation: 'none'`. */
+@keyframes limboo-spin {
+  to { transform: rotate(360deg); }
+}
+
+@utility animate-spin-slow {
+  animation: limboo-spin 1.8s linear infinite;
+}
+
+@keyframes limboo-pulse-soft {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.55; }
+}
+
+@utility animate-pulse-soft {
+  animation: limboo-pulse-soft 1.6s ease-in-out infinite;
+}
+
 /* Blinking caret for the typewriter placeholder (title-bar search box). */
 @keyframes limboo-caret-blink {
   0%, 45% { opacity: 1; }

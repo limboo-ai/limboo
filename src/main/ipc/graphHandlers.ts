@@ -15,6 +15,7 @@
 import { IpcChannels } from '@shared/ipc-channels';
 import { GRAPH_LIMITS, SESSION_LIMITS, clamp } from '@shared/constants';
 import type {
+  GraphRunStat,
   WorkGraphEdge,
   WorkGraphEdgeKind,
   WorkGraphNode,
@@ -132,7 +133,17 @@ function isNodeStatus(v: unknown): v is WorkGraphNodeStatus {
 }
 
 /** Formats main can render itself, plus the two the renderer hands back. */
-const DATA_FORMATS: readonly string[] = ['json', 'md', 'mermaid', 'dot', 'csv', 'html'];
+const DATA_FORMATS: readonly string[] = [
+  'json',
+  'md',
+  'mermaid',
+  'dot',
+  'csv',
+  'html',
+  'ndjson',
+  'graphml',
+  'puml',
+];
 const IMAGE_FORMATS: readonly string[] = ['svg', 'png'];
 
 function assertDataFormat(v: unknown): asserts v is GraphDataFormat {
@@ -209,6 +220,7 @@ export function registerGraphHandlers(graph: WorkGraphManager): void {
       sessionId: unknown,
       format: unknown,
       content: unknown,
+      scopeNodeId: unknown,
     ): Promise<{ saved: boolean; path?: string }> => {
       assertSessionId(sessionId);
       if (typeof format !== 'string' || ![...DATA_FORMATS, ...IMAGE_FORMATS].includes(format)) {
@@ -218,10 +230,14 @@ export function registerGraphHandlers(graph: WorkGraphManager): void {
       if (isImage && (typeof content !== 'string' || content.length === 0)) {
         throw new Error('graph: no image content to save');
       }
+      // Optional scope anchor. Still an id, so this changes WHAT is written and
+      // never WHERE — main still owns the path.
+      if (scopeNodeId !== undefined && scopeNodeId !== null) assertNodeId(scopeNodeId);
       return graph.save(
         sessionId,
         format as GraphDataFormat | 'svg' | 'png',
         isImage ? (content as string) : undefined,
+        typeof scopeNodeId === 'string' ? scopeNodeId : undefined,
       );
     },
   );
@@ -245,4 +261,49 @@ export function registerGraphHandlers(graph: WorkGraphManager): void {
     assertSessionId(sessionId);
     graph.clear(sessionId);
   });
+
+  /**
+   * Export the bounded subgraph around one node. Takes an id and an enum only —
+   * the depth comes from settings, not from the renderer, so this cannot be
+   * used to ask for an unbounded traversal.
+   */
+  handle(
+    IpcChannels.graphExportSubgraph,
+    (_e, sessionId: unknown, nodeId: unknown, format: unknown): string => {
+      assertSessionId(sessionId);
+      assertNodeId(nodeId);
+      assertDataFormat(format);
+      return graph.exportSubgraph(sessionId, nodeId, format);
+    },
+  );
+
+  handle(IpcChannels.graphRunStats, (_e, sessionId: unknown): GraphRunStat[] => {
+    assertSessionId(sessionId);
+    return graph.runStats(sessionId);
+  });
+
+  /**
+   * Batch export. Session ids are validated individually and the count is
+   * capped, so a renderer cannot turn one call into unbounded filesystem work.
+   * As with `graphSave`, main owns the destination — here a directory the user
+   * picks — and the renderer supplies no path at all.
+   */
+  handle(
+    IpcChannels.graphSaveBatch,
+    async (
+      _e,
+      sessionIds: unknown,
+      format: unknown,
+    ): Promise<{ saved: number; dir?: string }> => {
+      if (!Array.isArray(sessionIds) || sessionIds.length === 0) {
+        throw new Error('graph: no sessions to export');
+      }
+      if (sessionIds.length > GRAPH_LIMITS.batchSessionsMax) {
+        throw new Error('graph: too many sessions in one batch export');
+      }
+      for (const id of sessionIds) assertSessionId(id);
+      assertDataFormat(format);
+      return graph.saveBatch(sessionIds as string[], format);
+    },
+  );
 }

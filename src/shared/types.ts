@@ -574,6 +574,81 @@ export interface AppSettings {
 
     /** Default format for the panel's export action. */
     exportFormat: GraphExportTarget;
+    /**
+     * Scope of an export action. `session` exports the whole graph; `selection`
+     * exports the selected node's bounded subgraph (the existing depth-capped
+     * traversal), so a large session can be shared one investigation at a time.
+     */
+    exportScope: GraphExportScope;
+    /**
+     * Join each run's Runtime Telemetry rollup (duration, tokens, estimated
+     * cost, peak context) into the export. Applies to the tabular/structured
+     * formats only — a Mermaid or DOT diagram has no column to put a number in.
+     */
+    exportTelemetry: boolean;
+  };
+  /**
+   * Runtime Telemetry — the Runtime Inspector's behaviour. Provider-neutral:
+   * every knob describes how Limboo DISPLAYS what a provider already reported,
+   * never what it fetches. Nothing here adds a network call, and no provider is
+   * ever polled — the numbers ride the same event stream that drives the
+   * conversation.
+   */
+  runtime: {
+    /** Master switch. Off = no ingestion, no rows, no pushes, no indicator. */
+    enabled: boolean;
+    /**
+     * Persist usage history to SQLite. Off = live-only. This is the enterprise
+     * policy switch: it stops writes AND makes history reads return empty, so
+     * disabling it is genuinely off rather than merely hidden.
+     */
+    persist: boolean;
+    /** Snapshot-coalescing window (ms). A burst becomes one IPC push. */
+    updateFrequency: number;
+    /**
+     * Clock-driven refresh while the inspector is open (0 = off). Refreshes
+     * reset countdowns and elapsed tool timers. NO provider is ever polled.
+     */
+    idleRefreshMs: number;
+    /** Days of usage history kept (0 = keep forever). */
+    retentionDays: number;
+    /** Run rollups kept per session. */
+    retainRuns: number;
+
+    /* --- the indicator --- */
+    /** Show the ring at all. Off keeps ingestion but hides the surface. */
+    indicator: boolean;
+    /** Which surface the ring mounts on. */
+    anchor: 'composer' | 'header';
+    /** Keep the inspector open without hovering. */
+    pinned: boolean;
+    ringSize: number;
+    ringStroke: number;
+    /** Render the rounded percentage inside the ring. */
+    ringLabel: boolean;
+    /** What the ring's arc measures. */
+    ringMetric: 'context-used' | 'context-remaining' | 'quota';
+    animation: 'none' | 'subtle' | 'full';
+
+    /* --- the inspector --- */
+    layout: 'compact' | 'expanded';
+    sectionOrder: RuntimeSectionId[];
+    collapsedSections: RuntimeSectionId[];
+    /** Show values Limboo estimated from character counts (always labelled). */
+    showEstimates: boolean;
+    tokenDisplay: 'absolute' | 'percent';
+    showCostEstimate: boolean;
+    showHistory: boolean;
+    /** Distinguish context segments by border and weight, not hue alone. */
+    highContrast: boolean;
+
+    /* --- thresholds, as percent of context REMAINING --- */
+    warnRemainingPct: number;
+    criticalRemainingPct: number;
+    /** Desktop notification when remaining crosses this (0 = off). */
+    notifyRemainingPct: number;
+    /** Quota utilization (%) above which the long-term meter turns warning. */
+    warnQuotaPct: number;
   };
   /**
    * Attachment Manager — user-supplied files attached in the composer become
@@ -2910,6 +2985,292 @@ export type AgentEvent =
   | { kind: 'diagnostic'; diagnostic: AgentDiagnostic };
 
 /* ------------------------------------------------------------------ */
+/* Runtime Telemetry                                                   */
+/*                                                                     */
+/* A provider-neutral platform service owned by the app — the fifth    */
+/* peer of Memory / Search / Resume / Work Graph. Every metric is an   */
+/* OPTIONAL capability the adapter reports. The renderer NEVER         */
+/* branches on provider: it renders what the snapshot contains and     */
+/* omits what is absent (the "omit what was not measured" rule that    */
+/* {@link SubagentInfo} and the release document already follow).      */
+/*                                                                     */
+/* This is an ORTHOGONAL peer to {@link AgentEvent}: AgentEvent is the */
+/* render stream and is frozen. Telemetry rides its own narrow sink    */
+/* because its sources fire per API request, per delta frame and per   */
+/* tool heartbeat — volume no render-bus consumer should have to       */
+/* filter out forever.                                                  */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Where a number came from.
+ *
+ * `measured`  — the provider reported it (`message_start.usage`, `modelUsage`,
+ *               `rate_limit_info`), or it is a measured total minus measured
+ *               parts.
+ * `estimated` — Limboo counted the CHARACTERS of a block it composed itself
+ *               and divided by {@link TELEMETRY_LIMITS.charsPerToken}. The
+ *               content is measured; the tokenization is not. Always labelled
+ *               as an estimate in the UI — never presented as precision.
+ */
+export type MetricOrigin = 'measured' | 'estimated';
+
+/**
+ * Metric families a provider adapter may or may not report. The renderer gates
+ * every section on one of these rather than on the provider id, so a third
+ * adapter contributes its sections for free and hides the rest automatically.
+ */
+export type RuntimeCapabilityKey =
+  /** Live prompt size plus a provider-supplied context window. */
+  | 'contextWindow'
+  /** Cumulative input/output/cache token counts for the run. */
+  | 'tokenUsage'
+  /** A CLIENT-SIDE cost estimate. Never billing data. */
+  | 'costEstimate'
+  /** Short rolling request window (Claude: `five_hour`). */
+  | 'requestQuota'
+  /** Long rolling windows (Claude: `seven_day*`). */
+  | 'quotaWindows'
+  /** Time-to-first-token and generation speed. */
+  | 'latency'
+  /** Context-compaction boundary events. */
+  | 'compaction'
+  /** Per-tool elapsed-time heartbeats. */
+  | 'toolProgress'
+  /** Extended-thinking token estimates. */
+  | 'thinkingTokens'
+  /** API retry attempts. */
+  | 'retries';
+
+export type RuntimeCapabilities = Record<RuntimeCapabilityKey, boolean>;
+
+/** One contributor to the composed context window. */
+export type ContextSegmentId =
+  /** MEASURED RESIDUAL: provider preset + tool schemas + everything unattributed. */
+  | 'system'
+  /** User + assistant turns Limboo persisted for this session. */
+  | 'conversation'
+  /** Built-in tool_result payloads Limboo observed. */
+  | 'tools'
+  /** MCP tool_result payloads (`mcp__*` calls). */
+  | 'mcp'
+  /** The `<project-memory>` block Limboo injected. */
+  | 'memory'
+  /** The `<project-context>` block Limboo injected. */
+  | 'search'
+  /** The `<repository-delta>` block Limboo injected. */
+  | 'resume'
+  /** The per-turn `<attachments>` manifest. */
+  | 'attachments'
+  /** `maxOutputTokens` held back for the reply (measured). */
+  | 'reserved';
+
+export interface ContextSegment {
+  id: ContextSegmentId;
+  tokens: number;
+  origin: MetricOrigin;
+  /** For `estimated` segments: the exact character count Limboo measured. */
+  chars?: number;
+}
+
+/** Live context-window accounting for a session. */
+export interface RuntimeContext {
+  /**
+   * Prompt tokens for the most recent API request — the live, MEASURED
+   * "context consumed" number. Sum of `input_tokens`,
+   * `cache_read_input_tokens` and `cache_creation_input_tokens` from
+   * `message_start.usage`, deduplicated by `message.id` (parallel tool calls
+   * emit several assistant messages sharing one id, which Anthropic documents
+   * and which would otherwise multiply this number).
+   */
+  usedTokens: number;
+  /**
+   * The provider's own context budget for the active model
+   * (`modelUsage[model].contextWindow`). ABSENT until at least one run has
+   * completed for that model — there is deliberately no hardcoded model table
+   * and none may be added. While absent the ring renders INDETERMINATE, never
+   * 0%: "not measured yet" must not look like "empty context".
+   */
+  windowTokens?: number;
+  /** `modelUsage[model].maxOutputTokens` — the completion reservation. */
+  reservedTokens?: number;
+  remainingTokens?: number;
+  pctUsed?: number;
+  /**
+   * Auto-compaction threshold, OBSERVED rather than assumed: the `pre_tokens`
+   * of the first `compact_boundary` with `trigger: 'auto'` seen for this model.
+   * The SDK reports no threshold, so this stays absent until it happens.
+   */
+  autoCompactTokens?: number;
+  /** Per-contributor attribution. Empty when {@link attributionDegraded}. */
+  segments: ContextSegment[];
+  /**
+   * True when the estimated segments summed ABOVE the measured total (cache
+   * reads, a compaction, or a resumed transcript Limboo never saw). The UI then
+   * drops the split and renders a single measured bar plus a note. This is the
+   * fail-honest path: a split scaled to fit would be a fabrication.
+   */
+  attributionDegraded?: boolean;
+  /** Limboo's OWN retrieval budgets — fully measured, Limboo-owned numbers. */
+  retrieval?: {
+    memoryChars: number;
+    memoryBudgetChars: number;
+    searchChars: number;
+    searchBudgetChars: number;
+  };
+  /** Median prompt growth per API request. Requires >= 3 samples. */
+  tokensPerTurn?: number;
+  /** `remaining / tokensPerTurn`. Absent when growth is <= 0 (a compaction). */
+  predictedTurnsRemaining?: number;
+  compactions?: {
+    count: number;
+    lastTrigger: 'manual' | 'auto';
+    lastPreTokens: number;
+    lastPostTokens?: number;
+    at: number;
+  };
+  at: number;
+}
+
+/** One rolling quota window, as the provider reported it. */
+export interface RuntimeQuotaWindow {
+  /** The provider's own identifier, verbatim (`five_hour`, `seven_day_opus`…). */
+  kind: string;
+  status: 'allowed' | 'allowed_warning' | 'rejected';
+  /** 0–1 as reported. Absent when the provider omitted it. */
+  utilization?: number;
+  resetsAt?: number;
+  isUsingOverage?: boolean;
+  surpassedThreshold?: number;
+  errorCode?: string;
+  at: number;
+}
+
+/** Per-run measurements. */
+export interface RuntimeRun {
+  runId: string;
+  model: string;
+  /** Inline union rather than an import: `types.ts` deliberately has no imports. */
+  provider: 'anthropic' | 'cursor';
+  /** Composer mode captured AT RUN START, never read from current settings. */
+  mode: SessionPermissionMode;
+  startedAt: number;
+  durationMs?: number;
+  durationApiMs?: number;
+  ttftMs?: number;
+  numTurns?: number;
+  tokens?: {
+    input: number;
+    output: number;
+    cacheRead: number;
+    cacheWrite: number;
+    /**
+     * TRUE when these came from `modelUsage` (which INCLUDES subagent
+     * requests); false when from `usage` (which EXCLUDES them). The two are
+     * never mixed into one field — Anthropic documents that `usage`
+     * undercounts as soon as nesting occurs.
+     */
+    includesSubagents: boolean;
+  };
+  /**
+   * CLIENT-SIDE ESTIMATE from the SDK's bundled price table — NOT billing data
+   * (Anthropic's own docs say so explicitly). The field name carries the
+   * disclaimer so no renderer can quietly label it "Cost".
+   */
+  costEstimateUsd?: number;
+  /** Output tokens/sec, measured live off the MAIN stream's `message_delta`. */
+  tokensPerSecond?: number;
+  /** The SDK's own word for this figure is "estimated". Labelled as such. */
+  thinkingTokensEstimate?: number;
+  retries?: { attempt: number; maxRetries: number; lastStatus: number | null; at: number };
+  providerStatus?: 'compacting' | 'requesting';
+  permissionDenials?: number;
+  apiErrorStatus?: number;
+}
+
+/** A tool the provider is currently reporting progress for. */
+export interface RuntimeToolActivity {
+  callId: string;
+  /** Tool NAME only, capped. Never its input. */
+  name: string;
+  elapsedSeconds: number;
+  /** Present only for a subagent's own tool (SDK `parent_tool_use_id`). */
+  parentCallId?: string;
+}
+
+/** Limboo-owned environment facts. Every field traces to a Limboo manager. */
+export interface RuntimeEnvironment {
+  /** The `agent_provider_sessions` row for the active provider. */
+  providerSessionId?: string;
+  /** WorktreeManager. `path` is RELATIVE to the workspace root, never absolute. */
+  worktree?: { branch: string; path: string };
+  /** AttachmentManager — count only. */
+  attachmentCount?: number;
+  /** McpManager — connected / total. */
+  mcp?: { connected: number; total: number };
+  /** SearchManager index status. */
+  index?: { indexed: boolean; files: number };
+  /** Memories / search hits injected into the last prompt (counts only). */
+  memoryInjected?: number;
+  searchInjected?: number;
+}
+
+/**
+ * The normalized, capability-gated runtime snapshot. Provider-neutral by
+ * construction: the renderer reads {@link capabilities} and {@link notes} and
+ * never the provider id, so a section hides itself when the running adapter
+ * cannot measure it — with no conditional renderer logic per provider.
+ */
+export interface RuntimeSnapshot {
+  sessionId: string;
+  provider: 'anthropic' | 'cursor';
+  capabilities: RuntimeCapabilities;
+  /**
+   * Main-supplied "why not" copy for each false capability, so the renderer can
+   * EXPLAIN a missing metric without knowing which provider is running.
+   */
+  notes?: Partial<Record<RuntimeCapabilityKey, string>>;
+  /** True while a run is live — drives the ring's animation. */
+  live: boolean;
+  context?: RuntimeContext;
+  quota?: RuntimeQuotaWindow[];
+  run?: RuntimeRun;
+  tools?: RuntimeToolActivity[];
+  environment?: RuntimeEnvironment;
+  /**
+   * Ingestion health — the same honesty valve as {@link WorkGraphHealth}. Every
+   * capture path swallows its failures so telemetry can never break a run,
+   * which is exactly why a stream that stopped recording must be visible here
+   * rather than looking like a quiet session.
+   */
+  health?: { failures: number; lastError?: string };
+  at: number;
+}
+
+/** One persisted quota-trend point. */
+export interface RuntimeUsagePoint {
+  at: number;
+  utilization: number;
+  status: 'allowed' | 'allowed_warning' | 'rejected';
+}
+
+export interface RuntimeUsageHistory {
+  windowKind: string;
+  points: RuntimeUsagePoint[];
+  /** True when persistence is disabled by policy — the UI says so in words. */
+  disabled: boolean;
+}
+
+/** Renderer-facing push. Mirrors {@link WorkGraphPush}'s seq + reset valve. */
+export type RuntimePush =
+  | { kind: 'snapshot'; sessionId: string; seq: number; snapshot: RuntimeSnapshot }
+  | { kind: 'reset'; sessionId: string | null };
+
+/** The inspector's sections, in their canonical order. */
+export type RuntimeSectionId = 'context' | 'requests' | 'longterm' | 'provider';
+
+export type RuntimeExportFormat = 'json' | 'csv';
+
+/* ------------------------------------------------------------------ */
 /* Provider-Neutral Hook Engine                                        */
 /*                                                                     */
 /* A normalized lifecycle taxonomy that both provider adapters (Claude */
@@ -3281,10 +3642,52 @@ export type WorkGraphNode =
  * transforms, so they are always complete — unlike the two image formats, which
  * can only be produced from the canvas the renderer drew.
  */
-export type GraphExportFormat = 'json' | 'md' | 'mermaid' | 'dot' | 'csv' | 'html';
+export type GraphExportFormat =
+  | 'json'
+  | 'md'
+  | 'mermaid'
+  | 'dot'
+  | 'csv'
+  | 'html'
+  /** One JSON object per line — the form you stream and `grep`. */
+  | 'ndjson'
+  /** GraphML, for Gephi / yEd / Cytoscape. */
+  | 'graphml'
+  /** PlantUML, for toolchains that render `.puml` but not Mermaid. */
+  | 'puml';
 
 /** Every format the export UI offers, including the renderer-drawn images. */
 export type GraphExportTarget = GraphExportFormat | 'svg' | 'png';
+
+/**
+ * How much of the graph an export covers.
+ *
+ * `selection` reuses the existing bounded, depth-capped traversal rather than
+ * introducing a second walk — "export what I am looking at" is the same query
+ * the panel already runs to focus a node.
+ */
+export type GraphExportScope = 'session' | 'selection';
+
+/**
+ * Per-run rollup for the Work Graph's statistics view. Joined to
+ * {@link RuntimeRun} by `runId`, which is why the two subsystems agree without
+ * either one reaching into the other's storage.
+ */
+export interface GraphRunStat {
+  runId: string;
+  title: string;
+  startedAt: number;
+  nodes: number;
+  edges: number;
+  tools: number;
+  errors: number;
+  durationMs?: number;
+  /** From Runtime Telemetry when available; omitted when never measured. */
+  tokens?: number;
+  /** CLIENT-SIDE estimate (see {@link RuntimeRun.costEstimateUsd}). */
+  costEstimateUsd?: number;
+  peakContextTokens?: number;
+}
 
 /**
  * Recording health, surfaced in the panel.

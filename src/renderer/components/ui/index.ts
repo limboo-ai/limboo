@@ -11,4 +11,5 @@ export { HelixLoader } from './HelixLoader';
 export { PreviewRail, type PreviewRailItem } from './PreviewRail';
 export { SuccessCheck } from './SuccessCheck';
 export { CircularProgress } from './CircularProgress';
+export { HoverCard } from './HoverCard';
 export { Waveform } from './Waveform';

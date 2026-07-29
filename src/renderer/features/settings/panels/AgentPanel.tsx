@@ -17,6 +17,7 @@ import { Field, Section, Select, SegmentedControl, Slider, StackedField, TextInp
 import { ProviderStatusRow } from './ProviderCard';
 import { CursorProviderCard } from './CursorProviderCard';
 import { AgentTroubleshooting } from './AgentTroubleshooting';
+import { RuntimeIndicatorsSection } from './RuntimeIndicatorsSection';
 
 export function AgentPanel() {
   const agent = useSettingsStore((s) => s.settings.agent);
@@ -363,6 +364,10 @@ export function AgentPanel() {
           />
         </Field>
       </Section>
+
+      {/* Runtime Indicators sits between reliability and delegation: it is the
+          surface that tells you how the running agent is doing right now. */}
+      <RuntimeIndicatorsSection />
 
       <Section
         title="Subagents"

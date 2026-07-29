@@ -649,6 +649,79 @@ function migrate(database: Database.Database): void {
       INSERT INTO work_graph_nodes_fts(rowid, title, detail)
         VALUES (new.rowid, new.title, new.detail);
     END;
+
+    -- ---------------------------------------------------------------
+    -- Runtime Telemetry (schema v18)
+    --
+    -- THE SCHEMA IS THE REDACTION POLICY. There is no column here that
+    -- can hold a prompt, a message, a file path, a tool input, a memory
+    -- body or a session title — only numbers, enum strings, a model id
+    -- and ids. That is why an export of these tables cannot leak
+    -- conversation data: not because a filter strips it, but because
+    -- there is nowhere for it to have been stored. A future field that
+    -- needs a free string has to justify itself against this comment.
+    -- ---------------------------------------------------------------
+
+    -- One row per (provider, window, time bucket), upserted. Buckets bound
+    -- growth: a year of 5-minute samples across six window kinds stays in the
+    -- low hundreds of thousands of rows, and the retention sweep trims below
+    -- that. The window_kind column stores the provider's own identifier
+    -- verbatim, so a new window type the provider invents is recorded
+    -- rather than dropped.
+    CREATE TABLE IF NOT EXISTS telemetry_usage_samples (
+      id          INTEGER PRIMARY KEY AUTOINCREMENT,
+      at          INTEGER NOT NULL,
+      provider    TEXT    NOT NULL,
+      window_kind TEXT    NOT NULL,
+      utilization REAL,
+      status      TEXT,
+      resets_at   INTEGER,
+      is_overage  INTEGER NOT NULL DEFAULT 0,
+      UNIQUE (provider, window_kind, at)
+    );
+    CREATE INDEX IF NOT EXISTS idx_telemetry_samples
+      ON telemetry_usage_samples (provider, window_kind, at DESC);
+
+    -- Per-model limits as the PROVIDER reported them (modelUsage.contextWindow
+    -- and maxOutputTokens). Persisted so the ring is determinate immediately on
+    -- the next launch instead of waiting for a run to finish — and so that no
+    -- hardcoded model table is ever needed anywhere in the app. The
+    -- auto_compact_tokens column is OBSERVED from the first automatic
+    -- compaction boundary seen for the model; the SDK reports no threshold of
+    -- its own, so NULL there means not-yet-seen, never none.
+    CREATE TABLE IF NOT EXISTS telemetry_model_limits (
+      model               TEXT PRIMARY KEY,
+      context_window      INTEGER NOT NULL,
+      max_output_tokens   INTEGER NOT NULL,
+      auto_compact_tokens INTEGER,
+      observed_at         INTEGER NOT NULL
+    );
+
+    -- One row per completed run. Ring-capped per session by retainRuns and
+    -- swept by retentionDays. The run_id column is the join key the Work Graph's
+    -- statistics view uses, which is how the two subsystems agree without
+    -- either reaching into the other's storage.
+    CREATE TABLE IF NOT EXISTS telemetry_run_rollups (
+      run_id              TEXT PRIMARY KEY,
+      session_id          TEXT NOT NULL,
+      provider            TEXT NOT NULL,
+      model               TEXT NOT NULL,
+      mode                TEXT NOT NULL,
+      started_at          INTEGER NOT NULL,
+      duration_ms         INTEGER,
+      duration_api_ms     INTEGER,
+      ttft_ms             INTEGER,
+      num_turns           INTEGER,
+      input_tokens        INTEGER NOT NULL DEFAULT 0,
+      output_tokens       INTEGER NOT NULL DEFAULT 0,
+      cache_read_tokens   INTEGER NOT NULL DEFAULT 0,
+      cache_write_tokens  INTEGER NOT NULL DEFAULT 0,
+      cost_estimate_usd   REAL,
+      peak_context_tokens INTEGER,
+      FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_telemetry_rollups
+      ON telemetry_run_rollups (session_id, started_at DESC);
   `);
 
   // Idempotent column additions for databases created before a column existed.

@@ -131,18 +131,26 @@ export function ActionButton({
   onClick,
   danger,
   primary,
+  disabled,
+  busy,
 }: {
   label: string;
   onClick: () => void;
   danger?: boolean;
   primary?: boolean;
+  disabled?: boolean;
+  /** Work in flight. Blocks re-entry and marks the control for assistive tech. */
+  busy?: boolean;
 }) {
   return (
     <button
       type="button"
       onClick={onClick}
+      disabled={disabled || busy}
+      aria-busy={busy || undefined}
       className={cn(
         'rounded-md border px-2 py-1 text-[11px] transition-colors',
+        'disabled:cursor-not-allowed disabled:opacity-50',
         primary
           ? 'border-accent/50 bg-elevated text-fg hover:border-accent'
           : danger
@@ -270,20 +278,28 @@ export function SegmentedControl<T extends string>({
   value,
   options,
   onChange,
+  disabled,
 }: {
   value: T;
   options: { value: T; label: string }[];
   onChange: (value: T) => void;
+  disabled?: boolean;
 }) {
   return (
-    <div className="flex items-center gap-0.5 rounded-md border border-line bg-surface-2 p-0.5">
+    <div
+      className={cn(
+        'flex items-center gap-0.5 rounded-md border border-line bg-surface-2 p-0.5',
+        disabled && 'opacity-50',
+      )}
+    >
       {options.map((option) => (
         <button
           key={option.value}
           type="button"
+          disabled={disabled}
           onClick={() => onChange(option.value)}
           className={cn(
-            'rounded-md px-2.5 py-1 text-[12px] transition-colors',
+            'rounded-md px-2.5 py-1 text-[12px] transition-colors disabled:cursor-not-allowed',
             value === option.value ? 'bg-elevated text-fg' : 'text-muted hover:text-fg',
           )}
         >
@@ -299,20 +315,23 @@ export function Select<T extends string | number>({
   value,
   options,
   onChange,
+  disabled,
 }: {
   value: T;
   options: { value: T; label: string }[];
   onChange: (value: T) => void;
+  disabled?: boolean;
 }) {
   return (
     <select
       value={String(value)}
+      disabled={disabled}
       onChange={(e) => {
         const raw = e.target.value;
         const match = options.find((o) => String(o.value) === raw);
         if (match) onChange(match.value);
       }}
-      className="w-44 rounded-md border border-line bg-surface-2 px-2 py-1 text-[12px] text-fg focus:border-line-strong focus:outline-none"
+      className="w-44 rounded-md border border-line bg-surface-2 px-2 py-1 text-[12px] text-fg focus:border-line-strong focus:outline-none disabled:cursor-not-allowed disabled:opacity-50"
     >
       {options.map((option) => (
         <option key={String(option.value)} value={String(option.value)}>

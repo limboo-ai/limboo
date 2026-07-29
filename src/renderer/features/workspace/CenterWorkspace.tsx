@@ -30,6 +30,7 @@ import { useGitStore } from '@/renderer/stores/useGitStore';
 import { useUIStore } from '@/renderer/stores/useUIStore';
 import { useAttachmentStore } from '@/renderer/stores/useAttachmentStore';
 import { useResumeStore } from '@/renderer/stores/useResumeStore';
+import { RuntimeIndicator } from '@/renderer/features/agent/runtime/RuntimeIndicator';
 import { useDocumentStore } from '@/renderer/stores/useDocumentStore';
 import { ResumeBanner } from '@/renderer/features/resume/ResumeBanner';
 import { DiffWorkspace } from '@/renderer/features/git/diff/DiffWorkspace';
@@ -306,10 +307,14 @@ function SessionHeader({
           Plan ready
         </span>
       )}
+      {/* Header anchor for the runtime ring. Renders only when the user chose
+          this surface in Settings › Agent › Runtime Indicators. */}
+      <span className="ml-auto flex items-center">
+        <RuntimeIndicator anchor="header" />
+      </span>
       <IconButton
         label={gitOpen ? 'Hide git' : 'Show git'}
         size="sm"
-        className="ml-auto"
         active={gitOpen}
         onClick={() => toggleGit('git')}
       >

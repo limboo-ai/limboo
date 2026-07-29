@@ -5,9 +5,10 @@
  * scrolling body, because a graph needs an unpadded viewport with its own
  * scroll container.
  */
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   AlertTriangle,
+  BarChart3,
   Clipboard,
   Download,
   List,
@@ -31,6 +32,7 @@ import { GraphCanvas } from './GraphCanvas';
 import { GraphInspector } from './GraphInspector';
 import { GraphLegend } from './GraphLegend';
 import { GraphOutline } from './GraphOutline';
+import { GraphRunStats } from './GraphRunStats';
 import { buildGraphView, buildOutline } from './viewModel';
 import { GraphQueryBar } from './GraphQueryBar';
 import { GraphReplayBar } from './GraphReplayBar';
@@ -38,7 +40,7 @@ import { useGraphLayout } from './useGraphLayout';
 import { renderLayoutSvg, renderPng } from './exportImage';
 import { ROW_H } from './layout/types';
 
-type SubTab = 'graph' | 'outline' | 'legend';
+type SubTab = 'graph' | 'outline' | 'stats' | 'legend';
 
 /**
  * `system.clipboardWrite` hard-slices at 1 MB in the main process. Anything
@@ -50,6 +52,7 @@ const CLIPBOARD_MAX = 1_000_000;
 const SUB_TABS: { id: SubTab; label: string; icon: typeof Network }[] = [
   { id: 'graph', label: 'Graph', icon: Network },
   { id: 'outline', label: 'Outline', icon: List },
+  { id: 'stats', label: 'Stats', icon: BarChart3 },
   { id: 'legend', label: 'Legend', icon: ListTree },
 ];
 
@@ -89,11 +92,23 @@ export function WorkGraphPanel() {
   const runQuery = useGraphStore((s) => s.runQuery);
   const clearQuery = useGraphStore((s) => s.clearQuery);
   const exportGraph = useGraphStore((s) => s.exportGraph);
+  const exportSubgraph = useGraphStore((s) => s.exportSubgraph);
+  const runStats = useGraphStore((s) => s.runStats);
+  const loadRunStats = useGraphStore((s) => s.loadRunStats);
   const pruneGraph = useGraphStore((s) => s.prune);
   const select = useGraphStore((s) => s.select);
   const reveal = useGraphStore((s) => s.reveal);
   const toggleKind = useGraphStore((s) => s.toggleKind);
   const setZoom = useGraphStore((s) => s.setZoom);
+
+  // Stats are a JOIN against telemetry storage, so they are fetched on demand
+  // rather than riding every graph delta — opening the tab is the request.
+  // Declared AFTER the selectors it reads: a hook placed above them closes over
+  // `const` bindings that are still in the temporal dead zone on first render,
+  // which throws before the component ever paints.
+  useEffect(() => {
+    if (tab === 'stats') void loadRunStats();
+  }, [tab, sessionId, loadRunStats]);
 
   const addToast = useUIStore((s) => s.addToast);
   const cfg = useSettingsStore((s) => s.settings.graph);
@@ -188,6 +203,18 @@ export function WorkGraphPanel() {
    */
   const onExport = async (toFile: boolean): Promise<void> => {
     const format = cfg.exportFormat;
+    // "Export what I am looking at" is a different ask from "export the
+    // session", so a selection-scoped export with nothing selected refuses
+    // rather than quietly widening to the whole graph.
+    const scoped = cfg.exportScope === 'selection';
+    if (scoped && !selectedId) {
+      addToast({
+        title: 'Nothing selected',
+        description: 'Select a node, or switch the export scope to the whole session.',
+        tone: 'warning',
+      });
+      return;
+    }
     try {
       // The two image formats can only be produced from a layout, so they are
       // rendered here — but from the WHOLE graph, offscreen, at identity
@@ -211,7 +238,16 @@ export function WorkGraphPanel() {
       }
 
       if (toFile) {
-        const res = await window.limboo?.graph.save(sessionId, format, image);
+        // The image formats always capture the whole canvas: they are a picture
+        // of the layout, and there is no partial layout to render.
+        const res = await window.limboo?.graph.save(
+          sessionId,
+          format,
+          image,
+          // Scope applies to the data formats only: the image formats ARE the
+          // canvas, and there is no partial layout to render.
+          scoped && format !== 'svg' && format !== 'png' ? (selectedId ?? undefined) : undefined,
+        );
         if (!res?.saved) return; // cancelling the dialog is not a failure
         addToast({
           title: `Work Graph saved as ${format.toUpperCase()}`,
@@ -225,7 +261,7 @@ export function WorkGraphPanel() {
       // used to turn a large JSON export into invalid JSON behind a success
       // toast — so the size is checked here and the user is sent to the file
       // path instead of being handed something broken.
-      const text = image ?? (await exportGraph(format));
+      const text = image ?? (scoped ? await exportSubgraph(format) : await exportGraph(format));
       if (!text) throw new Error('export failed');
       if (text.length > CLIPBOARD_MAX) {
         throw new Error(
@@ -360,6 +396,8 @@ export function WorkGraphPanel() {
 
       {tab === 'legend' ? (
         <GraphLegend coloring={cfg.nodeColoring} droppedEdges={layout.droppedEdges} />
+      ) : tab === 'stats' ? (
+        <GraphRunStats stats={runStats} />
       ) : tab === 'outline' ? (
         shapedNodes.length === 0 ? (
           <EmptyState

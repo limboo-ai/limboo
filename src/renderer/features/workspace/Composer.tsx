@@ -30,6 +30,7 @@ import { useComposerStore } from '@/renderer/stores/useComposerStore';
 import { useFileDragActive } from '@/renderer/hooks/usePreventFileDrop';
 import { useTypewriter } from '@/renderer/hooks/useTypewriter';
 import { agentDisplayName, lifecycleMeta, phaseLabel } from '@/renderer/features/agent/status';
+import { RuntimeIndicator } from '@/renderer/features/agent/runtime/RuntimeIndicator';
 import { RUNNING_PHASES } from '@/renderer/features/sessions/useSessionRunning';
 import { ComposerControls } from './ComposerControls';
 import { ComposerModeSwitch } from './ComposerModeSwitch';
@@ -403,6 +404,11 @@ export function Composer({ disabled = false }: { disabled?: boolean }) {
                   Speaking — tap to stop
                 </button>
               )}
+              {/* The runtime ring sits immediately beside the status hint and
+                  renders nothing at all when telemetry is off or the provider
+                  reports no metrics — so this row is unchanged for a Cursor
+                  session. It adds no overflow (see the note above). */}
+              <RuntimeIndicator anchor="composer" />
               <StatusHint
                 installed={connected}
                 installError={installError}

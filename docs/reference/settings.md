@@ -125,12 +125,41 @@ speech-to-text / text-to-speech) categories also live in `DEFAULT_SETTINGS`;
 their defaults and clamps are in `SEARCH_LIMITS` / `VOICE_LIMITS` in the same
 constants file.
 
+## runtime
+
+Runtime Telemetry — a top-level peer of `graph`, because it is a platform
+service rather than provider config. The UI lives under Settings › Agent ›
+Runtime Indicators.
+
+| Key | Default | Notes |
+| --- | ------- | ----- |
+| `enabled` | `true` | off = no collection at all |
+| `persist` | `true` | **the enterprise policy switch**: off stops writes AND empties history reads |
+| `updateFrequency` | `250` | ms; push coalescing, clamped 100 - 5000 |
+| `idleRefreshMs` | `5000` | re-renders countdowns while open; polls no provider |
+| `retentionDays` | `90` | 0 = keep forever |
+| `retainRuns` | `200` | run rollups kept per session |
+| `indicator` / `anchor` / `pinned` | `true` / `composer` / `false` | the ring's surface and behaviour |
+| `ringSize` / `ringStroke` / `ringLabel` | `18` / `4` / `false` | |
+| `ringMetric` | `context-used` | `context-used \| context-remaining \| quota` |
+| `animation` | `subtle` | `none \| subtle \| full`; reduced motion overrides |
+| `layout` / `tokenDisplay` | `expanded` / `percent` | |
+| `showEstimates` / `showCostEstimate` / `showHistory` | `true` | |
+| `highContrast` | `false` | distinguishes segments without relying on hue |
+| `warnRemainingPct` / `criticalRemainingPct` | `25` / `10` | normalize enforces critical < warn |
+| `notifyRemainingPct` | `15` | 0 = off; also needs `behavior.notifications` |
+| `warnQuotaPct` | `80` | |
+| `sectionOrder` / `collapsedSections` | canonical / all but `context` | rebuilt against the known id set |
+
+Bounds live in `TELEMETRY_LIMITS`.
+
 ## Related limits
 
 Other bounds enforced by the main process live in the same constants file:
 `AGENT_LIMITS`, `AGENT_CONNECTION_LIMITS`, `LAYOUT_LIMITS`, `TERMINAL_LIMITS`,
 `GIT_LIMITS`, `WORKTREE_LIMITS` (worktrees, limboo.json, service ports),
 `MEMORY_LIMITS`, `SEARCH_LIMITS`, `VOICE_LIMITS`, `FS_LIMITS`,
+`GRAPH_LIMITS`, `TELEMETRY_LIMITS`,
 `SESSION_LIMITS`, `WORKSPACE_LIMITS`, `WINDOW_MIN` / `WINDOW_DEFAULT`, plus
 `DEFAULT_WORKSPACE_CONFIG`, `DEFAULT_IGNORED_DIRS`, and
 `FORBIDDEN_WORKSPACE_PATHS`.

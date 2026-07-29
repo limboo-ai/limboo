@@ -22,6 +22,7 @@ import type { VoiceModelManager } from '../managers/voice/VoiceModelManager';
 import type { CursorAuthManager } from '../managers/cursor/CursorAuthManager';
 import type { McpManager } from '../managers/mcp/McpManager';
 import type { WorkGraphManager } from '../managers/graph/WorkGraphManager';
+import type { RuntimeTelemetryManager } from '../managers/telemetry/RuntimeTelemetryManager';
 import { registerWindowHandlers } from './windowHandlers';
 import { registerSettingsHandlers } from './settingsHandlers';
 import { registerSystemHandlers } from './systemHandlers';
@@ -44,6 +45,7 @@ import { registerVoiceHandlers } from './voiceHandlers';
 import { registerCursorHandlers } from './cursorHandlers';
 import { registerMcpHandlers } from './mcpHandlers';
 import { registerGraphHandlers } from './graphHandlers';
+import { registerRuntimeHandlers } from './runtimeHandlers';
 
 export interface IpcDeps {
   settings: SettingsManager;
@@ -67,6 +69,7 @@ export interface IpcDeps {
   cursorAuth: CursorAuthManager;
   mcp: McpManager;
   graph: WorkGraphManager;
+  runtime: RuntimeTelemetryManager;
 }
 
 /**
@@ -118,4 +121,5 @@ export function registerAllIpc(deps: IpcDeps): void {
   registerCursorHandlers(deps.cursorAuth, () => deps.agent.hasActiveRuns());
   registerMcpHandlers(deps.mcp);
   registerGraphHandlers(deps.graph);
+  registerRuntimeHandlers(deps.runtime);
 }

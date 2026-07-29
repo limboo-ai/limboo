@@ -54,7 +54,12 @@ const REDACT_PATTERNS: RegExp[] = [
   /\bcrsr_[A-Za-z0-9_-]{8,200}\b/g,
 ];
 
-function redactSecrets(line: string): string {
+/**
+ * Exported so anything that puts a raw error string somewhere OTHER than the
+ * log — Runtime Telemetry's `snapshot.health.lastError` crosses IPC to the
+ * renderer — runs the same patterns rather than growing a second, weaker copy.
+ */
+export function redactSecrets(line: string): string {
   const lower = line.toLowerCase();
   if (!REDACT_TRIGGERS.some((t) => lower.includes(t))) return line;
   let out = line;

@@ -225,6 +225,27 @@ export const IpcChannels = {
   graphFindByRef: 'graph:findByRef',
   graphPrune: 'graph:prune',
   graphClear: 'graph:clear',
+  /** Export the selected node's bounded subgraph instead of the whole session. */
+  graphExportSubgraph: 'graph:exportSubgraph',
+  /** Per-run statistics, joined to the Runtime Telemetry rollups by run id. */
+  graphRunStats: 'graph:runStats',
+  /** Write one file per session into a user-chosen directory (main owns it). */
+  graphSaveBatch: 'graph:saveBatch',
+
+  // Runtime Telemetry — Limboo's provider-neutral runtime metrics service.
+  // Read + maintenance only: snapshots are produced in main from the provider
+  // event streams; the renderer never submits a measurement. The whole surface
+  // takes IDS and ENUM LITERALS only — no renderer-supplied object crosses it,
+  // so there is no prototype-pollution surface to defend here (CLAUDE.md §6).
+  runtimeGetSnapshot: 'runtime:getSnapshot',
+  runtimeGetHistory: 'runtime:getHistory',
+  /** Tell main whether any window has the inspector open (broadcast gating). */
+  runtimeSetWatching: 'runtime:setWatching',
+  runtimeExport: 'runtime:export',
+  /** Write an export to a user-chosen file (main owns the path — graph:save). */
+  runtimeSave: 'runtime:save',
+  /** Privacy action: erase all persisted telemetry. */
+  runtimeClearHistory: 'runtime:clearHistory',
 
   // MCP platform — provider-independent Model Context Protocol registry.
   // Server config crosses freely; secret env/header values cross only on
@@ -354,6 +375,8 @@ export const IpcEvents = {
   hooksAudit: 'hooks:audit',
   /** An incremental Work Graph delta (appended nodes/edges), or a reset signal. */
   graphChanged: 'graph:changed',
+  /** A coalesced Runtime Telemetry snapshot for one session, or a reset signal. */
+  runtimeChanged: 'runtime:changed',
   /** Progress of an in-flight search index pass. */
   searchIndexProgress: 'search:index-progress',
   /** A session's revalidation state advanced (checking / clean / delta). */

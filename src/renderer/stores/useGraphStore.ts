@@ -13,6 +13,7 @@ import { create } from 'zustand';
 import { GRAPH_LIMITS } from '@shared/constants';
 import type {
   GraphExportFormat,
+  GraphRunStat,
   WorkGraphEdge,
   WorkGraphHealth,
   WorkGraphNode,
@@ -67,6 +68,13 @@ interface GraphState {
   runQuery: (query: WorkGraphQuery, id: string | null) => Promise<void>;
   clearQuery: () => void;
   exportGraph: (format: GraphExportFormat) => Promise<string | null>;
+  /** Export the selected node's subgraph; null when nothing is selected. */
+  exportSubgraph: (format: GraphExportFormat) => Promise<string | null>;
+  /** Per-run statistics joined to the Runtime Telemetry rollups. */
+  runStats: GraphRunStat[];
+  loadRunStats: () => Promise<void>;
+  /** Batch export: one file per session into a user-chosen directory. */
+  saveBatch: (sessionIds: string[], format: GraphExportFormat) => Promise<number>;
   setZoom: (zoom: number) => void;
   prune: () => Promise<void>;
   clear: () => Promise<void>;
@@ -131,6 +139,7 @@ export const useGraphStore = create<GraphState>((set, get) => ({
   hydrated: false,
 
   selectedId: null,
+  runStats: [],
   revealId: null,
   kindFilter: [],
   zoom: GRAPH_LIMITS.zoom.default,
@@ -299,6 +308,43 @@ export const useGraphStore = create<GraphState>((set, get) => ({
     // Errors propagate: the caller reports the real reason (an over-cap export
     // has an actionable message), instead of a bare "export failed".
     return g.export(sessionId, format);
+  },
+
+  /**
+   * Export only the selected node's bounded subgraph. Returns null when
+   * nothing is selected, so a caller can disable the control rather than
+   * silently falling back to the whole session — those are different asks.
+   */
+  exportSubgraph: async (format) => {
+    const { sessionId, selectedId } = get();
+    const g = api();
+    if (!sessionId || !selectedId || !g) return null;
+    return g.exportSubgraph(sessionId, selectedId, format);
+  },
+
+  /** Per-run statistics, joined to the Runtime Telemetry rollups in main. */
+  loadRunStats: async () => {
+    const { sessionId } = get();
+    const g = api();
+    if (!sessionId || !g) {
+      set({ runStats: [] });
+      return;
+    }
+    try {
+      const runStats = await g.runStats(sessionId);
+      if (get().sessionId !== sessionId) return;
+      set({ runStats });
+    } catch {
+      set({ runStats: [] });
+    }
+  },
+
+  /** Write one file per session into a directory the user picks. */
+  saveBatch: async (sessionIds, format) => {
+    const g = api();
+    if (!g || sessionIds.length === 0) return 0;
+    const result = await g.saveBatch(sessionIds, format);
+    return result.saved;
   },
 
   setZoom: (zoom) => set({ zoom: clampZoom(zoom) }),

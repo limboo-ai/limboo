@@ -6,8 +6,19 @@
  * reduced-motion automatically (the transition is purely cosmetic).
  *
  * Optionally renders a centered `%` label (used in the Workspace settings view).
+ *
+ * Every prop below the original three is optional and defaulted to the previous
+ * behaviour, so existing call sites render byte-identically.
  */
 import { cn } from '@/renderer/lib/cn';
+
+/** Token per tone, so a threshold state never introduces an off-palette color. */
+const TONE_STROKE: Record<'accent' | 'warning' | 'danger' | 'success', string> = {
+  accent: 'var(--color-accent)',
+  warning: 'var(--color-warning)',
+  danger: 'var(--color-danger)',
+  success: 'var(--color-success)',
+};
 
 export function CircularProgress({
   value,
@@ -15,8 +26,12 @@ export function CircularProgress({
   showLabel = false,
   className,
   children,
+  stroke,
+  tone = 'accent',
+  indeterminate = false,
+  pulse = false,
 }: {
-  /** Progress 0–100. Values are clamped. */
+  /** Progress 0–100. Values are clamped. Ignored when `indeterminate`. */
   value: number;
   size?: number;
   /** Render the rounded percentage in the center (best at size ≥ 32). */
@@ -24,32 +39,55 @@ export function CircularProgress({
   className?: string;
   /** Custom centered content (e.g. a phase icon) — overrides `showLabel`. */
   children?: React.ReactNode;
+  /** Override the default `size / 9` stroke (a heavier ring reads at 18px). */
+  stroke?: number;
+  /** Threshold color. Tokens only — never a raw hex. */
+  tone?: 'accent' | 'warning' | 'danger' | 'success';
+  /**
+   * No denominator is known yet. Renders the track plus a slowly rotating
+   * quarter arc — deliberately NOT 0%, which reads as "empty" when the truth is
+   * "not measured yet". Those are opposite claims and must not look alike.
+   */
+  indeterminate?: boolean;
+  /** Breathe while work is in flight. Collapsed by the global reduced-motion rule. */
+  pulse?: boolean;
 }) {
   const pct = Math.max(0, Math.min(100, value));
-  const stroke = Math.max(2, Math.round(size / 9));
-  const r = (size - stroke) / 2;
+  const width = stroke !== undefined ? Math.max(1, stroke) : Math.max(2, Math.round(size / 9));
+  const r = (size - width) / 2;
   const c = 2 * Math.PI * r;
-  const dash = (pct / 100) * c;
+  const dash = indeterminate ? c * 0.25 : (pct / 100) * c;
 
   return (
     <span
       role="progressbar"
-      aria-valuenow={Math.round(pct)}
+      aria-valuenow={indeterminate ? undefined : Math.round(pct)}
       aria-valuemin={0}
       aria-valuemax={100}
-      className={cn('relative inline-flex items-center justify-center', className)}
+      aria-valuetext={indeterminate ? 'Not measured yet' : undefined}
+      className={cn(
+        'relative inline-flex items-center justify-center',
+        pulse && 'animate-pulse-soft',
+        className,
+      )}
       style={{ width: size, height: size }}
     >
-      <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} fill="none">
+      <svg
+        width={size}
+        height={size}
+        viewBox={`0 0 ${size} ${size}`}
+        fill="none"
+        className={indeterminate ? 'animate-spin-slow' : undefined}
+      >
         {/* Faint track */}
-        <circle cx={size / 2} cy={size / 2} r={r} stroke="var(--color-line-strong)" strokeWidth={stroke} />
-        {/* Accent progress arc — starts at 12 o'clock, sweeps clockwise */}
+        <circle cx={size / 2} cy={size / 2} r={r} stroke="var(--color-line-strong)" strokeWidth={width} />
+        {/* Progress arc — starts at 12 o'clock, sweeps clockwise */}
         <circle
           cx={size / 2}
           cy={size / 2}
           r={r}
-          stroke="var(--color-accent)"
-          strokeWidth={stroke}
+          stroke={TONE_STROKE[tone]}
+          strokeWidth={width}
           strokeLinecap="round"
           strokeDasharray={`${dash} ${c}`}
           transform={`rotate(-90 ${size / 2} ${size / 2})`}
@@ -59,7 +97,8 @@ export function CircularProgress({
       {children != null ? (
         <span className="absolute inline-flex items-center justify-center">{children}</span>
       ) : (
-        showLabel && (
+        showLabel &&
+        !indeterminate && (
           <span className="absolute font-mono text-[9px] font-semibold text-muted">
             {Math.round(pct)}
           </span>

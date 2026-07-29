@@ -81,7 +81,9 @@ import {
   CURSOR_RESUME_ID_RE,
   DEFAULT_SETTINGS,
   GIT_LIMITS,
+  MEMORY_LIMITS,
   RESUME_LIMITS,
+  SEARCH_LIMITS,
   providerForModel,
 } from '@shared/constants';
 import type { AgentProvider } from '@shared/constants';
@@ -116,6 +118,14 @@ import {
   type TerminalResult,
 } from './agent/terminalResult';
 import { HookEngine, type HookEmit } from './hooks/HookEngine';
+import {
+  signalFromRateLimit,
+  signalFromResult,
+  signalFromToolProgress,
+  signalsFromStreamEvent,
+  signalsFromSystem,
+} from './telemetry/claudeSignals';
+import type { ProviderTelemetrySignal, RuntimeSink } from './telemetry/types';
 import type { PermissionDecisionSignal } from './graph/builder';
 import type { CursorRunOutcome, ProviderRunBridge } from './cursor/types';
 import { isSubagentTool } from '@shared/subagents';
@@ -707,6 +717,25 @@ export class AgentManager {
   private heartbeatTimer: NodeJS.Timeout | null = null;
   private rateLimitTimer: NodeJS.Timeout | null = null;
   private idleTimer: NodeJS.Timeout | null = null;
+  /**
+   * Runtime Telemetry sink. A narrow, setter-injected callback rather than a
+   * new {@link AgentEvent} kind: its sources fire per API request, per delta
+   * frame and per tool heartbeat, and putting that volume on the render bus
+   * would oblige every present and future consumer to filter it out forever.
+   * {@link AgentEvent} is also a frozen contract.
+   *
+   * This manager only ever OBSERVES AND FORWARDS — every decision about what a
+   * measurement means lives in the telemetry accumulator.
+   */
+  private telemetrySink: RuntimeSink | null = null;
+  /**
+   * The MEASURED number of memories / search locations injected into the most
+   * recent prompt, per session. Written by `memoryContextFor` /
+   * `searchContextFor` — the only two places that know the real count — and
+   * read once by `emitRunStart`. Reset to 0 at the top of each producer so a
+   * turn that retrieves nothing cannot inherit the previous turn's number.
+   */
+  private readonly retrievalCounts = new Map<string, { memory: number; search: number }>();
   private readonly runtimes = new Map<string, SessionRuntime>();
   private readonly runs = new Map<string, ActiveRun>();
   /**
@@ -982,6 +1011,10 @@ export class AgentManager {
    * Fully local and best-effort: a failure never blocks the run.
    */
   private memoryContextFor(sessionId: string, prompt: string): string | undefined {
+    this.retrievalCounts.set(sessionId, {
+      ...(this.retrievalCounts.get(sessionId) ?? { memory: 0, search: 0 }),
+      memory: 0,
+    });
     if (!this.memory) return undefined;
     const cfg = this.settings.getAll().memory;
     if (!cfg.enabled || !cfg.injectIntoPrompt) return undefined;
@@ -995,6 +1028,13 @@ export class AgentManager {
       });
       const block = this.memory.buildContextBlock(hits);
       if (block) {
+        // The MEASURED hit count, for Runtime Telemetry. `cfg.maxInjected` is a
+        // ceiling and reporting it as "memories injected" would be a fabricated
+        // number in a subsystem whose whole premise is that it never fabricates.
+        this.retrievalCounts.set(sessionId, {
+          ...(this.retrievalCounts.get(sessionId) ?? { memory: 0, search: 0 }),
+          memory: hits.length,
+        });
         this.diag('request', 'debug', `Injected ${hits.length} memories`, undefined, sessionId);
         // Surface an inline marker in the conversation so the recall is visible in
         // the timeline, not just the diagnostics console.
@@ -1027,6 +1067,10 @@ export class AgentManager {
    * run. Advisory to the agent — its own Read/Grep/Glob remain authoritative.
    */
   private searchContextFor(sessionId: string, prompt: string): string | undefined {
+    this.retrievalCounts.set(sessionId, {
+      ...(this.retrievalCounts.get(sessionId) ?? { memory: 0, search: 0 }),
+      search: 0,
+    });
     if (!this.search) return undefined;
     const cfg = this.settings.getAll().search;
     if (!cfg.enabled || !cfg.injectContext) return undefined;
@@ -1039,6 +1083,11 @@ export class AgentManager {
       });
       const block = this.search.buildContextBlock(hits);
       if (block) {
+        // Measured, not the configured ceiling — see `memoryContextFor`.
+        this.retrievalCounts.set(sessionId, {
+          ...(this.retrievalCounts.get(sessionId) ?? { memory: 0, search: 0 }),
+          search: hits.length,
+        });
         this.diag('request', 'debug', `Injected ${hits.length} context items`, undefined, sessionId);
         const label =
           hits.length === 1 ? 'Retrieved 1 relevant location' : `Retrieved ${hits.length} relevant locations`;
@@ -1782,6 +1831,7 @@ export class AgentManager {
     // rows are deleted (the audit trail for this session is cleared with them).
     this.emitHook(sessionId, 'session-end', { summary: 'Session cleared' });
     this.runtimes.delete(sessionId);
+    this.retrievalCounts.delete(sessionId);
     const db = getDb();
     db.prepare('DELETE FROM agent_messages WHERE session_id = ?').run(sessionId);
     db.prepare('DELETE FROM agent_activity WHERE session_id = ?').run(sessionId);
@@ -2539,6 +2589,20 @@ export class AgentManager {
           ? this.attachments.manifestFor(sessionId, attachIds)
           : undefined;
       const effectivePrompt = manifest ? `${prompt}\n\n${manifest}` : prompt;
+      // Runtime Telemetry opens the run HERE, not earlier, because this is the
+      // first point at which every block Limboo composed for this prompt exists
+      // as a string — the three context blocks AND the attachment manifest. The
+      // provider reports one aggregate input-token count and no breakdown at
+      // all, so these measured lengths are the only honest basis for the
+      // per-contributor split. Nothing between here and the retrieval above
+      // depends on this call, and measuring the manifest beats estimating it.
+      this.emitRunStart(sessionId, agent.model, permMode, {
+        memory: memoryContext?.length ?? 0,
+        search: searchContext?.length ?? 0,
+        resume: resumeContext?.length ?? 0,
+        attachments: manifest?.length ?? 0,
+        prompt: prompt.length,
+      });
       const imageBlocks =
         attachIds.length > 0 && this.attachments
           ? this.attachments.imageBlocksFor(sessionId, attachIds)
@@ -2644,6 +2708,13 @@ export class AgentManager {
           this.rememberProviderSession(sessionId, 'anthropic', msg.session_id);
           break;
         }
+        // Runtime Telemetry FIRST. `onTaskMessage` no-ops on any subtype that
+        // does not start with `task_`, so the order is safe either way — but
+        // taking telemetry first means a future task subtype cannot shadow a
+        // measurement by claiming the message before we look at it.
+        this.emitTelemetryAll(
+          signalsFromSystem(sessionId, msg as unknown as Record<string, unknown>),
+        );
         // The Agent SDK's task lifecycle. These are the provider's OWN
         // measurements of a delegation — duration, tool count, tokens, and an
         // AI-written progress line — joined to the spawning call by
@@ -2660,6 +2731,31 @@ export class AgentManager {
           // still invoked inside queueDelta so the message is created on first token.
           queueDelta(ev.delta.text);
         }
+        // `message_start` / `message_delta` on this same stream carry the
+        // provider's MEASURED token usage for each API request — the live
+        // context-window number. The translator ignores the content deltas
+        // handled above, so the two paths never interfere.
+        this.emitTelemetryAll(
+          signalsFromStreamEvent(sessionId, msg as unknown as Record<string, unknown>),
+        );
+        break;
+      }
+
+      case 'tool_progress': {
+        const signal = signalFromToolProgress(
+          sessionId,
+          msg as unknown as Record<string, unknown>,
+        );
+        if (signal) this.emitTelemetry(signal);
+        break;
+      }
+
+      case 'rate_limit_event': {
+        // The provider's own rolling quota windows. Until now Limboo learned
+        // about a quota only by regex-matching an error string — which by
+        // definition fired after the user had already been cut off.
+        const signal = signalFromRateLimit(msg as unknown as Record<string, unknown>);
+        if (signal) this.emitTelemetry(signal);
         break;
       }
 
@@ -2718,7 +2814,12 @@ export class AgentManager {
           if (block.type === 'tool_result') {
             const id = String(block.tool_use_id ?? '');
             const status = block.is_error ? 'error' : 'done';
-            this.onToolResult(sessionId, id, status, toolResultText(block.content));
+            const text = toolResultText(block.content);
+            this.onToolResult(sessionId, id, status, text);
+            // Tool results are the largest thing Limboo can attribute in the
+            // context window that it did not compose itself.
+            const call = this.runtimes.get(sessionId)?.toolCalls.find((c) => c.id === id);
+            this.observeResultChars(sessionId, call?.name ?? '', text);
           }
         }
         break;
@@ -2726,6 +2827,12 @@ export class AgentManager {
 
       case 'result': {
         finishStreaming();
+        // Two readers, deliberately separate. `readTerminalResult` decides the
+        // run's OUTCOME and feeds the renderer's result event; `signalFromResult`
+        // reads the MEASUREMENTS (usage, modelUsage, cost, turns, timings).
+        // Widening TerminalResult to carry both would put numbers nobody
+        // classifies on a type whose whole job is classification.
+        this.emitTelemetry(signalFromResult(sessionId, msg as unknown as Record<string, unknown>));
         this.recordRunResult(sessionId, readTerminalResult(msg));
         break;
       }
@@ -2849,6 +2956,19 @@ export class AgentManager {
         : undefined;
     const basePrompt = manifest ? `${prompt}\n\n${manifest}` : prompt;
 
+    // Runtime Telemetry, same call and same position as the Claude path: after
+    // every block Limboo composed exists as a string. Cursor's capability set
+    // hides every token-derived section, so these lengths go unused today — but
+    // they are measured identically, so the day Cursor reports a token count
+    // the split works with no change here.
+    this.emitRunStart(sessionId, agent.model, permMode, {
+      memory: memoryContext?.length ?? 0,
+      search: searchContext?.length ?? 0,
+      resume: resumeContext?.length ?? 0,
+      attachments: manifest?.length ?? 0,
+      prompt: prompt.length,
+    });
+
     const isAsk = permMode === 'ask';
     const trusted = this.repoTrustResolver ? this.repoTrustResolver(sessionId) : false;
 
@@ -2946,6 +3066,15 @@ export class AgentManager {
           subtype: ok ? 'success' : 'error_during_execution',
           errors: ok || !text ? [] : [text],
           text,
+        }),
+      // Close the telemetry run with the single measurement Cursor reports.
+      // Every other field is omitted rather than defaulted — a zero here would
+      // claim the provider measured nothing, not that it reported nothing.
+      onUsage: (usage) =>
+        this.emitTelemetry({
+          kind: 'run-end',
+          sessionId,
+          durationMs: usage.durationMs,
         }),
       diag: (category, severity, label, detail) =>
         this.diag(category as DiagnosticCategory, severity, label, detail, sessionId),
@@ -5158,6 +5287,24 @@ export class AgentManager {
       .run(sessionId, provider);
   }
 
+  /**
+   * The stored provider resume token for a session, for display. Read-only and
+   * best-effort: this feeds the Runtime Inspector's execution section, which
+   * must never be able to fail a run.
+   */
+  providerSessionIdFor(sessionId: string, provider: AgentProvider): string | undefined {
+    try {
+      const row = getDb()
+        .prepare(
+          'SELECT provider_session_id FROM agent_provider_sessions WHERE session_id = ? AND provider = ?',
+        )
+        .get(sessionId, provider) as { provider_session_id?: string } | undefined;
+      return row?.provider_session_id;
+    } catch {
+      return undefined;
+    }
+  }
+
   /* ---------------------------------------------------------------- */
   /* State + broadcast                                                */
   /* ---------------------------------------------------------------- */
@@ -5411,6 +5558,102 @@ export class AgentManager {
     for (const win of BrowserWindow.getAllWindows()) {
       if (!win.isDestroyed()) win.webContents.send(channel, payload);
     }
+  }
+
+  /* ---------------------------------------------------------------- */
+  /* Runtime Telemetry                                                 */
+  /* ---------------------------------------------------------------- */
+
+  /** Inject the Runtime Telemetry sink (see {@link telemetrySink}). */
+  setTelemetrySink(sink: RuntimeSink): void {
+    this.telemetrySink = sink;
+  }
+
+  /**
+   * Forward one telemetry signal. Swallows everything: observability must never
+   * be able to break a run. The failure is not lost — the telemetry manager
+   * counts it and surfaces it as snapshot health, so a stream that stopped
+   * recording never looks like a quiet session.
+   */
+  private emitTelemetry(signal: ProviderTelemetrySignal): void {
+    if (!this.telemetrySink) return;
+    try {
+      this.telemetrySink(signal);
+    } catch (err) {
+      logger.warn('telemetry sink failed', err);
+    }
+  }
+
+  /** Forward several signals (the stream-event translator returns a list). */
+  private emitTelemetryAll(signals: ProviderTelemetrySignal[]): void {
+    for (const signal of signals) this.emitTelemetry(signal);
+  }
+
+  /**
+   * Open a telemetry run, carrying the measured character lengths of the blocks
+   * Limboo composed for this prompt. Shared by both provider paths so the
+   * accumulator never learns which adapter is running.
+   */
+  private emitRunStart(
+    sessionId: string,
+    model: string,
+    mode: SessionPermissionMode,
+    chars: {
+      memory: number;
+      search: number;
+      resume: number;
+      /** The attachment manifest as actually composed — measured, not estimated. */
+      attachments: number;
+      prompt: number;
+    },
+  ): void {
+    if (!this.telemetrySink) return;
+    // Measured by the producers themselves. Reading `maxInjected` here would
+    // report the configured CEILING as though it were the count.
+    const retrieved = this.retrievalCounts.get(sessionId) ?? { memory: 0, search: 0 };
+
+    this.emitTelemetry({
+      kind: 'run-start',
+      sessionId,
+      runId: `${sessionId}:${Date.now()}`,
+      provider: providerForModel(model),
+      model,
+      mode,
+      injected: {
+        memory: chars.memory,
+        search: chars.search,
+        resume: chars.resume,
+        attachments: chars.attachments,
+        prompt: chars.prompt,
+        memoryHits: retrieved.memory,
+        searchHits: retrieved.search,
+        memoryBudget: MEMORY_LIMITS.injectCharBudget,
+        searchBudget: SEARCH_LIMITS.injectCharBudget,
+      },
+    });
+    this.telemetryChars?.(sessionId, 'conversation', chars.prompt);
+  }
+
+  /**
+   * Character tallies Limboo measured of content it OBSERVED rather than
+   * composed — tool results, split by MCP vs built-in. These feed the
+   * per-contributor context split, which has no other honest source: the API
+   * reports one aggregate input-token count and no breakdown at all.
+   */
+  private observeResultChars(sessionId: string, toolName: string, text: string): void {
+    if (!this.telemetryChars || !text) return;
+    this.telemetryChars(sessionId, toolName.startsWith('mcp__') ? 'mcp' : 'tools', text.length);
+  }
+
+  private telemetryChars:
+    | ((sessionId: string, kind: 'conversation' | 'tools' | 'mcp', chars: number) => void)
+    | null = null;
+
+  /** Inject the observed-character tally sink (see {@link observeResultChars}). */
+  setTelemetryCharSink(
+    sink: (sessionId: string, kind: 'conversation' | 'tools' | 'mcp', chars: number) => void,
+  ): void {
+    this.telemetryChars = sink;
   }
 }
 

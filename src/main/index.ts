@@ -8,6 +8,7 @@
  */
 import { app, BrowserWindow, nativeTheme, session } from 'electron';
 import started from 'electron-squirrel-startup';
+import path from 'node:path';
 
 import { installGlobalErrorHandlers, logger } from './logger';
 import { createMainWindow, getMainWindow } from './window/createWindow';
@@ -38,6 +39,7 @@ import { CursorAuthManager } from './managers/cursor/CursorAuthManager';
 import { CursorRuntime } from './managers/cursor/CursorRuntime';
 import { McpManager } from './managers/mcp/McpManager';
 import { WorkGraphManager } from './managers/graph/WorkGraphManager';
+import { RuntimeTelemetryManager } from './managers/telemetry/RuntimeTelemetryManager';
 import { setMcpObserver } from './managers/graph/instrument';
 import { configureCursorExec } from './managers/cursor/exec';
 import { registerCursorModels } from '@shared/constants';
@@ -106,8 +108,10 @@ function bootstrap(): void {
   let cursorRuntime: CursorRuntime;
   let mcp: McpManager;
   let workGraph: WorkGraphManager;
+  let runtime: RuntimeTelemetryManager;
   let memorySweepTimer: ReturnType<typeof setInterval> | undefined;
   let graphSweepTimer: ReturnType<typeof setInterval> | undefined;
+  let runtimeSweepTimer: ReturnType<typeof setInterval> | undefined;
   const windowState = new WindowStateManager();
   const appMenu = new AppMenuManager();
   const tray = new TrayManager();
@@ -212,6 +216,56 @@ function bootstrap(): void {
     // streams into one typed, queryable DAG of the work itself. Purely
     // additive: it only observes, so no existing wiring path changes.
     workGraph = new WorkGraphManager(settings, sessions);
+    // Runtime Telemetry — the fifth peer of Memory / Search / Resume / Work
+    // Graph. It normalizes BOTH adapters' runtime measurements into one
+    // provider-independent model, so the inspector shows whatever the running
+    // provider actually reports and omits what it does not. Purely additive:
+    // like the Work Graph it only observes, and every ingestion path swallows.
+    runtime = new RuntimeTelemetryManager(settings, sessions);
+    // The Limboo-owned half of a snapshot. Plain getters rather than manager
+    // injections — this needs one fact from each subsystem, and the worktree
+    // path is deliberately relativized here so an absolute $HOME path can never
+    // reach a snapshot or an export.
+    runtime.setHostSources({
+      attachmentCount: (sessionId) => attachments.list(sessionId).length,
+      mcpCounts: () => {
+        const servers = mcp.list();
+        return {
+          connected: servers.filter((s) => s.runtime?.status === 'connected').length,
+          total: servers.length,
+        };
+      },
+      indexStatus: () => search.getStatus(workspace.getActive()?.id ?? null),
+      worktree: (sessionId) => {
+        const session = sessions.get(sessionId);
+        if (!session?.worktreePath || !session.worktreeBranch) return null;
+        // NEVER let an absolute path reach a snapshot. Relativizing against the
+        // workspace is only valid when the worktree is INSIDE it — and the
+        // default worktree root is `{userData}/worktrees`, which never is, so
+        // `path.relative` yields a `../../…` walk right back out to $HOME. With
+        // no workspace at all the old fallback handed over the absolute path
+        // outright. Both collapse to the leaf name, which is all the UI shows.
+        const root = workspace.getActive()?.path;
+        const rel = root ? path.relative(root, session.worktreePath) : '..';
+        const contained = rel.length > 0 && !rel.startsWith('..') && !path.isAbsolute(rel);
+        return {
+          branch: session.worktreeBranch,
+          path: contained ? rel : path.basename(session.worktreePath),
+        };
+      },
+      providerSessionId: (sessionId, provider) =>
+        agent.providerSessionIdFor(sessionId, provider),
+    });
+    runtime.setNotifications(notifications);
+    // The Work Graph's statistics view and its telemetry-annotated exports join
+    // against these rollups by run id. One-directional: the graph may read
+    // telemetry, telemetry never reads the graph.
+    workGraph.setTelemetrySource({ rollupsFor: (id) => runtime.rollupsFor(id) });
+    // The character tallies behind the context split. AgentManager measures the
+    // blocks it composed; this carries what it merely observed (tool results).
+    agent.setTelemetryCharSink((sessionId, kind, chars) =>
+      runtime.addObservedChars(sessionId, kind, chars),
+    );
     // The agent mirrors its shell commands into the integrated terminal.
     agent.setTerminalManager(terminal);
     // The agent auto-titles untitled sessions from their first prompt.
@@ -357,6 +411,7 @@ function bootstrap(): void {
       cursorAuth,
       mcp,
       graph: workGraph,
+      runtime,
     });
     // Begin capability supervision (probe + heartbeat) once IPC is wired.
     agent.start();
@@ -369,6 +424,10 @@ function bootstrap(): void {
     // `agent.hookEngine.enabled`, so a graph depending on it would go blank
     // whenever a user turns hooks off.)
     workGraph.start(agent);
+    // Subscribe Runtime Telemetry to the provider streams. Same argument as the
+    // Work Graph: AgentManager is the one place both adapters converge, and it
+    // swallows sink throws, so telemetry can never break a run.
+    runtime.start(agent);
     // Observe Limboo's OWN MCP tools. Both providers call the same PlainTool
     // handlers, so this one hook covers the SDK in-process servers (Claude) and
     // the stdio bridge dispatcher (Cursor). Enrichment only — these calls
@@ -454,6 +513,8 @@ function bootstrap(): void {
     // The Work Graph's age sweep rides the same low-frequency tick.
     workGraph.sweep();
     graphSweepTimer = setInterval(() => workGraph.sweep(), 60 * 60 * 1000);
+    // Age-sweep the telemetry time series on the same hourly maintenance tick.
+    runtimeSweepTimer = setInterval(() => runtime.sweep(), 60 * 60 * 1000);
 
     appMenu.install();
 
@@ -564,6 +625,12 @@ function bootstrap(): void {
     safeDispose('workGraph', () => {
       setMcpObserver(null);
       workGraph?.dispose();
+    });
+    safeDispose('runtime', () => {
+      runtime?.dispose();
+    });
+    safeDispose('runtimeSweep', () => {
+      if (runtimeSweepTimer) clearInterval(runtimeSweepTimer);
     });
     safeDispose('graphSweep', () => {
       if (graphSweepTimer) clearInterval(graphSweepTimer);

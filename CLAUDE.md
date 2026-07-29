@@ -755,6 +755,94 @@ nodes for free. Full doc: `docs/architecture/subsystems/work-graph.md`.
   `settings.graph.virtualizeThreshold`. Settings under the **Work Graph**
   category (`settings.graph`, bounds in `GRAPH_LIMITS`).
 
+### Runtime Telemetry
+
+A provider-neutral **platform service owned by the app** — the fifth peer of
+Memory, Search, Resume and the Work Graph. Full doc:
+`docs/architecture/subsystems/runtime-telemetry.md`.
+
+- **Capabilities, not provider branches.** `PROVIDER_CAPABILITIES` /
+  `CAPABILITY_NOTE` (`src/shared/runtime.ts`) are stamped onto every
+  `RuntimeSnapshot` by MAIN. The renderer reads `snapshot.capabilities` and
+  `snapshot.notes` and **never the provider id**, so a section hides itself
+  (with the provider's own reason) when the adapter cannot measure it. Both
+  tables are **main-only** — importing either into `src/renderer/**` is the
+  mistake to catch in review.
+- **Cursor reports nothing quantitative but `result.duration_ms`.** Token counts
+  in `--output-format stream-json` are an open Cursor feature request, not
+  shipped, and request quotas exist only in the team-scoped Enterprise Admin API
+  (`api.cursor.com`) — a network call this app deliberately does not make. Those
+  sections render **"not reported by this provider"**, never a zero.
+- **`AgentManager` only OBSERVES AND FORWARDS.** Capture rides a narrow
+  setter-injected `RuntimeSink`, not a new `AgentEvent`: the sources fire per API
+  request, per delta frame and per tool heartbeat, and `AgentEvent` is frozen.
+  `telemetry/claudeSignals.ts` translates the wire format (the
+  `cursor/translate.ts` idiom); `telemetry/accumulator.ts` is a **pure reducer**
+  (no DB, no IPC, no clock — the `graph/builder.ts` contract).
+- **Three correctness rules, all in the accumulator.** (1) Deduplicate
+  `message_start` by `message.id` — parallel tool calls repeat one id with
+  identical usage, which Anthropic documents, and counting each multiplies the
+  gauge by the fan-out. (2) A subagent's frames (`parent_tool_use_id`) never
+  touch the parent's gauge; run totals come from `modelUsage` (includes
+  subagents), never the flat `usage` (excludes them). (3) The measured total is
+  the authority and estimates fill in beneath it.
+- **Measured vs estimated is visible.** The total, the window
+  (`modelUsage[model].contextWindow` — so there is **no hardcoded model table**,
+  and none may be added) and the reservation are measured; the per-contributor
+  split is Limboo counting characters of blocks IT composed, divided by a
+  constant, and is labelled `~` everywhere. When the estimates exceed the
+  measured total the split is **dropped, not scaled** (`attributionDegraded`).
+- **No denominator → INDETERMINATE, never 0%.** `contextWindow` arrives only on
+  the result message. "Not measured yet" and "empty" are opposite claims and
+  must not look alike. `telemetry_model_limits` persists it so the state is brief.
+- **`total_cost_usd` is a client-side estimate** from the SDK's bundled price
+  table (Anthropic's docs say so, and say not to bill from it). The field is
+  named `costEstimateUsd`; the UI always says "estimated".
+- **Storage is the redaction policy** (schema v18): `telemetry_usage_samples`,
+  `telemetry_model_limits`, `telemetry_run_rollups` have **no column** that can
+  hold a prompt, path, tool input or title — so an export cannot leak
+  conversation data. Exports are built field-by-field from a whitelist.
+- **The ring** mounts in the composer footer's `ml-auto` cluster and introduces
+  **no `overflow-x`** (that row's popovers open upward and any overflow clips
+  them); the card opens upward too. It renders **nothing** when telemetry is
+  off, and otherwise is always present: a session with no run yet gets an **idle
+  snapshot** (capabilities + environment, no `context`, no `run`) so the ring is
+  discoverable from the start instead of appearing mid-session. That snapshot's
+  provider is read from the SELECTED model — the one settings read in this
+  subsystem, valid only because there is no run to attribute yet.
+  `components/ui/HoverCard.tsx` is the app's first shared popover primitive —
+  hand-rolled on the `ComposerControls` idiom, no new dependency.
+- **The inspector's height cap is structural, not taste.** It is absolutely
+  positioned inside the composer footer, inside the `overflow-hidden` floating
+  workspace card — a tall panel is CLIPPED, not overflowed. Hence
+  `max-h-[min(52vh,420px)]`, only **Context** expanded by default, and no
+  standing footer disclaimer (the `~` on every estimate travels with the number
+  instead). **Do not re-expand the sections or add a footer paragraph.**
+- **Throttled + watch-gated**: coalesced per session with a monotonic `seq`; with
+  nothing watching, main keeps ingesting but pushes only at run boundaries. The
+  idle tick re-renders countdowns and **polls no provider**. The watch signal is
+  a **`Set` keyed by `webContents.id`, never a counter** — main retires an entry
+  on `destroyed`/`did-start-navigation`, because a counter only the renderer can
+  decrement is pinned at full push rate by any window that reloads or crashes
+  mid-hover.
+- **Nothing leaves main un-narrowed.** `worktree.path` falls back to its
+  BASENAME whenever relativizing escapes the workspace (the default worktree
+  root is `{userData}/worktrees`, so it usually does); `health.lastError` — the
+  subsystem's one free string — runs through the logger's own `redactSecrets`
+  and then has paths collapsed; `providerSessionId` renders truncated with no
+  full-value tooltip. Injected memory/search counts are the **measured**
+  `hits.length` from the producers, never `maxInjected`, which is a ceiling.
+- Settings live at **`settings.runtime`** (top-level peer of `settings.graph` —
+  it is a platform service, not provider config) with the UI under Settings ›
+  Agent › Runtime Indicators. `TELEMETRY_LIMITS`, `SETTINGS_VERSION` 25.
+  `persist: false` is the enterprise switch and is genuinely off: it stops writes
+  AND empties history reads.
+- **The Work Graph joins it by `runId` only** — `graph:runStats` and
+  `settings.graph.exportTelemetry`. One-directional (the graph reads telemetry,
+  never the reverse), and only numbers cross, never telemetry text. The graph
+  also gained `ndjson`/`graphml`/`puml` exports, `exportScope: 'selection'`, and
+  `graph:saveBatch` (main owns the directory, as it owns the path in `save`).
+
 ### The conversation timeline: message actions + conversation revert
 
 Every block in the stream is actionable, and Plan Mode has exactly two surfaces.

@@ -192,16 +192,51 @@ normalized event stream, so the renderer never authors a node.
 - `findByRef(sessionId, ref)` — resolve a commit / message / terminal / memory
   to its node id, against the indexed ref columns rather than the loaded window.
 - `export(sessionId, format)` — serialize to a string for the clipboard.
-  `json | md | mermaid | dot | csv | html`. Byte-capped in main.
-- `save(sessionId, format, content?)` — write an export to a file. Main opens
-  the save dialog and owns the path; the renderer supplies only a format, plus
-  the rendered bytes for `svg`/`png` (which main cannot draw). Returns
-  `{ saved, path? }`; a cancelled dialog is `{ saved: false }`, not an error.
+  `json | ndjson | md | mermaid | dot | puml | graphml | csv | html`.
+  Byte-capped in main.
+- `exportSubgraph(sessionId, nodeId, format)` — the same, scoped to one node's
+  bounded subgraph (the depth-capped traversal the panel already runs to focus a
+  node; the depth comes from settings, never from the renderer).
+- `save(sessionId, format, content?, scopeNodeId?)` — write an export to a file.
+  Main opens the save dialog and owns the path; the renderer supplies only a
+  format, plus the rendered bytes for `svg`/`png` (which main cannot draw) and an
+  optional scope anchor. Returns `{ saved, path? }`; a cancelled dialog is
+  `{ saved: false }`, not an error.
+- `saveBatch(sessionIds, format)` — one file per session into a directory the
+  user picks. Ids are validated individually and the count is capped; main owns
+  the directory the same way it owns the path in `save`.
+- `runStats(sessionId)` — per-run statistics (nodes, edges, tools, errors),
+  joined to the Runtime Telemetry rollups by run id for duration, tokens, peak
+  context and an estimated cost. Fields telemetry never measured are omitted.
 - `prune(sessionId)` — drop nodes left unattached by an interrupted run.
 - `clear(sessionId)` — delete this session's graph. Session id is required:
   clearing every session is maintenance, not a renderer-triggerable action.
 - `onChanged(cb)` — incremental deltas (upserts + ring-pruned `removed` ids) or
   a reset signal.
+
+## runtime
+
+Runtime Telemetry — the provider-neutral runtime metrics service. Read and
+maintenance only: snapshots are *produced* in main from the provider event
+streams, so the renderer never submits a measurement. Every metric is an optional
+capability the running adapter reports; the renderer reads
+`snapshot.capabilities` and `snapshot.notes` and never the provider id, so a
+section hides itself (with a reason) when the provider cannot measure it.
+
+- `getSnapshot(sessionId)` — the current normalized snapshot, or `null` when
+  telemetry is disabled.
+- `getHistory(sessionId)` — rolling-window trend points. Returns
+  `disabled: true` when `settings.runtime.persist` is off, so the UI can say
+  "disabled by policy" rather than showing an empty chart.
+- `setWatching(watching)` — declare whether this window shows the inspector.
+  With nothing watching, main keeps ingesting (history stays complete) but
+  pushes only at run boundaries.
+- `export(sessionId, format)` — `json | csv`, byte-capped in main. Aggregate
+  counts and timings only.
+- `save(sessionId, format)` — write an export to a file. Main opens the dialog
+  and owns the path; the renderer supplies no path at all.
+- `clearHistory()` — erase every persisted telemetry row.
+- `onChanged(cb)` — coalesced snapshots for one session, or a reset signal.
 
 ## updates
 

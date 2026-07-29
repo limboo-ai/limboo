@@ -60,6 +60,15 @@ export interface ProviderRunBridge {
   onInit(chatId: string): void;
   /** Terminal result event (present only on clean completions). */
   onResult(ok: boolean, text: string): void;
+  /**
+   * Runtime Telemetry. Optional because a provider bridge is not obliged to
+   * measure anything — and Cursor very nearly does not: `duration_ms` on the
+   * result event is the only quantitative field its stream carries. Token
+   * counts in `--output-format stream-json` are an open Cursor feature
+   * request, not shipped, and request quotas live only in the team-scoped
+   * Enterprise Admin API, which this app deliberately never calls.
+   */
+  onUsage?(usage: { durationMs?: number }): void;
   /** Structured diagnostics (already-redacted detail only). */
   diag(
     category: string,

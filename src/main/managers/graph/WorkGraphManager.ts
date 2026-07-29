@@ -25,6 +25,7 @@
  */
 import { BrowserWindow, dialog } from 'electron';
 import fs from 'node:fs/promises';
+import path from 'node:path';
 import { IpcEvents } from '@shared/ipc-channels';
 import { DEFAULT_SETTINGS, GRAPH_LIMITS, providerForModel } from '@shared/constants';
 import type {
@@ -32,6 +33,7 @@ import type {
   AppSettings,
   GitCheckpoint,
   GitCommit,
+  GraphRunStat,
   ServiceInfo,
   Session,
   WorkGraphHealth,
@@ -60,13 +62,32 @@ import { deriveFileDependencies, deriveVerifiedBy } from './derive';
 import {
   FORMAT_EXTENSION,
   FORMAT_LABEL,
+  TELEMETRY_CAPABLE_FORMATS,
   exportGraph,
   type GraphDataFormat,
+  type RunTelemetry,
 } from './exporters';
 import type { McpInvocation } from './instrument';
 import { WorkGraphQueryEngine } from './query';
 import { redactSecrets } from './redact';
 import { WorkGraphStore, type WorkGraphWriteResult } from './store';
+
+/**
+ * The Runtime Telemetry rows the statistics view and the annotated exports
+ * join against. Declared structurally here rather than imported from the
+ * telemetry manager, so the dependency stays one-directional: the graph may
+ * read telemetry, telemetry never reads the graph.
+ */
+export interface GraphTelemetrySource {
+  rollupsFor(sessionId: string): Array<{
+    runId: string;
+    durationMs?: number;
+    inputTokens: number;
+    outputTokens: number;
+    costEstimateUsd?: number;
+    peakContextTokens?: number;
+  }>;
+}
 
 /** Debounce for the git reconciler; a single op fires `notifyChanged` repeatedly. */
 const GIT_RECONCILE_MS = 400;
@@ -281,7 +302,14 @@ export class WorkGraphManager {
    */
   export(sessionId: string, format: GraphDataFormat): string {
     const snap = this.store.snapshot(sessionId, this.config().maxNodes);
-    const out = exportGraph(format, sessionId, snap.nodes, snap.edges, snap.truncated);
+    const out = exportGraph(
+      format,
+      sessionId,
+      snap.nodes,
+      snap.edges,
+      snap.truncated,
+      this.telemetryFor(sessionId, format),
+    );
     // Bounded: this string crosses IPC by structured clone, and a large session
     // can render tens of megabytes. Callers that need the whole graph regardless
     // of size use `save()`, which streams it to a file instead.
@@ -289,6 +317,117 @@ export class WorkGraphManager {
       throw new Error('graph: export exceeds the size limit — save it to a file instead');
     }
     return out;
+  }
+
+  /**
+   * Export the bounded subgraph around one node instead of the whole session.
+   *
+   * "Export what I am looking at" reuses the SAME depth-capped traversal the
+   * panel already runs to focus a node — there is deliberately no second walk,
+   * because a second traversal is a second set of bounds to get wrong.
+   */
+  exportSubgraph(sessionId: string, nodeId: string, format: GraphDataFormat): string {
+    const cfg = this.config();
+    const result = this.query(sessionId, {
+      fromNodeId: nodeId,
+      direction: 'down',
+      depth: cfg.maxDepth,
+      limit: GRAPH_LIMITS.queryLimit.max,
+      includeDerived: cfg.showDerivedEdges,
+    });
+    const out = exportGraph(
+      format,
+      sessionId,
+      result.nodes,
+      result.edges,
+      result.truncated,
+      this.telemetryFor(sessionId, format),
+    );
+    if (out.length > GRAPH_LIMITS.exportBytesMax) {
+      throw new Error('graph: export exceeds the size limit — save it to a file instead');
+    }
+    return out;
+  }
+
+  /**
+   * Per-run statistics, joined to the Runtime Telemetry rollups by run id.
+   *
+   * The join key is the only thing the two subsystems share: no telemetry text
+   * enters the graph and no graph content reaches telemetry storage. A run the
+   * telemetry service never recorded still appears, with its measured fields
+   * simply absent — the same "omit what was not measured" rule everywhere else.
+   */
+  runStats(sessionId: string): GraphRunStat[] {
+    const snap = this.store.snapshot(sessionId, this.config().maxNodes);
+    const byId = new Map(snap.nodes.map((n) => [n.id, n]));
+    const rollups = new Map(
+      (this.telemetry?.rollupsFor(sessionId) ?? []).map((r) => [r.runId, r]),
+    );
+
+    const runs = new Map<string, WorkGraphNode[]>();
+    for (const node of snap.nodes) {
+      const list = runs.get(node.runId);
+      if (list) list.push(node);
+      else runs.set(node.runId, [node]);
+    }
+
+    const stats: GraphRunStat[] = [];
+    for (const [runId, members] of runs) {
+      const objective = byId.get(runId);
+      const rollup = rollups.get(runId);
+      const edges = snap.edges.filter(
+        (e) => byId.get(e.src)?.runId === runId || byId.get(e.dst)?.runId === runId,
+      );
+      stats.push({
+        runId,
+        title: objective?.title ?? 'Earlier work (objective not retained)',
+        startedAt: objective?.startedAt ?? members[0]?.startedAt ?? 0,
+        nodes: members.length,
+        edges: edges.length,
+        tools: members.filter((n) => n.kind === 'mcp' || n.kind === 'terminal').length,
+        errors: members.filter((n) => n.status === 'error' || n.status === 'denied').length,
+        durationMs: rollup?.durationMs,
+        tokens:
+          rollup && (rollup.inputTokens > 0 || rollup.outputTokens > 0)
+            ? rollup.inputTokens + rollup.outputTokens
+            : undefined,
+        costEstimateUsd: rollup?.costEstimateUsd,
+        peakContextTokens: rollup?.peakContextTokens,
+      });
+    }
+    return stats.sort((a, b) => b.startedAt - a.startedAt);
+  }
+
+  /**
+   * Telemetry rows for an export, or undefined when the setting is off or the
+   * format has nowhere to put a number (a diagram has no column).
+   */
+  private telemetryFor(sessionId: string, format: GraphDataFormat): RunTelemetry[] | undefined {
+    if (!this.config().exportTelemetry || !this.telemetry) return undefined;
+    if (!TELEMETRY_CAPABLE_FORMATS.includes(format)) return undefined;
+    try {
+      return this.telemetry.rollupsFor(sessionId).map((r) => ({
+        runId: r.runId,
+        durationMs: r.durationMs,
+        totalTokens:
+          r.inputTokens > 0 || r.outputTokens > 0 ? r.inputTokens + r.outputTokens : undefined,
+        costEstimateUsd: r.costEstimateUsd,
+        peakContextTokens: r.peakContextTokens,
+      }));
+    } catch {
+      // An export must never fail because the optional join failed.
+      return undefined;
+    }
+  }
+
+  /**
+   * The Runtime Telemetry rollup source. Setter-injected and structural, so the
+   * graph never imports the telemetry manager — the join stays one-directional.
+   */
+  private telemetry?: GraphTelemetrySource;
+
+  setTelemetrySource(source: GraphTelemetrySource): void {
+    this.telemetry = source;
   }
 
   /**
@@ -307,6 +446,12 @@ export class WorkGraphManager {
     sessionId: string,
     format: GraphDataFormat | 'svg' | 'png',
     content?: string,
+    /**
+     * Scope anchor. When set, the file holds that node's bounded subgraph
+     * instead of the whole session — still an id, never a path, so this widens
+     * what is written without widening WHERE it can be written.
+     */
+    scopeNodeId?: string,
   ): Promise<{ saved: boolean; path?: string }> {
     let data: string;
     let encoding: BufferEncoding = 'utf8';
@@ -319,9 +464,18 @@ export class WorkGraphManager {
       }
       data = format === 'png' ? stripDataUrl(content) : content;
       if (format === 'png') encoding = 'base64';
+    } else if (scopeNodeId) {
+      data = this.exportSubgraph(sessionId, scopeNodeId, format);
     } else {
       const snap = this.store.snapshot(sessionId, this.config().maxNodes);
-      data = exportGraph(format, sessionId, snap.nodes, snap.edges, snap.truncated);
+      data = exportGraph(
+        format,
+        sessionId,
+        snap.nodes,
+        snap.edges,
+        snap.truncated,
+        this.telemetryFor(sessionId, format),
+      );
     }
 
     const ext = FORMAT_EXTENSION[format];
@@ -344,6 +498,59 @@ export class WorkGraphManager {
     await fs.writeFile(result.filePath, data, encoding);
     logger.info(`Work Graph exported to ${result.filePath} (${format}, ${data.length} bytes)`);
     return { saved: true, path: result.filePath };
+  }
+
+  /**
+   * Write one file per session into a directory the USER picks.
+   *
+   * Same contract as {@link save}: the renderer supplies session ids and a
+   * format and never a path. Main opens the directory picker and joins each
+   * filename onto the directory the OS returned, so a session id can only ever
+   * influence the FILENAME — and it is sanitized to a safe basename before it
+   * gets that far, which is what keeps `../` out of a loop that writes N files.
+   */
+  async saveBatch(
+    sessionIds: string[],
+    format: GraphDataFormat,
+  ): Promise<{ saved: number; dir?: string }> {
+    const win = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0];
+    const opts = {
+      title: 'Export work graphs to a folder',
+      properties: ['openDirectory' as const, 'createDirectory' as const],
+    };
+    const result = win
+      ? await dialog.showOpenDialog(win, opts)
+      : await dialog.showOpenDialog(opts);
+    if (result.canceled || result.filePaths.length === 0) return { saved: 0 };
+    const dir = result.filePaths[0];
+
+    const ext = FORMAT_EXTENSION[format];
+    let saved = 0;
+    for (const sessionId of sessionIds) {
+      try {
+        const snap = this.store.snapshot(sessionId, this.config().maxNodes);
+        // Skip sessions with no graph rather than writing an empty file each.
+        if (snap.nodes.length === 0) continue;
+        const data = exportGraph(
+          format,
+          sessionId,
+          snap.nodes,
+          snap.edges,
+          snap.truncated,
+          this.telemetryFor(sessionId, format),
+        );
+        // `path.basename` on a sanitized id: the filename can contain no
+        // separator, so `path.join` cannot escape the chosen directory.
+        const name = path.basename(`work-graph-${stampedName(sessionId)}.${ext}`);
+        await fs.writeFile(path.join(dir, name), data, 'utf8');
+        saved += 1;
+      } catch (err) {
+        // One unreadable session must not abandon the rest of the batch.
+        logger.warn(`graph: batch export skipped ${sessionId}`, err);
+      }
+    }
+    logger.info(`Work Graph batch exported ${saved} session(s) to ${dir}`);
+    return { saved, dir };
   }
 
   /** Resolve an existing entity to its graph node — the reveal-in-graph lookup. */

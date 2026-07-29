@@ -6,7 +6,7 @@
  * and broadcast to all renderers whenever they change.
  */
 import { BrowserWindow } from 'electron';
-import type { AppSettings, DeepPartial, PersistedDocument } from '@shared/types';
+import type { AppSettings, DeepPartial, PersistedDocument, RuntimeSectionId } from '@shared/types';
 import {
   AGENT_CONNECTION_LIMITS,
   AGENT_LIMITS,
@@ -27,11 +27,13 @@ import {
   SANDBOX_DOMAIN_RE,
   SANDBOX_LIMITS,
   SEARCH_LIMITS,
+  TELEMETRY_LIMITS,
   SETTINGS_VERSION,
   VOICE_LIMITS,
   WORKTREE_LIMITS,
   clamp,
 } from '@shared/constants';
+import { RUNTIME_SECTION_IDS } from '@shared/runtime';
 import { IpcEvents } from '@shared/ipc-channels';
 import { screenExtraWritePath } from './sandbox/policy';
 import { readJson, writeJson } from '../storage';
@@ -433,9 +435,82 @@ export class SettingsManager {
     if (!['none', 'kind', 'tool', 'file'].includes(graph.outlineGroupBy)) {
       graph.outlineGroupBy = DEFAULT_SETTINGS.graph.outlineGroupBy;
     }
-    if (!['json', 'md', 'mermaid', 'dot', 'csv', 'html', 'svg', 'png'].includes(graph.exportFormat)) {
+    if (
+      ![
+        'json',
+        'md',
+        'mermaid',
+        'dot',
+        'csv',
+        'html',
+        'ndjson',
+        'graphml',
+        'puml',
+        'svg',
+        'png',
+      ].includes(graph.exportFormat)
+    ) {
       graph.exportFormat = DEFAULT_SETTINGS.graph.exportFormat;
     }
+    if (!['session', 'selection'].includes(graph.exportScope)) {
+      graph.exportScope = DEFAULT_SETTINGS.graph.exportScope;
+    }
+    graph.exportTelemetry = !!graph.exportTelemetry;
+
+    // Runtime Telemetry (SETTINGS_VERSION 24 -> 25: `settings.runtime`
+    // introduced; the deep-merge above supplies every default, so there is no
+    // data migration). Everything here is renderer-supplied persisted data, so
+    // clamp every numeric, coerce every boolean, and whitelist every enum.
+    const rt = merged.runtime;
+    const T = TELEMETRY_LIMITS;
+    rt.enabled = !!rt.enabled;
+    rt.persist = !!rt.persist;
+    rt.indicator = !!rt.indicator;
+    rt.pinned = !!rt.pinned;
+    rt.ringLabel = !!rt.ringLabel;
+    rt.showEstimates = !!rt.showEstimates;
+    rt.showCostEstimate = !!rt.showCostEstimate;
+    rt.showHistory = !!rt.showHistory;
+    rt.highContrast = !!rt.highContrast;
+    rt.updateFrequency = roundClamp(rt.updateFrequency, T.updateFrequency);
+    rt.idleRefreshMs = roundClamp(rt.idleRefreshMs, T.idleRefreshMs);
+    rt.retentionDays = roundClamp(rt.retentionDays, T.retentionDays);
+    rt.retainRuns = roundClamp(rt.retainRuns, T.retainRuns);
+    rt.ringSize = roundClamp(rt.ringSize, T.ringSize);
+    rt.ringStroke = roundClamp(rt.ringStroke, T.ringStroke);
+    rt.warnRemainingPct = roundClamp(rt.warnRemainingPct, T.warnRemainingPct);
+    rt.criticalRemainingPct = roundClamp(rt.criticalRemainingPct, T.criticalRemainingPct);
+    rt.notifyRemainingPct = roundClamp(rt.notifyRemainingPct, T.notifyRemainingPct);
+    rt.warnQuotaPct = roundClamp(rt.warnQuotaPct, T.warnQuotaPct);
+    // The tone ladder has to stay monotonic: "critical" below "warning". A user
+    // who inverts them would otherwise get a ring that turns danger before it
+    // ever turns warning, which reads as a bug in the meter rather than a
+    // setting they chose.
+    if (rt.criticalRemainingPct >= rt.warnRemainingPct) {
+      const lower = Math.min(rt.criticalRemainingPct, rt.warnRemainingPct);
+      const upper = Math.max(rt.criticalRemainingPct, rt.warnRemainingPct);
+      rt.criticalRemainingPct = lower;
+      rt.warnRemainingPct = upper === lower ? Math.min(upper + 5, T.warnRemainingPct.max) : upper;
+    }
+    if (!['composer', 'header'].includes(rt.anchor)) rt.anchor = DEFAULT_SETTINGS.runtime.anchor;
+    if (!['context-used', 'context-remaining', 'quota'].includes(rt.ringMetric)) {
+      rt.ringMetric = DEFAULT_SETTINGS.runtime.ringMetric;
+    }
+    if (!['none', 'subtle', 'full'].includes(rt.animation)) {
+      rt.animation = DEFAULT_SETTINGS.runtime.animation;
+    }
+    if (!['compact', 'expanded'].includes(rt.layout)) rt.layout = DEFAULT_SETTINGS.runtime.layout;
+    if (!['absolute', 'percent'].includes(rt.tokenDisplay)) {
+      rt.tokenDisplay = DEFAULT_SETTINGS.runtime.tokenDisplay;
+    }
+    // Rebuild both id lists field by field against the canonical set: filter to
+    // known ids, de-duplicate, then append anything missing in canonical order.
+    // A renderer-authored array can therefore neither smuggle an unknown id nor
+    // drop a section — the `layout.documents` idiom applied to an ordering.
+    rt.sectionOrder = normalizeSectionOrder(rt.sectionOrder);
+    rt.collapsedSections = Array.isArray(rt.collapsedSections)
+      ? [...new Set(rt.collapsedSections.filter((id) => RUNTIME_SECTION_IDS.includes(id)))]
+      : [];
 
     // Attachments — clamp the numeric caps, coerce the toggles, and whitelist
     // the elevated-risk policy (renderer-supplied values gate real file I/O).
@@ -536,6 +611,32 @@ export class SettingsManager {
 
     return merged;
   }
+}
+
+/**
+ * Rebuild the Runtime Inspector's section order from the canonical set.
+ *
+ * The stored array is renderer-authored and replayed at launch, so it is
+ * reconstructed rather than trusted: unknown ids are dropped, duplicates
+ * collapse, and any id the user's list is missing is appended in canonical
+ * order. The result is therefore always a permutation of the real section set —
+ * a reordering can never make a section disappear.
+ */
+function normalizeSectionOrder(stored: unknown): RuntimeSectionId[] {
+  const list = Array.isArray(stored) ? stored : [];
+  const seen = new Set<RuntimeSectionId>();
+  const out: RuntimeSectionId[] = [];
+  for (const id of list) {
+    if (typeof id !== 'string') continue;
+    const known = RUNTIME_SECTION_IDS.find((s) => s === id);
+    if (!known || seen.has(known)) continue;
+    seen.add(known);
+    out.push(known);
+  }
+  for (const id of RUNTIME_SECTION_IDS) {
+    if (!seen.has(id)) out.push(id);
+  }
+  return out;
 }
 
 /* ------------------------------------------------------------------ */
