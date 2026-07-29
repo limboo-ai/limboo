@@ -1,14 +1,24 @@
 /**
- * The per-message action toolbar.
+ * The per-turn action toolbar.
  *
- * Every block in the timeline — the user's prompt as much as the agent's reply —
- * is a thing you should be able to take away with you: copy it, quote it, reuse
- * it as the seed of another session, pin it as project memory, or roll the
- * repository back to just before it. Until now the conversation was read-only
- * presentation and the only copy affordance was on code blocks.
+ * A turn is a thing you should be able to take away with you: copy it, quote it,
+ * reuse it as the seed of another session, pin it as project memory, or roll the
+ * repository back to just before it.
  *
  * Rules this file encodes:
  *
+ *  - **It mounts on the USER bubble only.** The assistant's reply is a stream,
+ *    not a series of documents: it arrives as several text blocks split by tool
+ *    calls, so a per-block toolbar meant several toolbars per answer, each
+ *    reserving a row of layout (they hide with opacity, not display) and cutting
+ *    the output into separately-framed cards. The user's prompt is the one stable
+ *    anchor of a turn, and it is where the turn's actions belong. **Do not
+ *    reintroduce a toolbar in the assistant stream.** Code blocks keep their own
+ *    `CopyButton`, which is where copying a reply is actually wanted.
+ *  - **It acts on the turn, not just the bubble.** Export writes the prompt, the
+ *    replies (`replies`) and the tool calls as one document. Copy and Copy as
+ *    Markdown deliberately stay message-scoped — their labels say "Copy", and
+ *    silently widening them to a whole turn would make them a different button.
  *  - **Icon-only, revealed on hover OR keyboard focus.** `focus-within` matters
  *    as much as `group-hover`: a toolbar you can only reach with a mouse is not
  *    reachable. It never occupies layout when hidden (opacity, not display, so
@@ -56,8 +66,8 @@ export interface MessageActionsProps {
   onRevert?: () => void;
   /** Tool calls belonging to this turn, included in the export. */
   toolCalls?: AgentToolCall[];
-  /** The prompt this reply answered, included in the export. */
-  promptMessage?: ChatMessage | null;
+  /** The assistant messages this prompt produced, included in the export. */
+  replies?: ChatMessage[];
   className?: string;
 }
 
@@ -70,7 +80,7 @@ export function MessageActions({
   onRegenerate,
   onRevert,
   toolCalls,
-  promptMessage,
+  replies,
   className,
 }: MessageActionsProps) {
   const addToast = useUIStore((s) => s.addToast);
@@ -81,7 +91,6 @@ export function MessageActions({
   const createMemory = useMemoryStore((s) => s.create);
   const [pinning, setPinning] = useState(false);
 
-  const isUser = message.role === 'user';
   const streaming = !!message.streaming;
 
   const quote = () => {
@@ -95,11 +104,11 @@ export function MessageActions({
   };
 
   const exportTurn = () => {
-    const text = isUser
-      ? turnToMarkdown(message, [], toolCalls ?? [])
-      : turnToMarkdown(promptMessage ?? null, [message], toolCalls ?? []);
-    const stem = (isUser ? message.text : (promptMessage?.text ?? message.text)).slice(0, 40);
-    downloadText(`${slugify(stem, 'message')}.md`, text);
+    // The whole turn — the prompt, what came back, and what the agent ran. The
+    // toolbar is anchored to the prompt, so the replies are handed in rather
+    // than read off `message`.
+    const text = turnToMarkdown(message, replies ?? [], toolCalls ?? []);
+    downloadText(`${slugify(message.text.slice(0, 40), 'message')}.md`, text);
   };
 
   const openInNewSession = async () => {
