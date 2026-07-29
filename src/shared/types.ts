@@ -627,18 +627,15 @@ export interface AppSettings {
     /** Render the rounded percentage inside the ring. */
     ringLabel: boolean;
     /** What the ring's arc measures. */
-    ringMetric: 'context-used' | 'context-remaining' | 'quota';
+    ringMetric: 'context-used' | 'context-remaining';
     animation: 'none' | 'subtle' | 'full';
 
     /* --- the inspector --- */
+    /** Compact narrows the card and folds the supporting disclosures away. */
     layout: 'compact' | 'expanded';
-    sectionOrder: RuntimeSectionId[];
-    collapsedSections: RuntimeSectionId[];
     /** Show values Limboo estimated from character counts (always labelled). */
     showEstimates: boolean;
     tokenDisplay: 'absolute' | 'percent';
-    showCostEstimate: boolean;
-    showHistory: boolean;
     /** Distinguish context segments by border and weight, not hue alone. */
     highContrast: boolean;
 
@@ -647,8 +644,6 @@ export interface AppSettings {
     criticalRemainingPct: number;
     /** Desktop notification when remaining crosses this (0 = off). */
     notifyRemainingPct: number;
-    /** Quota utilization (%) above which the long-term meter turns warning. */
-    warnQuotaPct: number;
   };
   /**
    * Attachment Manager — user-supplied files attached in the composer become
@@ -3264,9 +3259,6 @@ export interface RuntimeUsageHistory {
 export type RuntimePush =
   | { kind: 'snapshot'; sessionId: string; seq: number; snapshot: RuntimeSnapshot }
   | { kind: 'reset'; sessionId: string | null };
-
-/** The inspector's sections, in their canonical order. */
-export type RuntimeSectionId = 'context' | 'requests' | 'longterm' | 'provider';
 
 export type RuntimeExportFormat = 'json' | 'csv';
 

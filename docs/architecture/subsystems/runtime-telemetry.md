@@ -199,11 +199,18 @@ flush; the idle tick picks them up.
 platform service rather than provider config. The **UI** lives under Settings ›
 Agent › Runtime Indicators, because that is what it describes.
 
-Bounds in `TELEMETRY_LIMITS`; `SETTINGS_VERSION` 25. `normalize()` clamps every
-numeric, coerces every boolean, whitelists every enum, and rebuilds
-`sectionOrder` against `RUNTIME_SECTION_IDS` so a renderer-authored array can
-neither smuggle an unknown id nor drop a section. It also enforces
+Bounds in `TELEMETRY_LIMITS`; `SETTINGS_VERSION` 26. `normalize()` clamps every
+numeric, coerces every boolean and whitelists every enum. It also enforces
 `critical < warn`, so the tone ladder can never be non-monotonic.
+
+**26 removed the inspector's section fields.** The card renders the context
+window and nothing else (see UI below), so `sectionOrder`, `collapsedSections`,
+`showCostEstimate`, `showHistory` and `warnQuotaPct` are gone, along with
+`ringMetric: 'quota'`. No data migration was needed: the deep-merge supplies
+every default, a stale key left in `settings.json` is never read, and a
+persisted `'quota'` self-heals to the default through the enum whitelist.
+**Collection is unchanged** — quota windows, usage samples and run rollups are
+still ingested, stored and exported.
 
 **`persist: false` is the enterprise policy switch** and it is genuinely off: it
 stops writes AND makes history reads return `disabled: true`, so the UI says
@@ -233,21 +240,28 @@ of usage.
   than taste.** The card is absolutely positioned inside the composer footer,
   which sits inside the floating workspace card — and that card is
   `overflow-hidden`, so a tall panel opening upward is CLIPPED at its top edge
-  rather than escaping it. For the same reason only **Context** is expanded by
-  default (`collapsedSections`), collapsed headers keep their summary `aside`,
-  and there is no standing footer disclaimer: `formatCost` prefixes every
-  estimate with `~` and the cost row carries the sentence as its own hint, so
-  the disclaimer travels with the number instead of costing two lines on every
-  hover.
+  rather than escaping it.
+- **The card shows the context window and nothing else, and that is the
+  design.** It carried four collapsible sections in a persisted order — request
+  usage, long-term usage, execution detail — and three of them were chrome: two
+  render "not reported" on any adapter that does not publish quotas, and the
+  third was a nineteen-row dump behind a header collapsed by default anyway,
+  while all three pushed the card against the cap above. Context is the one
+  resource that matters continuously during a session, so it is now the whole
+  card: no section headers, no chevrons, no ordering to remember. The numbers
+  that left the card did not leave the app — the Work Graph's Stats tab and the
+  telemetry export still carry every one. **Do not reintroduce a section.**
+- There is also **no standing footer disclaimer**: every estimate is marked `~`
+  and carries its sentence as its own hint, so the disclaimer travels with the
+  number instead of costing two lines on every hover.
 - **The context meter** is a stacked-segment bar. Seven contributors need seven
   distinguishable fills on pure black, and every one is an existing token (some
   at reduced opacity) — no new hex values. Estimated segments carry a dashed top
   border; high-contrast mode swaps the opacity steps for solid tokens so the
   split never depends on hue alone.
-- **The quota meter is deliberately a different visual language** — discrete
-  cells in the status tokens, never the accent ramp — so "how full is this
-  conversation" and "how much of my week is gone" can never be confused at a
-  glance.
+- **`layout: 'compact'`** narrows the card to 280px and folds away the two
+  supporting disclosures (*Retrieval budgets*, *Compactions*) — each is a row
+  even while closed, and "compact" has to mean something.
 
 ## Relationship to the Work Graph
 

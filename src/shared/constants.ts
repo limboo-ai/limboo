@@ -1,7 +1,7 @@
 import type { AppSettings, WorkspaceConfig } from './types';
 
 /** Bumped whenever the {@link AppSettings} shape changes incompatibly. */
-export const SETTINGS_VERSION = 25;
+export const SETTINGS_VERSION = 26;
 
 /**
  * The agent providers Limboo can run (Claude Code = Anthropic via the Agent
@@ -636,8 +636,6 @@ export const TELEMETRY_LIMITS = {
   criticalRemainingPct: { min: 1, max: 25, default: 10 },
   /** Notify below this percent remaining (0 = off). */
   notifyRemainingPct: { min: 0, max: 50, default: 15 },
-  /** Quota utilization (%) above which the long-term meter turns warning. */
-  warnQuotaPct: { min: 50, max: 99, default: 80 },
 
   /* --- hard caps --- */
   /** One persisted quota sample per window per bucket. */
@@ -1007,24 +1005,19 @@ export const DEFAULT_SETTINGS: AppSettings = {
     ringMetric: 'context-used',
     animation: 'subtle',
 
+    // The inspector is a hover card inside an `overflow-hidden` workspace card,
+    // so its height is a hard constraint rather than a preference. It shows the
+    // context window and nothing else — the one resource that matters
+    // continuously during a long session — which is why there is no section
+    // ordering or collapsed-section state left to persist.
     layout: 'expanded',
-    sectionOrder: ['context', 'requests', 'longterm', 'provider'],
-    // Context open, everything else collapsed. The inspector is a hover card
-    // inside an `overflow-hidden` workspace card, so its height is a hard
-    // constraint rather than a preference — and context is the one resource
-    // that matters continuously during a long session. The collapsed headers
-    // still carry their summary `aside`, so nothing is hidden, only folded.
-    collapsedSections: ['requests', 'longterm', 'provider'],
     showEstimates: true,
     tokenDisplay: 'percent',
-    showCostEstimate: true,
-    showHistory: true,
     highContrast: false,
 
     warnRemainingPct: TELEMETRY_LIMITS.warnRemainingPct.default,
     criticalRemainingPct: TELEMETRY_LIMITS.criticalRemainingPct.default,
     notifyRemainingPct: TELEMETRY_LIMITS.notifyRemainingPct.default,
-    warnQuotaPct: TELEMETRY_LIMITS.warnQuotaPct.default,
   },
   mcp: {
     enabled: true,

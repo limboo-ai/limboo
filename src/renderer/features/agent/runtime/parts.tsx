@@ -12,43 +12,6 @@ import { ChevronRight, Info } from 'lucide-react';
 import { cn } from '@/renderer/lib/cn';
 import { NOT_REPORTED } from './format';
 
-/** A collapsible section of the inspector. */
-export function RuntimeSection({
-  title,
-  collapsed,
-  onToggle,
-  aside,
-  children,
-}: {
-  title: string;
-  collapsed: boolean;
-  onToggle: () => void;
-  /** Right-aligned summary shown even when collapsed. */
-  aside?: React.ReactNode;
-  children: React.ReactNode;
-}) {
-  return (
-    <section className="border-b border-line last:border-b-0">
-      <button
-        type="button"
-        onClick={onToggle}
-        aria-expanded={!collapsed}
-        className="flex w-full items-center gap-1.5 px-3 py-2 text-left transition-colors hover:bg-surface-2"
-      >
-        <ChevronRight
-          size={11}
-          className={cn('shrink-0 text-faint transition-transform', !collapsed && 'rotate-90')}
-        />
-        <span className="text-[11px] font-semibold uppercase tracking-wide text-muted">
-          {title}
-        </span>
-        {aside != null && <span className="ml-auto text-[11px] text-faint">{aside}</span>}
-      </button>
-      {!collapsed && <div className="px-3 pb-3">{children}</div>}
-    </section>
-  );
-}
-
 /** One label / value row. The inspector's only row primitive. */
 export function MetricRow({
   label,

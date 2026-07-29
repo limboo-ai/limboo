@@ -9,13 +9,13 @@
  * the UI" structural rather than aspirational, and it means a third adapter
  * contributes its sections — and hides the rest — without a renderer edit.
  *
- * So: `SEGMENT_LABEL`, `SEGMENT_SUBSYSTEM`, `RUNTIME_SECTION_IDS` and
- * `RUNTIME_SECTION_LABEL` are renderer-facing. `PROVIDER_CAPABILITIES` and
- * `CAPABILITY_NOTE` are MAIN-ONLY. Importing either of the latter into
- * `src/renderer/**` is the mistake this comment is here to catch in review.
+ * So: `SEGMENT_LABEL` and `SEGMENT_SUBSYSTEM` are renderer-facing.
+ * `PROVIDER_CAPABILITIES` and `CAPABILITY_NOTE` are MAIN-ONLY. Importing either
+ * of the latter into `src/renderer/**` is the mistake this comment is here to
+ * catch in review.
  */
 import type { AgentProvider } from './constants';
-import type { ContextSegmentId, RuntimeCapabilities, RuntimeCapabilityKey, RuntimeSectionId } from './types';
+import type { ContextSegmentId, RuntimeCapabilities, RuntimeCapabilityKey } from './types';
 
 /**
  * What each adapter actually reports. Stamped onto the snapshot by main.
@@ -115,49 +115,13 @@ export const SEGMENT_SUBSYSTEM: Record<ContextSegmentId, string> = {
 };
 
 /**
- * Canonical section order. `SettingsManager.normalize` rebuilds a persisted
- * `sectionOrder` against this list, so a renderer-authored array can neither
- * smuggle an unknown id nor drop one.
+ * True for windows that measure a long rolling period rather than a short one.
+ *
+ * MAIN-SIDE ONLY now. The inspector renders the context window and nothing
+ * else, so no renderer surface partitions quota windows any more — but
+ * `RuntimeTelemetryManager` still uses this to group `knownWindows` for the
+ * export, which keeps every window it ever collected.
  */
-export const RUNTIME_SECTION_IDS: readonly RuntimeSectionId[] = [
-  'context',
-  'requests',
-  'longterm',
-  'provider',
-];
-
-export const RUNTIME_SECTION_LABEL: Record<RuntimeSectionId, string> = {
-  context: 'Context window',
-  requests: 'Request usage',
-  longterm: 'Long-term usage',
-  provider: 'Execution',
-};
-
-/**
- * Human label for a provider-reported quota window id. Unknown ids fall back to
- * a de-slugged form rather than being dropped: the provider's vocabulary can
- * grow, and an unrecognised window is still real usage worth showing.
- */
-export function quotaWindowLabel(kind: string): string {
-  switch (kind) {
-    case 'five_hour':
-      return '5-hour window';
-    case 'seven_day':
-      return '7-day window';
-    case 'seven_day_opus':
-      return '7-day window (Opus)';
-    case 'seven_day_sonnet':
-      return '7-day window (Sonnet)';
-    case 'seven_day_overage_included':
-      return '7-day window (incl. overage)';
-    case 'overage':
-      return 'Overage';
-    default:
-      return kind.replace(/[_-]+/g, ' ').replace(/^./, (c) => c.toUpperCase());
-  }
-}
-
-/** True for windows that measure a long rolling period rather than a short one. */
 export function isLongTermWindow(kind: string): boolean {
   return kind.startsWith('seven_day') || kind === 'overage';
 }
