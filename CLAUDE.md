@@ -815,9 +815,19 @@ Memory, Search, Resume and the Work Graph. Full doc:
 - **The inspector's height cap is structural, not taste.** It is absolutely
   positioned inside the composer footer, inside the `overflow-hidden` floating
   workspace card — a tall panel is CLIPPED, not overflowed. Hence
-  `max-h-[min(52vh,420px)]`, only **Context** expanded by default, and no
-  standing footer disclaimer (the `~` on every estimate travels with the number
-  instead). **Do not re-expand the sections or add a footer paragraph.**
+  `max-h-[min(52vh,420px)]` and no standing footer disclaimer (the `~` on every
+  estimate travels with the number instead). **Do not add a footer paragraph.**
+- **The card shows the context window and NOTHING else.** It used to carry four
+  collapsible sections in a persisted order; three were chrome — *Request usage*
+  and *Long-term usage* render "not reported" on any adapter that does not
+  publish quotas, and *Execution* was a nineteen-row dump behind a header
+  collapsed by default — and all three pushed the card against the cap above.
+  So there is no section header, no chevron, no `sectionOrder` and no
+  `collapsedSections` (`SETTINGS_VERSION` 26 removed them, with
+  `showCostEstimate` / `showHistory` / `warnQuotaPct` and `ringMetric: 'quota'`).
+  **Do not reintroduce a section.** Collection is untouched: main still ingests
+  and stores quota windows, run rollups and history, and the Work Graph's Stats
+  tab plus the telemetry export are where those numbers are read.
 - **Throttled + watch-gated**: coalesced per session with a monotonic `seq`; with
   nothing watching, main keeps ingesting but pushes only at run boundaries. The
   idle tick re-renders countdowns and **polls no provider**. The watch signal is

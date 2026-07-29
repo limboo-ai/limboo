@@ -141,17 +141,21 @@ Runtime Indicators.
 | `retainRuns` | `200` | run rollups kept per session |
 | `indicator` / `anchor` / `pinned` | `true` / `composer` / `false` | the ring's surface and behaviour |
 | `ringSize` / `ringStroke` / `ringLabel` | `18` / `4` / `false` | |
-| `ringMetric` | `context-used` | `context-used \| context-remaining \| quota` |
+| `ringMetric` | `context-used` | `context-used \| context-remaining` |
 | `animation` | `subtle` | `none \| subtle \| full`; reduced motion overrides |
-| `layout` / `tokenDisplay` | `expanded` / `percent` | |
-| `showEstimates` / `showCostEstimate` / `showHistory` | `true` | |
+| `layout` / `tokenDisplay` | `expanded` / `percent` | compact narrows the card and folds the disclosures |
+| `showEstimates` | `true` | |
 | `highContrast` | `false` | distinguishes segments without relying on hue |
 | `warnRemainingPct` / `criticalRemainingPct` | `25` / `10` | normalize enforces critical < warn |
 | `notifyRemainingPct` | `15` | 0 = off; also needs `behavior.notifications` |
-| `warnQuotaPct` | `80` | |
-| `sectionOrder` / `collapsedSections` | canonical / all but `context` | rebuilt against the known id set |
 
 Bounds live in `TELEMETRY_LIMITS`.
+
+The inspector shows the context window only, so there are no section fields:
+`sectionOrder`, `collapsedSections`, `showCostEstimate`, `showHistory` and
+`warnQuotaPct` were removed in `SETTINGS_VERSION` 26, together with
+`ringMetric: 'quota'`. Collection is untouched — the quota, run and history data
+those knobs displayed is still stored and still exported.
 
 ## Related limits
 

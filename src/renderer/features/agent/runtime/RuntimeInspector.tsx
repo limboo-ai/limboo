@@ -1,94 +1,36 @@
 /**
- * The Runtime Inspector — a live runtime dashboard in a floating card.
+ * The Runtime Inspector — the context window, live, in a floating card.
  *
- * IT NEVER BRANCHES ON PROVIDER. Each section is gated on a capability flag
- * that main stamped onto the snapshot, and a false one renders the provider's
- * own "why not" sentence from `snapshot.notes`. That is what makes the UI
- * identical across adapters while still adapting to what each one measures —
- * and what lets a third adapter light up its sections with no change here.
+ * IT NEVER BRANCHES ON PROVIDER. The body is gated on the `contextWindow`
+ * capability flag that main stamped onto the snapshot, and a false one renders
+ * the provider's own "why not" sentence from `snapshot.notes`. That is what
+ * makes the UI identical across adapters while still adapting to what each one
+ * measures — and what lets a third adapter light this up with no change here.
+ *
+ * THE CARD SHOWS ONE THING, AND THAT IS THE DESIGN. It used to carry four
+ * collapsible sections (request usage, long-term usage, execution detail) in a
+ * persisted order. Three of them were chrome: two render "not reported" on any
+ * adapter that does not publish quotas, and the third was a nineteen-row dump
+ * behind a header collapsed by default anyway — while all three pushed the card
+ * against the structural height cap below. The context window is the one
+ * resource that matters continuously during a session, so it is now the whole
+ * card: no headers, no chevrons, no ordering to remember. Main still collects
+ * everything else; the Work Graph's stats tab and the telemetry export are
+ * where those numbers live.
  */
 import { AlertTriangle } from 'lucide-react';
-import type { AppSettings, RuntimeSnapshot, RuntimeUsageHistory } from '@shared/types';
-import { RUNTIME_SECTION_LABEL, isLongTermWindow } from '@shared/runtime';
+import type { AppSettings, RuntimeSnapshot } from '@shared/types';
 import { ContextMeter } from './ContextMeter';
-import { QuotaMeter, TrendSparkline } from './QuotaMeter';
-import { Disclosure, EstimateNote, MetricRow, NotReported, RuntimeSection } from './parts';
-import {
-  NOT_REPORTED,
-  formatCost,
-  formatDuration,
-  formatPercent,
-  formatRate,
-  formatTokens,
-} from './format';
+import { Disclosure, EstimateNote, MetricRow, NotReported } from './parts';
+import { formatPercent, formatTokens } from './format';
 
 export function RuntimeInspector({
   snapshot,
-  history,
   cfg,
-  onToggleSection,
 }: {
   snapshot: RuntimeSnapshot;
-  history: RuntimeUsageHistory[];
   cfg: AppSettings['runtime'];
-  onToggleSection: (id: AppSettings['runtime']['sectionOrder'][number]) => void;
 }) {
-  const collapsed = new Set(cfg.collapsedSections);
-  const compact = cfg.layout === 'compact';
-
-  const sections = cfg.sectionOrder.map((id) => {
-    switch (id) {
-      case 'context':
-        return (
-          <RuntimeSection
-            key={id}
-            title={RUNTIME_SECTION_LABEL.context}
-            collapsed={collapsed.has(id)}
-            onToggle={() => onToggleSection(id)}
-            aside={contextAside(snapshot)}
-          >
-            <ContextSection snapshot={snapshot} cfg={cfg} />
-          </RuntimeSection>
-        );
-      case 'requests':
-        return (
-          <RuntimeSection
-            key={id}
-            title={RUNTIME_SECTION_LABEL.requests}
-            collapsed={collapsed.has(id)}
-            onToggle={() => onToggleSection(id)}
-          >
-            <RequestSection snapshot={snapshot} cfg={cfg} />
-          </RuntimeSection>
-        );
-      case 'longterm':
-        if (!cfg.showHistory) return null;
-        return (
-          <RuntimeSection
-            key={id}
-            title={RUNTIME_SECTION_LABEL.longterm}
-            collapsed={collapsed.has(id)}
-            onToggle={() => onToggleSection(id)}
-          >
-            <LongTermSection snapshot={snapshot} history={history} cfg={cfg} />
-          </RuntimeSection>
-        );
-      case 'provider':
-        return (
-          <RuntimeSection
-            key={id}
-            title={RUNTIME_SECTION_LABEL.provider}
-            collapsed={collapsed.has(id) || compact}
-            onToggle={() => onToggleSection(id)}
-          >
-            <ExecutionSection snapshot={snapshot} cfg={cfg} />
-          </RuntimeSection>
-        );
-      default:
-        return null;
-    }
-  });
-
   // HARD HEIGHT CAP, and it is load-bearing rather than cosmetic. This card is
   // an absolutely-positioned child of the composer footer, which lives INSIDE
   // the floating workspace card — and that card is `overflow-hidden`
@@ -108,19 +50,13 @@ export function RuntimeInspector({
       )}
       {/* There is deliberately NO standing footer disclaimer. It was two lines
           on every hover — the single largest fixed cost in a card whose whole
-          job is to be glanceable — and it was redundant: `formatCost` prefixes
-          every estimate with `~`, and the cost row carries the full sentence as
-          its own hint. The disclaimer travels with the number instead. */}
-      {sections}
+          job is to be glanceable — and it was redundant: every estimate is
+          already marked `~`. The disclaimer travels with the number instead. */}
+      <div className="px-3 py-3">
+        <ContextSection snapshot={snapshot} cfg={cfg} />
+      </div>
     </div>
   );
-}
-
-/** The collapsed-state summary for the context section. */
-function contextAside(snapshot: RuntimeSnapshot): React.ReactNode {
-  const ctx = snapshot.context;
-  if (!ctx?.windowTokens) return null;
-  return formatPercent(ctx.pctUsed);
 }
 
 function ContextSection({
@@ -244,172 +180,6 @@ function ContextSection({
           characters of the blocks it composed and divided by an approximate characters-per-token
           ratio. The total, the window and the reservation are measured by the provider.
         </EstimateNote>
-      )}
-    </div>
-  );
-}
-
-function RequestSection({
-  snapshot,
-  cfg,
-}: {
-  snapshot: RuntimeSnapshot;
-  cfg: AppSettings['runtime'];
-}) {
-  if (!snapshot.capabilities.requestQuota) {
-    return <NotReported note={snapshot.notes?.requestQuota} />;
-  }
-  // Short rolling windows only; the long ones belong to the section below.
-  const windows = (snapshot.quota ?? []).filter((q) => !isLongTermWindow(q.kind));
-  if (windows.length === 0) {
-    return (
-      <NotReported note="The provider has not reported a request window for this account yet. It arrives with the first rate-limit update." />
-    );
-  }
-  return (
-    <div>
-      {windows.map((q) => (
-        <QuotaMeter key={q.kind} window={q} warnQuotaPct={cfg.warnQuotaPct} />
-      ))}
-    </div>
-  );
-}
-
-function LongTermSection({
-  snapshot,
-  history,
-  cfg,
-}: {
-  snapshot: RuntimeSnapshot;
-  history: RuntimeUsageHistory[];
-  cfg: AppSettings['runtime'];
-}) {
-  if (!snapshot.capabilities.quotaWindows) {
-    return <NotReported note={snapshot.notes?.quotaWindows} />;
-  }
-  const windows = (snapshot.quota ?? []).filter((q) => isLongTermWindow(q.kind));
-  const disabled = history.some((h) => h.disabled);
-
-  if (windows.length === 0 && !disabled) {
-    return <NotReported note="No rolling usage window has been reported for this account yet." />;
-  }
-
-  return (
-    <div>
-      {windows.map((q) => {
-        const trend = history.find((h) => h.windowKind === q.kind);
-        return (
-          <div key={q.kind}>
-            <QuotaMeter window={q} warnQuotaPct={cfg.warnQuotaPct} />
-            {trend && trend.points.length > 1 && (
-              <TrendSparkline points={trend.points} warnQuotaPct={cfg.warnQuotaPct} />
-            )}
-          </div>
-        );
-      })}
-      {disabled && (
-        <EstimateNote>
-          Usage history is disabled by policy, so no trend is stored or shown. Live figures above
-          are unaffected.
-        </EstimateNote>
-      )}
-    </div>
-  );
-}
-
-function ExecutionSection({
-  snapshot,
-  cfg,
-}: {
-  snapshot: RuntimeSnapshot;
-  cfg: AppSettings['runtime'];
-}) {
-  const run = snapshot.run;
-  const env = snapshot.environment;
-  return (
-    <div>
-      <MetricRow label="Model" value={run?.model ?? NOT_REPORTED} />
-      <MetricRow label="Mode" value={run?.mode ?? NOT_REPORTED} />
-      <MetricRow label="State" value={snapshot.live ? 'running' : 'idle'} />
-      {snapshot.capabilities.latency && (
-        <>
-          <MetricRow label="Time to first token" value={formatDuration(run?.ttftMs)} />
-          <MetricRow label="Last run" value={formatDuration(run?.durationMs)} />
-          <MetricRow label="API time" value={formatDuration(run?.durationApiMs)} />
-        </>
-      )}
-      {snapshot.capabilities.tokenUsage && (
-        <>
-          <MetricRow label="Generation" value={formatRate(run?.tokensPerSecond)} />
-          <MetricRow label="Turns" value={run?.numTurns ?? NOT_REPORTED} />
-          <MetricRow
-            label="Run tokens"
-            value={
-              run?.tokens
-                ? `${formatTokens(run.tokens.input)} in / ${formatTokens(run.tokens.output)} out`
-                : NOT_REPORTED
-            }
-            hint={
-              run?.tokens?.includesSubagents
-                ? 'From the provider’s per-model usage, which includes subagent requests.'
-                : undefined
-            }
-          />
-          <MetricRow label="Cache reads" value={formatTokens(run?.tokens?.cacheRead)} />
-        </>
-      )}
-      {cfg.showCostEstimate && snapshot.capabilities.costEstimate && (
-        <MetricRow
-          label="Estimated cost"
-          value={formatCost(run?.costEstimateUsd)}
-          hint="Client-side estimate from the provider SDK’s bundled price table. Not billing data."
-        />
-      )}
-      {run?.retries && (
-        <MetricRow
-          label="Retries"
-          value={`${run.retries.attempt} of ${run.retries.maxRetries}`}
-          tone="warning"
-        />
-      )}
-
-      <Disclosure summary="Environment">
-        <MetricRow
-          label="Worktree"
-          value={env?.worktree ? `${env.worktree.branch}` : NOT_REPORTED}
-          hint={env?.worktree?.path}
-        />
-        <MetricRow
-          label="MCP servers"
-          value={env?.mcp ? `${env.mcp.connected} / ${env.mcp.total}` : NOT_REPORTED}
-        />
-        <MetricRow
-          label="Index"
-          value={env?.index ? `${env.index.files} files` : NOT_REPORTED}
-        />
-        <MetricRow label="Attachments" value={env?.attachmentCount ?? NOT_REPORTED} />
-        <MetricRow label="Memories injected" value={env?.memoryInjected ?? NOT_REPORTED} />
-        <MetricRow label="Locations retrieved" value={env?.searchInjected ?? NOT_REPORTED} />
-        {/* Truncated, and deliberately with NO full-value hint. This id is the
-            key to a provider-side conversation; the prefix is enough to tell
-            two sessions apart, which is the only thing it is here to do. */}
-        <MetricRow
-          label="Provider session"
-          value={env?.providerSessionId ? `${env.providerSessionId.slice(0, 8)}…` : NOT_REPORTED}
-          hint="The provider's own conversation id, truncated."
-        />
-      </Disclosure>
-
-      {snapshot.tools && snapshot.tools.length > 0 && (
-        <Disclosure summary={`Tools running (${snapshot.tools.length})`}>
-          {snapshot.tools.map((tool) => (
-            <MetricRow
-              key={tool.callId}
-              label={tool.name}
-              value={`${Math.round(tool.elapsedSeconds)}s`}
-            />
-          ))}
-        </Disclosure>
       )}
     </div>
   );
