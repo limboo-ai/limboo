@@ -454,4 +454,4 @@ not open a public issue for security reports.
 
 ## License
 
-Released under the [MIT License](LICENSE). Copyright (c) 2026 BotCoder254.
+Released under the [MIT License](LICENSE). Copyright (c) 2026 BotCoder254...
