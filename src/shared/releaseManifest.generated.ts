@@ -24,6 +24,76 @@ import type { ReleaseIndexEntry, ReleaseManifestEntry } from './release';
 /** Newest first. */
 export const RELEASE_MANIFESTS: ReleaseManifestEntry[] = [
   {
+    "version": "1.16.0",
+    "date": "2026-07-30",
+    "channel": "stable",
+    "codename": null,
+    "gitTag": "v1.16.0",
+    "commit": null,
+    "buildNumber": null,
+    "summary": "A tighter follow-up to the runtime ring. The panel it opens now answers one\nquestion instead of four, and the conversation beneath it reads as one reply\nagain rather than a stack of cards.",
+    "sections": [
+      {
+        "category": "changed",
+        "title": "Changed",
+        "items": [
+          {
+            "lead": "The runtime panel is the context window, and nothing else",
+            "text": "It opened with\n  four collapsible sections, and three of them earned their space only\n  occasionally: request usage and long-term usage said \"not reported\" on any\n  agent that does not publish quotas, and execution detail was a nineteen-row\n  list behind a header that was folded shut by default. Together they pushed the\n  panel past the height it is allowed inside the workspace, where the bottom of\n  it was cut off rather than scrollable. The context breakdown is now the whole\n  panel — no section headers, no folding, no order to remember, and nothing\n  clipped."
+          },
+          {
+            "lead": "Settings match what the panel now shows",
+            "text": "Show estimated cost, the quota\n  warning threshold, show usage history and the section ordering controls are\n  gone rather than left on screen doing nothing, and \"Ring measures\" now offers\n  the two context options it can actually draw. If you had it set to quota, it\n  falls back on its own."
+          },
+          {
+            "lead": "Nothing stopped being measured",
+            "text": "Quota windows, usage samples and run\n  rollups are still collected and still stored. The Work Graph's Stats tab and\n  the JSON and CSV exports carry every field they did before — only the hover\n  panel got smaller."
+          }
+        ],
+        "markdown": "- **The runtime panel is the context window, and nothing else.** It opened with\n  four collapsible sections, and three of them earned their space only\n  occasionally: request usage and long-term usage said \"not reported\" on any\n  agent that does not publish quotas, and execution detail was a nineteen-row\n  list behind a header that was folded shut by default. Together they pushed the\n  panel past the height it is allowed inside the workspace, where the bottom of\n  it was cut off rather than scrollable. The context breakdown is now the whole\n  panel — no section headers, no folding, no order to remember, and nothing\n  clipped.\n- **Settings match what the panel now shows.** Show estimated cost, the quota\n  warning threshold, show usage history and the section ordering controls are\n  gone rather than left on screen doing nothing, and \"Ring measures\" now offers\n  the two context options it can actually draw. If you had it set to quota, it\n  falls back on its own.\n- **Nothing stopped being measured.** Quota windows, usage samples and run\n  rollups are still collected and still stored. The Work Graph's Stats tab and\n  the JSON and CSV exports carry every field they did before — only the hover\n  panel got smaller."
+      },
+      {
+        "category": "fixed",
+        "title": "Fixed",
+        "items": [
+          {
+            "lead": "A reply broken up by tool calls sprouted a toolbar per fragment",
+            "text": "Message\n  actions rendered on every block of an answer rather than once for the\n  exchange, so a reply interrupted three times showed three sets of buttons.\n  Actions now sit with the message you sent, which is the one stable anchor a\n  turn has."
+          },
+          {
+            "lead": "The conversation read as a stack of cards",
+            "text": "Hidden toolbars still occupied\n  their full height, and consecutive parts of a single answer sat about forty\n  pixels apart. An answer now reads as one continuous reply, with the wider\n  spacing kept for the boundary between exchanges."
+          },
+          {
+            "lead": "Exporting from a message gave you the question without the answer",
+            "text": "Export\n  now covers the whole exchange — what you asked, what came back, and what was\n  run in between. Copy and Copy as Markdown are unchanged and still copy the one\n  message, as their labels say."
+          }
+        ],
+        "markdown": "- **A reply broken up by tool calls sprouted a toolbar per fragment.** Message\n  actions rendered on every block of an answer rather than once for the\n  exchange, so a reply interrupted three times showed three sets of buttons.\n  Actions now sit with the message you sent, which is the one stable anchor a\n  turn has.\n- **The conversation read as a stack of cards.** Hidden toolbars still occupied\n  their full height, and consecutive parts of a single answer sat about forty\n  pixels apart. An answer now reads as one continuous reply, with the wider\n  spacing kept for the boundary between exchanges.\n- **Exporting from a message gave you the question without the answer.** Export\n  now covers the whole exchange — what you asked, what came back, and what was\n  run in between. Copy and Copy as Markdown are unchanged and still copy the one\n  message, as their labels say."
+      }
+    ],
+    "contributors": [],
+    "pullRequests": [],
+    "mergedBranches": [],
+    "assets": [],
+    "signing": [],
+    "stats": {
+      "commits": null,
+      "filesChanged": null,
+      "additions": null,
+      "deletions": null
+    },
+    "links": {
+      "release": "https://github.com/limboo-ai/limboo/releases/tag/v1.16.0",
+      "compare": "https://github.com/limboo-ai/limboo/compare/v1.15.0...v1.16.0",
+      "tag": "https://github.com/limboo-ai/limboo/releases/tag/v1.16.0",
+      "milestone": null
+    },
+    "checksumManifest": "SHA256SUMS",
+    "provenanceRepo": "limboo-ai/limboo",
+    "markdown": "A tighter follow-up to the runtime ring. The panel it opens now answers one\nquestion instead of four, and the conversation beneath it reads as one reply\nagain rather than a stack of cards.\n\n### Changed\n\n- **The runtime panel is the context window, and nothing else.** It opened with\n  four collapsible sections, and three of them earned their space only\n  occasionally: request usage and long-term usage said \"not reported\" on any\n  agent that does not publish quotas, and execution detail was a nineteen-row\n  list behind a header that was folded shut by default. Together they pushed the\n  panel past the height it is allowed inside the workspace, where the bottom of\n  it was cut off rather than scrollable. The context breakdown is now the whole\n  panel — no section headers, no folding, no order to remember, and nothing\n  clipped.\n- **Settings match what the panel now shows.** Show estimated cost, the quota\n  warning threshold, show usage history and the section ordering controls are\n  gone rather than left on screen doing nothing, and \"Ring measures\" now offers\n  the two context options it can actually draw. If you had it set to quota, it\n  falls back on its own.\n- **Nothing stopped being measured.** Quota windows, usage samples and run\n  rollups are still collected and still stored. The Work Graph's Stats tab and\n  the JSON and CSV exports carry every field they did before — only the hover\n  panel got smaller.\n\n### Fixed\n\n- **A reply broken up by tool calls sprouted a toolbar per fragment.** Message\n  actions rendered on every block of an answer rather than once for the\n  exchange, so a reply interrupted three times showed three sets of buttons.\n  Actions now sit with the message you sent, which is the one stable anchor a\n  turn has.\n- **The conversation read as a stack of cards.** Hidden toolbars still occupied\n  their full height, and consecutive parts of a single answer sat about forty\n  pixels apart. An answer now reads as one continuous reply, with the wider\n  spacing kept for the boundary between exchanges.\n- **Exporting from a message gave you the question without the answer.** Export\n  now covers the whole exchange — what you asked, what came back, and what was\n  run in between. Copy and Copy as Markdown are unchanged and still copy the one\n  message, as their labels say."
+  },
+  {
     "version": "1.15.0",
     "date": "2026-07-29",
     "channel": "stable",
@@ -409,107 +479,18 @@ export const RELEASE_MANIFESTS: ReleaseManifestEntry[] = [
     "checksumManifest": "SHA256SUMS",
     "provenanceRepo": "limboo-ai/limboo",
     "markdown": "Stopping the agent mid-task no longer breaks your next message.\n\n### Fixed\n\n- **A run stopped while a tool was working would break the following message.**\n  Pressing Stop while the agent was reading a file or running a command left the\n  provider's own conversation ending on a request it never got an answer to — a\n  shape it rejects every time it is replayed. The next thing you sent failed\n  before the agent ever saw it, with a line of internal diagnostic text\n  (`[ede_diagnostic] … stop_reason=tool_use`) shown as the error. Stopping now\n  clears that conversation as it happens, so the next message starts clean. Your\n  transcript, activity and checkpoints are untouched and still shown.\n- **The automatic recovery for it rarely ran.** The same failure reaches the app\n  in two different forms depending on how the underlying process ends, and only\n  one of them was recognised — which is why the error appeared to come and go at\n  random. Both forms are now read from the provider's structured result rather\n  than by matching English text, so recovery is consistent. Recovery also no\n  longer requires a stored conversation to exist, so the first message in a\n  session can recover too.\n- **Internal diagnostics are no longer shown as the error.** An interrupted turn\n  now reads \"The previous turn was interrupted before it finished — retrying.\"\n  The same applies to other run-ending conditions that previously surfaced raw\n  provider text: reaching the turn limit, an oversized prompt, an image that\n  could not be read, and a run stopped by a configured hook. Full diagnostics\n  remain in Settings › Agent › Diagnostics and the log file.\n- **Tool chips could spin forever.** A tool interrupted before it reported back\n  stayed marked as running for the rest of the session. Interrupted tools are now\n  settled when the run ends.\n- **Answering a clarification could hang after Stop.** Stopping a run released\n  pending permission prompts but not pending clarification questions.\n\nCursor sessions get the same handling: both providers share one classifier, so an\ninterrupted turn behaves and reads identically whichever agent is running."
-  },
-  {
-    "version": "1.13.0",
-    "date": "2026-07-28",
-    "channel": "stable",
-    "codename": null,
-    "gitTag": "v1.13.0",
-    "commit": null,
-    "buildNumber": null,
-    "summary": "The conversation stops being something you only read. Every message now carries\nits own actions on hover, and any turn can be rolled back — the workspace returns\nto how it was before the agent touched it, including deleting files it created,\nwith the rollback recorded rather than hidden. Plan Mode also stops saying the\nsame thing three times.",
-    "sections": [
-      {
-        "category": "added",
-        "title": "Added",
-        "items": [
-          {
-            "lead": "Actions on every message",
-            "text": "Hovering a message (or reaching it with the\n  keyboard) reveals a row of actions: copy, copy as Markdown, quote it into the\n  composer, reference it in your next prompt, select its text, view it raw,\n  export it, open it as a new session, pin it to memory, regenerate it, or revert\n  to it. Copying an answer that is still being written captures everything that\n  has arrived so far rather than making you wait."
-          },
-          {
-            "lead": "Revert a turn",
-            "text": "Reverting restores the workspace to the checkpoint taken\n  before that turn and drops the conversation after it, so the agent's memory and\n  your files agree again. You are shown exactly what will change first — files\n  restored, files removed, messages dropped — and a safety checkpoint of the\n  current state is taken before anything moves. Only the session's own worktree\n  is touched, so work running in parallel is unaffected."
-          },
-          {
-            "lead": "Live planning progress in the conversation",
-            "text": "While a plan is being written,\n  the stream now names what the agent is doing — reading the repository,\n  searching, indexing symbols, decomposing the requirements — with each finished\n  step settling into a checked line."
-          }
-        ],
-        "markdown": "- **Actions on every message.** Hovering a message (or reaching it with the\n  keyboard) reveals a row of actions: copy, copy as Markdown, quote it into the\n  composer, reference it in your next prompt, select its text, view it raw,\n  export it, open it as a new session, pin it to memory, regenerate it, or revert\n  to it. Copying an answer that is still being written captures everything that\n  has arrived so far rather than making you wait.\n- **Revert a turn.** Reverting restores the workspace to the checkpoint taken\n  before that turn and drops the conversation after it, so the agent's memory and\n  your files agree again. You are shown exactly what will change first — files\n  restored, files removed, messages dropped — and a safety checkpoint of the\n  current state is taken before anything moves. Only the session's own worktree\n  is touched, so work running in parallel is unaffected.\n- **Live planning progress in the conversation.** While a plan is being written,\n  the stream now names what the agent is doing — reading the repository,\n  searching, indexing symbols, decomposing the requirements — with each finished\n  step settling into a checked line."
-      },
-      {
-        "category": "changed",
-        "title": "Changed",
-        "items": [
-          {
-            "lead": "Plan Mode reads once, not three times",
-            "text": "The large plan card is gone from the\n  conversation; the stream carries a single line and the approval buttons, and\n  the Task panel holds the plan itself. That panel is now just two sections —\n  Implementation plan and Live progress — instead of a plan, a duplicate outline\n  of the plan, and a checklist of the same tasks. Live progress is always shown\n  while work is running, rather than appearing only when the outline failed to\n  match."
-          },
-          {
-            "lead": "One in-progress indicator everywhere",
-            "text": "The planning placeholder, the plan\n  header, and each running task now use the same loader the agent uses while it\n  writes, instead of three different spinners and a large completion checkmark."
-          },
-          {
-            "lead": "Restoring a checkpoint now truly undoes the work",
-            "text": "Files the agent created\n  after the checkpoint used to survive a restore and be left behind; they are\n  removed now, and the restore reports how many files it restored and removed.\n  Untracked files that already existed are never touched."
-          }
-        ],
-        "markdown": "- **Plan Mode reads once, not three times.** The large plan card is gone from the\n  conversation; the stream carries a single line and the approval buttons, and\n  the Task panel holds the plan itself. That panel is now just two sections —\n  Implementation plan and Live progress — instead of a plan, a duplicate outline\n  of the plan, and a checklist of the same tasks. Live progress is always shown\n  while work is running, rather than appearing only when the outline failed to\n  match.\n- **One in-progress indicator everywhere.** The planning placeholder, the plan\n  header, and each running task now use the same loader the agent uses while it\n  writes, instead of three different spinners and a large completion checkmark.\n- **Restoring a checkpoint now truly undoes the work.** Files the agent created\n  after the checkpoint used to survive a restore and be left behind; they are\n  removed now, and the restore reports how many files it restored and removed.\n  Untracked files that already existed are never touched."
-      },
-      {
-        "category": "fixed",
-        "title": "Fixed",
-        "items": [
-          {
-            "lead": "Checkpoint comparisons could not see new files",
-            "text": "Both the \"what changed\n  since this checkpoint\" view and the restore itself compared against staged\n  changes only, so a file the agent created and never staged was invisible —\n  the diff under-reported it and a restore left it behind. Both now compare\n  against the full working state, including files that were never staged."
-          },
-          {
-            "lead": "The selected session no longer has a coloured bar",
-            "text": "It reads by its\n  background and a bolder title, matching the tabs elsewhere in the app."
-          }
-        ],
-        "markdown": "- **Checkpoint comparisons could not see new files.** Both the \"what changed\n  since this checkpoint\" view and the restore itself compared against staged\n  changes only, so a file the agent created and never staged was invisible —\n  the diff under-reported it and a restore left it behind. Both now compare\n  against the full working state, including files that were never staged.\n- **The selected session no longer has a coloured bar.** It reads by its\n  background and a bolder title, matching the tabs elsewhere in the app."
-      },
-      {
-        "category": "removed",
-        "title": "Removed",
-        "items": [
-          {
-            "lead": null,
-            "text": "Four Task-panel settings that no longer controlled anything visible (\"stream\n  tasks as they appear\", \"auto-expand new tasks\", \"collapse completed tasks\", and\n  \"show task durations\")."
-          }
-        ],
-        "markdown": "- Four Task-panel settings that no longer controlled anything visible (\"stream\n  tasks as they appear\", \"auto-expand new tasks\", \"collapse completed tasks\", and\n  \"show task durations\")."
-      }
-    ],
-    "contributors": [],
-    "pullRequests": [],
-    "mergedBranches": [],
-    "assets": [],
-    "signing": [],
-    "stats": {
-      "commits": null,
-      "filesChanged": null,
-      "additions": null,
-      "deletions": null
-    },
-    "links": {
-      "release": "https://github.com/limboo-ai/limboo/releases/tag/v1.13.0",
-      "compare": "https://github.com/limboo-ai/limboo/compare/v1.12.0...v1.13.0",
-      "tag": "https://github.com/limboo-ai/limboo/releases/tag/v1.13.0",
-      "milestone": null
-    },
-    "checksumManifest": "SHA256SUMS",
-    "provenanceRepo": "limboo-ai/limboo",
-    "markdown": "The conversation stops being something you only read. Every message now carries\nits own actions on hover, and any turn can be rolled back — the workspace returns\nto how it was before the agent touched it, including deleting files it created,\nwith the rollback recorded rather than hidden. Plan Mode also stops saying the\nsame thing three times.\n\n### Added\n\n- **Actions on every message.** Hovering a message (or reaching it with the\n  keyboard) reveals a row of actions: copy, copy as Markdown, quote it into the\n  composer, reference it in your next prompt, select its text, view it raw,\n  export it, open it as a new session, pin it to memory, regenerate it, or revert\n  to it. Copying an answer that is still being written captures everything that\n  has arrived so far rather than making you wait.\n- **Revert a turn.** Reverting restores the workspace to the checkpoint taken\n  before that turn and drops the conversation after it, so the agent's memory and\n  your files agree again. You are shown exactly what will change first — files\n  restored, files removed, messages dropped — and a safety checkpoint of the\n  current state is taken before anything moves. Only the session's own worktree\n  is touched, so work running in parallel is unaffected.\n- **Live planning progress in the conversation.** While a plan is being written,\n  the stream now names what the agent is doing — reading the repository,\n  searching, indexing symbols, decomposing the requirements — with each finished\n  step settling into a checked line.\n\n### Changed\n\n- **Plan Mode reads once, not three times.** The large plan card is gone from the\n  conversation; the stream carries a single line and the approval buttons, and\n  the Task panel holds the plan itself. That panel is now just two sections —\n  Implementation plan and Live progress — instead of a plan, a duplicate outline\n  of the plan, and a checklist of the same tasks. Live progress is always shown\n  while work is running, rather than appearing only when the outline failed to\n  match.\n- **One in-progress indicator everywhere.** The planning placeholder, the plan\n  header, and each running task now use the same loader the agent uses while it\n  writes, instead of three different spinners and a large completion checkmark.\n- **Restoring a checkpoint now truly undoes the work.** Files the agent created\n  after the checkpoint used to survive a restore and be left behind; they are\n  removed now, and the restore reports how many files it restored and removed.\n  Untracked files that already existed are never touched.\n\n### Fixed\n\n- **Checkpoint comparisons could not see new files.** Both the \"what changed\n  since this checkpoint\" view and the restore itself compared against staged\n  changes only, so a file the agent created and never staged was invisible —\n  the diff under-reported it and a restore left it behind. Both now compare\n  against the full working state, including files that were never staged.\n- **The selected session no longer has a coloured bar.** It reads by its\n  background and a bolder title, matching the tabs elsewhere in the app.\n\n### Removed\n\n- Four Task-panel settings that no longer controlled anything visible (\"stream\n  tasks as they appear\", \"auto-expand new tasks\", \"collapse completed tasks\", and\n  \"show task durations\")."
   }
 ];
 
 /** Every released version, newest first. */
 export const RELEASE_INDEX: ReleaseIndexEntry[] = [
+  {
+    "version": "1.16.0",
+    "date": "2026-07-30",
+    "channel": "stable",
+    "summary": "A tighter follow-up to the runtime ring. The panel it opens now answers one\nquestion instead of four, and the conversation beneath it reads as one reply\nagain rather than a stack of cards.",
+    "detailed": true
+  },
   {
     "version": "1.15.0",
     "date": "2026-07-29",
@@ -543,7 +524,7 @@ export const RELEASE_INDEX: ReleaseIndexEntry[] = [
     "date": "2026-07-28",
     "channel": "stable",
     "summary": "The conversation stops being something you only read. Every message now carries\nits own actions on hover, and any turn can be rolled back — the workspace returns\nto how it was before the agent touched it, including deleting files it created,\nwith the rollback recorded rather than hidden. Plan Mode also stops saying the\nsame thing three times.",
-    "detailed": true
+    "detailed": false
   },
   {
     "version": "1.12.0",
