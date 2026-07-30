@@ -10,7 +10,7 @@ A local-first desktop workspace that gives a coding agent everything it needs to
 real engineering: projects, sessions, file watching, repository indexing, git,
 worktrees, terminals, memory, search, permissions, and context. Limboo is not an AI
 model, and it is not an agent. It is the environment around one — and it works with
-more than one.
+more than one..
 
 [![Release](https://img.shields.io/github/v/release/limboo-ai/limboo?label=release&color=6e9bff)](https://github.com/limboo-ai/limboo/releases/latest)
 [![CI](https://github.com/limboo-ai/limboo/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/limboo-ai/limboo/actions/workflows/ci.yml)
