@@ -24,8 +24,32 @@ repository, branch, chat history, agent, terminal history, checkpoints,
 permissions, context, memory, tasks, and generated files into one workspace.
 
 Guiding principles (from `project.md` §4): Fast, Local, Private, Modular, Secure,
-Responsive, Observable, Predictable, Recoverable. There is **no backend** — the
-only network traffic is the connected coding agent talking to its AI provider.
+Responsive, Observable, Predictable, Recoverable. There is **no backend**. Limboo
+itself makes exactly **two** kinds of outbound request, and no others may be added
+without amending this paragraph:
+
+1. The connected coding agent talking to its AI provider.
+2. **Contributor avatars** — so commit history can show a real face. Two steps,
+   both gated by the single `settings.git.avatars.enabled` switch:
+   - **Identity.** A GitHub *noreply* commit address already encodes the account
+     (`<id>+<login>@users.noreply.github.com`), so it needs no lookup. Every
+     other address — which is most real history — can only be resolved by
+     GitHub, so `GhManager.commitAuthors` calls **one** read-only endpoint,
+     `GET /repos/{owner}/{repo}/commits`, through the `gh` CLI. It returns
+     `commit.author.email` alongside the resolved `author.{login,avatar_url}`,
+     mapping a whole page of history per request. **This tells GitHub which
+     repository is being browsed** — the reason the setting exists and says so.
+   - **Image.** `main/managers/gh/avatars.ts` fetches the picture from GitHub's
+     avatar host: host-allowlisted, https-only, manual redirect screening, byte-
+     and time-capped, magic-byte sniffed (no SVG), and screened by
+     `isEmbeddedAvatar` before it can reach an `<img src>`.
+
+   `gh api` is reachable **only** from `commitAuthors`, with a fixed endpoint
+   built from a remote Limboo parsed itself. It has no IPC channel and no agent
+   tool — it can POST, which is also why it stays out of the agent's read-only
+   allowlist. Authentication remains the CLI's; Limboo still reads and stores no
+   token. `git`, `gh`, and the update checker are separate processes/subsystems
+   with their own rules.
 
 ---
 
@@ -815,9 +839,19 @@ Memory, Search, Resume and the Work Graph. Full doc:
 - **The inspector's height cap is structural, not taste.** It is absolutely
   positioned inside the composer footer, inside the `overflow-hidden` floating
   workspace card — a tall panel is CLIPPED, not overflowed. Hence
-  `max-h-[min(52vh,420px)]`, only **Context** expanded by default, and no
-  standing footer disclaimer (the `~` on every estimate travels with the number
-  instead). **Do not re-expand the sections or add a footer paragraph.**
+  `max-h-[min(52vh,420px)]` and no standing footer disclaimer (the `~` on every
+  estimate travels with the number instead). **Do not add a footer paragraph.**
+- **The card shows the context window and NOTHING else.** It used to carry four
+  collapsible sections in a persisted order; three were chrome — *Request usage*
+  and *Long-term usage* render "not reported" on any adapter that does not
+  publish quotas, and *Execution* was a nineteen-row dump behind a header
+  collapsed by default — and all three pushed the card against the cap above.
+  So there is no section header, no chevron, no `sectionOrder` and no
+  `collapsedSections` (`SETTINGS_VERSION` 26 removed them, with
+  `showCostEstimate` / `showHistory` / `warnQuotaPct` and `ringMetric: 'quota'`).
+  **Do not reintroduce a section.** Collection is untouched: main still ingests
+  and stores quota windows, run rollups and history, and the Work Graph's Stats
+  tab plus the telemetry export are where those numbers are read.
 - **Throttled + watch-gated**: coalesced per session with a monotonic `seq`; with
   nothing watching, main keeps ingesting but pushes only at run boundaries. The
   idle tick re-renders countdowns and **polls no provider**. The watch signal is
@@ -845,16 +879,32 @@ Memory, Search, Resume and the Work Graph. Full doc:
 
 ### The conversation timeline: message actions + conversation revert
 
-Every block in the stream is actionable, and Plan Mode has exactly two surfaces.
+Every turn in the stream is actionable, and Plan Mode has exactly two surfaces.
 All of it is provider-neutral — nothing below reads which adapter produced the
 message.
 
 - **Message actions** (`features/workspace/MessageActions.tsx`) — an icon-only
-  toolbar on every user and assistant message, revealed by `group-hover` **and**
+  toolbar on the **user turn only**, revealed by `group-hover` **and**
   `focus-within` (a toolbar reachable only by mouse is not reachable). Copy,
   Copy as Markdown, Quote, Reference in Prompt, Select Text, View Raw, Export,
   Open in New Session, Pin to Memory, Regenerate, Revert. Active state is the
   **accent icon**, never a strip (§4b).
+  - **There is no toolbar in the assistant stream, and none may be added.** A
+    reply is not one document: it arrives as several text blocks split by tool
+    calls, so a per-block toolbar meant several per answer — each reserving a
+    row of layout (they hide with `opacity`, not `display`) and cutting a
+    continuous stream into separately-framed cards. The prompt is the turn's one
+    stable anchor and carries its actions. Export is therefore **turn-scoped**:
+    `TurnView` hands `UserBubble` the turn's `replies` alongside `toolCalls`, and
+    `turnToMarkdown` writes prompt + replies + tools as one document. Copy and
+    Copy as Markdown stay **message-scoped** — their labels say "Copy", and
+    widening them to a whole turn would make them a different button. Copying a
+    reply is served by `CodeBlock`'s own `CopyButton`.
+  - **`AssistantBlock`'s content column is `gap-1.5`** — the single class
+    governing the distance between every consecutive assistant sub-item (text,
+    tool group, marker, subagent row, trailing status). Deliberately tight: the
+    larger spacing lives on turn boundaries (`gap-4` within a turn, `gap-6`
+    between turns), so the reply itself reads as one continuous stream.
   - **`ChatMessage.text` is already Markdown** — both providers stream Markdown
     source and the renderer only ever parses it for display. So
     `lib/messageMarkdown.ts` returns the SOURCE; it never serializes rendered

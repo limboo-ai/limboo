@@ -15,10 +15,8 @@ import { useWorkspaceStore } from '@/renderer/stores/useWorkspaceStore';
 import { useFileSystemStore } from '@/renderer/stores/useFileSystemStore';
 import { runCommand } from '@/renderer/lib/commands';
 import { ACTIVITY_TABS } from './tabs';
-import { ActivityFeedPanel, ChangesPanel, FilesPanel, TasksPanel } from './panels';
+import { ChangesPanel, FilesPanel, TasksPanel } from './panels';
 import { AgentConsolePanel } from './AgentConsolePanel';
-import { HookAuditPanel } from './HookAuditPanel';
-import { TerminalPanel } from '@/renderer/features/terminal/TerminalPanel';
 import { GitPanel } from '@/renderer/features/git/GitPanel';
 import { MemoryPanel } from '@/renderer/features/memory/MemoryPanel';
 import { WorkGraphPanel } from '@/renderer/features/graph/WorkGraphPanel';
@@ -26,9 +24,8 @@ import { WorkGraphPanel } from '@/renderer/features/graph/WorkGraphPanel';
 export function ActivityDrawer({ tab }: { tab: ActivityTab }) {
   const meta = ACTIVITY_TABS.find((t) => t.id === tab) ?? ACTIVITY_TABS[0];
 
-  // The terminal and git workspaces own their own headers (tab strip + controls),
-  // so they render full-bleed without the drawer's title bar or content padding.
-  if (tab === 'terminal') return <TerminalPanel />;
+  // The git workspace owns its own header (sub-tab strip + controls), so it
+  // renders full-bleed without the drawer's title bar or content padding.
   if (tab === 'git') return <GitPanel />;
   if (tab === 'memory') return <MemoryPanel />;
   if (tab === 'graph') return <WorkGraphPanel />;
@@ -44,9 +41,7 @@ export function ActivityDrawer({ tab }: { tab: ActivityTab }) {
         {tab === 'files' && <FilesPanel />}
         {tab === 'changes' && <ChangesPanel />}
         {tab === 'tasks' && <TasksPanel />}
-        {tab === 'activity' && <ActivityFeedPanel />}
         {tab === 'console' && <AgentConsolePanel />}
-        {tab === 'hooks' && <HookAuditPanel />}
       </div>
     </section>
   );

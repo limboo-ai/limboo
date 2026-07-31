@@ -11,10 +11,8 @@
  * hints say so, because "refresh interval" otherwise reads like polling.
  */
 import { useState } from 'react';
-import { ChevronDown, ChevronUp } from 'lucide-react';
 import { TELEMETRY_LIMITS } from '@shared/constants';
-import { RUNTIME_SECTION_LABEL } from '@shared/runtime';
-import type { RuntimeExportFormat, RuntimeSectionId } from '@shared/types';
+import type { RuntimeExportFormat } from '@shared/types';
 import { useSettingsStore } from '@/renderer/stores/useSettingsStore';
 import { useRuntimeStore } from '@/renderer/stores/useRuntimeStore';
 import { useUIStore } from '@/renderer/stores/useUIStore';
@@ -57,15 +55,6 @@ export function RuntimeIndicatorsSection() {
    * the section, not just the collection.
    */
   const off = !rt.enabled;
-
-  const move = (id: RuntimeSectionId, delta: -1 | 1) => {
-    const order = [...rt.sectionOrder];
-    const from = order.indexOf(id);
-    const to = from + delta;
-    if (from < 0 || to < 0 || to >= order.length) return;
-    [order[from], order[to]] = [order[to], order[from]];
-    set('sectionOrder', order);
-  };
 
   return (
     <Section
@@ -118,7 +107,6 @@ export function RuntimeIndicatorsSection() {
           options={[
             { value: 'context-used', label: 'Context used' },
             { value: 'context-remaining', label: 'Context remaining' },
-            { value: 'quota', label: 'Highest quota window' },
           ]}
           disabled={off}
         />
@@ -175,7 +163,11 @@ export function RuntimeIndicatorsSection() {
         />
       </Field>
 
-      <Field id="runtimeLayout" label="Inspector layout" hint="Compact hides the execution detail by default.">
+      <Field
+        id="runtimeLayout"
+        label="Inspector layout"
+        hint="Compact narrows the card and folds away the supporting detail — the retrieval budgets and compaction history."
+      >
         <SegmentedControl
           value={rt.layout}
           onChange={(v) => set('layout', v)}
@@ -208,19 +200,6 @@ export function RuntimeIndicatorsSection() {
           checked={rt.showEstimates}
           onChange={(v) => set('showEstimates', v)}
           aria-label="Show estimated breakdown"
-          disabled={off}
-        />
-      </Field>
-
-      <Field
-        id="runtimeShowCost"
-        label="Show estimated cost"
-        hint="A client-side estimate from the provider SDK’s bundled price table — not billing data."
-      >
-        <Toggle
-          checked={rt.showCostEstimate}
-          onChange={(v) => set('showCostEstimate', v)}
-          aria-label="Show estimated cost"
           disabled={off}
         />
       </Field>
@@ -286,20 +265,6 @@ export function RuntimeIndicatorsSection() {
         />
       </StackedField>
 
-      <StackedField id="runtimeWarnQuota" label={`Quota warning above — ${rt.warnQuotaPct}% used`}
-        hint="The rolling-quota meters turn amber above this much of the window consumed."
-      >
-        <Slider
-          value={rt.warnQuotaPct}
-          min={T.warnQuotaPct.min}
-          max={T.warnQuotaPct.max}
-          step={1}
-          onChange={(v) => set('warnQuotaPct', v)}
-          aria-label="Quota warning threshold"
-          disabled={off}
-        />
-      </StackedField>
-
       <Field
         id="runtimeRefresh"
         label="Idle refresh"
@@ -333,16 +298,6 @@ export function RuntimeIndicatorsSection() {
             { value: 1_000, label: '1s' },
             { value: 5_000, label: '5s — least work' },
           ]}
-          disabled={off}
-        />
-      </Field>
-
-      <Field
-        id="runtimeShowHistory"
-        label="Show usage history"
-        hint="The long-term usage trend in the inspector."
-      >
-        <Toggle checked={rt.showHistory} onChange={(v) => set('showHistory', v)} aria-label="Show usage history"
           disabled={off}
         />
       </Field>
@@ -385,41 +340,6 @@ export function RuntimeIndicatorsSection() {
           disabled={off}
         />
       </StackedField>
-
-      <Field
-        id="runtimeSectionOrder"
-        label="Section order"
-        hint="The order sections appear in the inspector."
-      >
-        <div className="flex w-44 flex-col gap-1">
-          {rt.sectionOrder.map((id, i) => (
-            <div
-              key={id}
-              className="flex items-center gap-1 rounded-md bg-surface-2 px-2 py-1 text-[11px] text-fg"
-            >
-              <span className="truncate">{RUNTIME_SECTION_LABEL[id]}</span>
-              <button
-                type="button"
-                aria-label={`Move ${RUNTIME_SECTION_LABEL[id]} up`}
-                disabled={off || i === 0}
-                onClick={() => move(id, -1)}
-                className="ml-auto rounded p-0.5 text-faint transition-colors hover:text-fg disabled:opacity-30"
-              >
-                <ChevronUp size={11} />
-              </button>
-              <button
-                type="button"
-                aria-label={`Move ${RUNTIME_SECTION_LABEL[id]} down`}
-                disabled={off || i === rt.sectionOrder.length - 1}
-                onClick={() => move(id, 1)}
-                className="rounded p-0.5 text-faint transition-colors hover:text-fg disabled:opacity-30"
-              >
-                <ChevronDown size={11} />
-              </button>
-            </div>
-          ))}
-        </div>
-      </Field>
 
       <Field
         id="runtimeExport"

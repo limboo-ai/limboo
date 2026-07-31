@@ -7,6 +7,49 @@ All notable changes to Limboo are documented here. The format is based on
 
 ## [Unreleased]
 
+## [1.16.0] - 2026-07-30
+
+A tighter follow-up to the runtime ring. The panel it opens now answers one
+question instead of four, and the conversation beneath it reads as one reply
+again rather than a stack of cards.
+
+### Changed
+
+- **The runtime panel is the context window, and nothing else.** It opened with
+  four collapsible sections, and three of them earned their space only
+  occasionally: request usage and long-term usage said "not reported" on any
+  agent that does not publish quotas, and execution detail was a nineteen-row
+  list behind a header that was folded shut by default. Together they pushed the
+  panel past the height it is allowed inside the workspace, where the bottom of
+  it was cut off rather than scrollable. The context breakdown is now the whole
+  panel — no section headers, no folding, no order to remember, and nothing
+  clipped.
+- **Settings match what the panel now shows.** Show estimated cost, the quota
+  warning threshold, show usage history and the section ordering controls are
+  gone rather than left on screen doing nothing, and "Ring measures" now offers
+  the two context options it can actually draw. If you had it set to quota, it
+  falls back on its own.
+- **Nothing stopped being measured.** Quota windows, usage samples and run
+  rollups are still collected and still stored. The Work Graph's Stats tab and
+  the JSON and CSV exports carry every field they did before — only the hover
+  panel got smaller.
+
+### Fixed
+
+- **A reply broken up by tool calls sprouted a toolbar per fragment.** Message
+  actions rendered on every block of an answer rather than once for the
+  exchange, so a reply interrupted three times showed three sets of buttons.
+  Actions now sit with the message you sent, which is the one stable anchor a
+  turn has.
+- **The conversation read as a stack of cards.** Hidden toolbars still occupied
+  their full height, and consecutive parts of a single answer sat about forty
+  pixels apart. An answer now reads as one continuous reply, with the wider
+  spacing kept for the boundary between exchanges.
+- **Exporting from a message gave you the question without the answer.** Export
+  now covers the whole exchange — what you asked, what came back, and what was
+  run in between. Copy and Copy as Markdown are unchanged and still copy the one
+  message, as their labels say.
+
 ## [1.15.0] - 2026-07-29
 
 You can now see what a long session is actually costing you. A small ring beside
@@ -1014,7 +1057,8 @@ operational.
 - **Unified streaming timeline** — the conversation rendered as one continuous,
   turn-grouped event stream of messages, tool calls, and status markers.
 
-[Unreleased]: https://github.com/limboo-ai/limboo/compare/v1.15.0...HEAD
+[Unreleased]: https://github.com/limboo-ai/limboo/compare/v1.16.0...HEAD
+[1.16.0]: https://github.com/limboo-ai/limboo/compare/v1.15.0...v1.16.0
 [1.15.0]: https://github.com/limboo-ai/limboo/compare/v1.14.0...v1.15.0
 [1.14.0]: https://github.com/limboo-ai/limboo/compare/v1.13.2...v1.14.0
 [1.13.2]: https://github.com/limboo-ai/limboo/compare/v1.13.1...v1.13.2

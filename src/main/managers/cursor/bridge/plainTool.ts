@@ -1,15 +1,25 @@
 /**
  * Transport-neutral tool shape shared by the SDK-shaped in-process MCP servers
  * (Claude runs) and the stdio bridge dispatcher (Cursor runs) — one handler
- * implementation, two transports. All plain tools are read-only by contract.
+ * implementation, two transports.
+ *
+ * Most plain tools are read-only, but that is no longer a blanket contract: the
+ * GitHub tools include two that POST a comment, and they are gated by name in
+ * `AgentManager.decideToolUseCore` rather than by an assumption made here.
  */
 export interface PlainTool {
   name: string;
   description: string;
   /** Hand-written JSON Schema for MCP `tools/list` (mirrors the zod shape). */
   inputSchema: Record<string, unknown>;
-  /** Validates its own args defensively; returns display text. */
-  run(args: Record<string, unknown>): string;
+  /**
+   * Validates its own args defensively; returns display text.
+   *
+   * May be async — tools that shell out to `gh` are. Every consumer must AWAIT
+   * this, including `instrumentPlainTools`, whose timing would otherwise measure
+   * how long it took to create the promise rather than to do the work.
+   */
+  run(args: Record<string, unknown>): string | Promise<string>;
 }
 
 /** Coerce an arg to a non-empty bounded string, or null. */

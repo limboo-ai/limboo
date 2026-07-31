@@ -15,6 +15,7 @@ import type { MemoryManager } from '../../memory/MemoryManager';
 import type { SearchManager } from '../../search/SearchManager';
 import type { WorkspaceManager } from '../../WorkspaceManager';
 import type { PlainTool } from './plainTool';
+import type { GhManager } from '../../gh/GhManager';
 
 export interface McpDispatcher {
   dispatch(server: string, method: string, params: Record<string, unknown>): unknown;
@@ -29,15 +30,19 @@ export function createMcpDispatcher(
   memory: MemoryManager | null,
   search: SearchManager | null,
   workspace: WorkspaceManager,
+  gh: GhManager | null,
 ): McpDispatcher {
   const toolsFor = (server: string): PlainTool[] => {
     if (server === 'memory' && memory) return memoryPlainTools(memory, workspace);
-    if (server === 'search' && search) return searchPlainTools(search, workspace);
+    if (server === 'search' && search) return searchPlainTools(search, workspace, gh);
     return [];
   };
 
   return {
-    dispatch(server, method, params) {
+    // `async` so a tool that shells out can be awaited. The declared return is
+    // `unknown` and the only caller already wraps it in `Promise.resolve`
+    // (AgentManager), so nothing above this line changes.
+    async dispatch(server, method, params) {
       const tools = toolsFor(server);
       if (method === 'tools/list') {
         return {
@@ -57,7 +62,7 @@ export function createMcpDispatcher(
         const tool = tools.find((t) => t.name === name);
         if (!tool) return text(`Unknown tool: ${name.slice(0, 80)}`, true);
         try {
-          return text(tool.run(args));
+          return text(await tool.run(args));
         } catch (err) {
           return text(err instanceof Error ? err.message.slice(0, 500) : 'Tool failed.', true);
         }

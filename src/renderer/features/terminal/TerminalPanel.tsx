@@ -1,8 +1,10 @@
 /**
- * TerminalPanel — the full-height integrated terminal workspace. Rendered as the
- * "Terminal" tab inside the right activity drawer (see ActivityDrawer). Owns the
- * terminal tab strip, the active xterm view, and the agent-command mirror strip.
- * Visual language inherits the activity drawer (h-9 header, hairline borders).
+ * TerminalPanel — the full-height integrated terminal workspace. It is its own
+ * column inside the floating workspace card (see AppShell), between the sessions
+ * sidebar and the conversation — NOT a drawer tab. Owns the terminal tab strip,
+ * the active xterm view, and the agent-command mirror strip. Visual language
+ * matches the drawer and the session header (h-9 header, hairline borders), so
+ * the two line up across the divider.
  *
  * The composer is NOT part of this panel — it stays anchored in the center
  * column so the user can keep prompting while terminals run.
@@ -28,8 +30,8 @@ const EMPTY_COMMANDS: import('@shared/types').TerminalCommandRecord[] = [];
 
 export function TerminalPanel() {
   const workspaceId = useWorkspaceStore((s) => s.activeId);
-  const setActiveTab = useLayoutStore((s) => s.setActiveTab);
-  const closeTerminal = () => setActiveTab(null);
+  const setTerminalOpen = useLayoutStore((s) => s.setTerminalOpen);
+  const closeTerminal = () => setTerminalOpen(false);
   // Whether the synthetic "Agent" tab (the agent-command mirror) is selected.
   const [agentTab, setAgentTab] = useState(false);
 

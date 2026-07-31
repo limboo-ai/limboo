@@ -6,8 +6,8 @@
  * always spawned argv-style (never a shell) by the manager.
  */
 import fs from 'node:fs/promises';
-import { dialog } from 'electron';
-import { IpcChannels } from '@shared/ipc-channels';
+import { BrowserWindow, dialog } from 'electron';
+import { IpcChannels, IpcEvents } from '@shared/ipc-channels';
 import { GIT_LIMITS } from '@shared/constants';
 import type {
   CheckpointRestoreResult,
@@ -18,6 +18,7 @@ import type {
   GitCheckpoint,
   GitCommit,
   GitCommitDetail,
+  GitEnvironment,
   GitFileChange,
   GitFileDiff,
   GitPullResult,
@@ -26,37 +27,32 @@ import type {
   GitTag,
 } from '@shared/types';
 import { handle } from './registry';
+import {
+  assertBoolOpts as assertBoolOptsRaw,
+  assertId as assertIdRaw,
+  assertText as assertTextRaw,
+} from './validate';
 import type { GitManager } from '../managers/GitManager';
 import type { AgentManager } from '../managers/AgentManager';
 
+// Thin `git:`-prefixed wrappers over the shared validators, so every rejection
+// message in this file still names the subsystem the caller invoked.
 function assertId(id: unknown, label = 'id'): asserts id is string {
-  if (typeof id !== 'string' || id.length === 0 || id.length > 128) {
-    throw new Error(`git: invalid ${label}`);
-  }
+  assertIdRaw(id, label, 'git');
 }
 
-/**
- * Validate a renderer-supplied options object: every value must be a boolean and
- * every key must be in the allow-list. Rejecting unknown keys / non-primitive
- * values is defense in depth against prototype pollution and argument smuggling.
- */
 function assertBoolOpts(opts: unknown, allowed: string[], label: string): void {
-  if (opts === undefined) return;
-  if (typeof opts !== 'object' || opts === null || Array.isArray(opts)) {
-    throw new Error(`git: invalid ${label}`);
-  }
-  for (const key of Object.keys(opts)) {
-    if (!allowed.includes(key)) throw new Error(`git: unexpected ${label} key: ${key}`);
-    const v = (opts as Record<string, unknown>)[key];
-    if (v !== undefined && typeof v !== 'boolean') {
-      throw new Error(`git: ${label}.${key} must be a boolean`);
-    }
-  }
+  assertBoolOptsRaw(opts, allowed, label, 'git');
 }
 
 function assertText(value: unknown, max: number, label: string): asserts value is string {
-  if (typeof value !== 'string' || value.length === 0 || value.length > max) {
-    throw new Error(`git: invalid ${label}`);
+  assertTextRaw(value, max, label, 'git');
+}
+
+/** Tell every window that git became available (or stopped being). */
+function broadcastEnvironment(env: GitEnvironment): void {
+  for (const win of BrowserWindow.getAllWindows()) {
+    if (!win.isDestroyed()) win.webContents.send(IpcEvents.gitEnvironmentChanged, env);
   }
 }
 
@@ -147,6 +143,20 @@ function assertPaths(paths: unknown): asserts paths is string[] {
 }
 
 export function registerGitHandlers(git: GitManager, agent: AgentManager): void {
+  handle<[{ force?: boolean }?], GitEnvironment>(
+    IpcChannels.gitEnvironment,
+    async (_e, opts) => {
+      assertBoolOpts(opts, ['force'], 'environment options');
+      const force = opts?.force === true;
+      const before = force ? await git.environment() : null;
+      const env = await git.environment(force);
+      // Only a forced re-probe can change the answer, and only a CHANGED answer
+      // is worth waking every window for.
+      if (before && before.available !== env.available) broadcastEnvironment(env);
+      return env;
+    },
+  );
+
   handle<[string], GitStatus>(IpcChannels.gitStatus, (_e, wsId) => {
     assertId(wsId, 'workspaceId');
     return git.status(wsId);

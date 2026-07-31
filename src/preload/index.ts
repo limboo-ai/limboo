@@ -41,6 +41,10 @@ import type {
   GitCheckpoint,
   GitCommit,
   GitCommitDetail,
+  GhIssue,
+  GhPullRequest,
+  GhState,
+  GitEnvironment,
   GitCommitMessageStreamEvent,
   GitFileChange,
   GitFileDiff,
@@ -54,8 +58,6 @@ import type {
   MemoryHit,
   MemoryListFilter,
   MemoryTier,
-  HookAuditPush,
-  HookEvent,
   MemoryUpdateInput,
   RepoConfigState,
   RepoDelta,
@@ -89,7 +91,6 @@ import type {
   SessionDependencies,
   SessionPermissionMode,
   SessionPlan,
-  SessionTimelineEntry,
   SessionUpdate,
   TerminalChunk,
   TerminalCommandRecord,
@@ -218,9 +219,6 @@ const sessionApi = {
   /** Everything the session owns — shown before deletion. */
   getDependencies: (id: string): Promise<SessionDependencies> =>
     ipcRenderer.invoke(IpcChannels.sessionGetDependencies, id),
-  /** Unified engineering timeline (activity + diagnostics + checkpoints). */
-  timeline: (id: string, limit?: number): Promise<SessionTimelineEntry[]> =>
-    ipcRenderer.invoke(IpcChannels.sessionTimeline, id, limit),
   onUpdated: (cb: () => void): (() => void) => subscribe<void>(IpcEvents.sessionsUpdated, cb),
   onActiveChanged: (cb: (session: Session | null) => void): (() => void) =>
     subscribe<Session | null>(IpcEvents.sessionActiveChanged, cb),
@@ -444,6 +442,12 @@ const terminalApi = {
 };
 
 const gitApi = {
+  /**
+   * Whether a usable `git` binary exists at all. Process-global and memoised in
+   * main; `force` re-probes (the onboarding "Check again" action).
+   */
+  environment: (opts?: { force?: boolean }): Promise<GitEnvironment> =>
+    ipcRenderer.invoke(IpcChannels.gitEnvironment, opts),
   status: (workspaceId: string): Promise<GitStatus> =>
     ipcRenderer.invoke(IpcChannels.gitStatus, workspaceId),
   diff: (
@@ -537,6 +541,9 @@ const gitApi = {
     ipcRenderer.invoke(IpcChannels.gitCheckpointDelete, workspaceId, checkpointId),
   onChanged: (cb: (payload: { workspaceId: string }) => void): (() => void) =>
     subscribe<{ workspaceId: string }>(IpcEvents.gitChanged, cb),
+  /** A forced re-probe found git newly available (or newly missing). */
+  onEnvironmentChanged: (cb: (env: GitEnvironment) => void): (() => void) =>
+    subscribe<GitEnvironment>(IpcEvents.gitEnvironmentChanged, cb),
   onCheckpointsChanged: (cb: (payload: { sessionId: string }) => void): (() => void) =>
     subscribe<{ sessionId: string }>(IpcEvents.gitCheckpointsChanged, cb),
   onCommitMessageStream: (cb: (ev: GitCommitMessageStreamEvent) => void): (() => void) =>
@@ -769,16 +776,39 @@ const runtimeApi = {
     subscribe<RuntimePush>(IpcEvents.runtimeChanged, cb),
 };
 
-const hooksApi = {
-  /** The session's redacted governance audit trail (for hydration on mount). */
-  getAudit: (sessionId: string): Promise<HookEvent[]> =>
-    ipcRenderer.invoke(IpcChannels.hooksGetAudit, sessionId),
-  /** Clear a session's trail, or all sessions when the id is omitted. */
-  clearAudit: (sessionId?: string): Promise<void> =>
-    ipcRenderer.invoke(IpcChannels.hooksClearAudit, sessionId),
-  /** A normalized lifecycle event was appended (or a trail was cleared). */
-  onAudit: (cb: (push: HookAuditPush) => void): (() => void) =>
-    subscribe<HookAuditPush>(IpcEvents.hooksAudit, cb),
+/**
+ * The OPTIONAL GitHub CLI surface. Read-only by construction: there is no
+ * method here that can write to GitHub, and none that could return a token —
+ * Limboo stores no GitHub credential (auth belongs to the CLI itself).
+ */
+const ghApi = {
+  /** Classify the local CLI (installed / authenticated / repo remote). */
+  state: (workspaceId: string | null, opts?: { force?: boolean }): Promise<GhState> =>
+    ipcRenderer.invoke(IpcChannels.ghState, workspaceId, opts),
+  pullRequests: (
+    workspaceId: string,
+    opts?: { state?: 'open' | 'closed' | 'merged' | 'all'; limit?: number },
+  ): Promise<GhPullRequest[]> => ipcRenderer.invoke(IpcChannels.ghPullRequests, workspaceId, opts),
+  pullRequest: (workspaceId: string, number: number): Promise<GhPullRequest | null> =>
+    ipcRenderer.invoke(IpcChannels.ghPullRequest, workspaceId, number),
+  issues: (
+    workspaceId: string,
+    opts?: { state?: 'open' | 'closed' | 'all'; limit?: number },
+  ): Promise<GhIssue[]> => ipcRenderer.invoke(IpcChannels.ghIssues, workspaceId, opts),
+  issue: (workspaceId: string, number: number): Promise<GhIssue | null> =>
+    ipcRenderer.invoke(IpcChannels.ghIssue, workspaceId, number),
+  /**
+   * Contributor avatars as validated `data:` URIs, keyed by the email/login that
+   * produced them. BATCHED — a history render needs up to 100, and one invoke
+   * per row would be 100 round trips. Missing keys mean "render initials".
+   */
+  avatars: (
+    input: { emails?: string[]; logins?: string[] },
+    workspaceId?: string | null,
+  ): Promise<Record<string, string>> =>
+    ipcRenderer.invoke(IpcChannels.ghAvatars, input, workspaceId),
+  /** The CLI's auth state changed (signed in / out). */
+  onChanged: (cb: () => void): (() => void) => subscribe<void>(IpcEvents.ghChanged, cb),
 };
 
 const updatesApi = {
@@ -894,12 +924,12 @@ const limbooApi = {
   fs: fsApi,
   terminal: terminalApi,
   git: gitApi,
+  gh: ghApi,
   worktree: worktreeApi,
   services: servicesApi,
   memory: memoryApi,
   search: searchApi,
   resume: resumeApi,
-  hooks: hooksApi,
   updates: updatesApi,
   release: releaseApi,
   voice: voiceApi,

@@ -15,7 +15,7 @@ import type { MemoryManager } from '../managers/memory/MemoryManager';
 import type { AttachmentManager } from '../managers/attachments/AttachmentManager';
 import type { SearchManager } from '../managers/search/SearchManager';
 import type { ResumeManager } from '../managers/resume/ResumeManager';
-import type { HookEngine } from '../managers/hooks/HookEngine';
+import type { GhManager } from '../managers/gh/GhManager';
 import type { AutoUpdateManager } from '../managers/AutoUpdateManager';
 import type { VoiceManager } from '../managers/voice/VoiceManager';
 import type { VoiceModelManager } from '../managers/voice/VoiceModelManager';
@@ -38,7 +38,7 @@ import { registerMemoryHandlers } from './memoryHandlers';
 import { registerAttachmentHandlers } from './attachmentHandlers';
 import { registerSearchHandlers } from './searchHandlers';
 import { registerResumeHandlers } from './resumeHandlers';
-import { registerHookHandlers } from './hookHandlers';
+import { registerGhHandlers } from './ghHandlers';
 import { registerUpdateHandlers } from './updateHandlers';
 import { registerReleaseHandlers } from './releaseHandlers';
 import { registerVoiceHandlers } from './voiceHandlers';
@@ -62,7 +62,7 @@ export interface IpcDeps {
   attachments: AttachmentManager;
   search: SearchManager;
   resume: ResumeManager;
-  hooks: HookEngine;
+  gh: GhManager;
   updates: AutoUpdateManager;
   voice: VoiceManager;
   voiceModels: VoiceModelManager;
@@ -112,7 +112,7 @@ export function registerAllIpc(deps: IpcDeps): void {
   registerAttachmentHandlers(deps.attachments);
   registerSearchHandlers(deps.search);
   registerResumeHandlers(deps.resume, deps.session);
-  registerHookHandlers(deps.hooks);
+  registerGhHandlers(deps.gh);
   registerUpdateHandlers(deps.updates);
   // Takes no dependency: the release manifest is compiled into the bundle, so
   // the only thing main owns here is the save dialog.

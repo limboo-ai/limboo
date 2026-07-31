@@ -12,10 +12,12 @@ import type {
   GitBranch,
   GitCheckpoint,
   GitCommit,
+  GitEnvironment,
   GitFileDiff,
   GitStatus,
   GitTag,
 } from '@shared/types';
+import { guardIpc } from '@/renderer/lib/ipcError';
 import { useWorkspaceStore } from './useWorkspaceStore';
 import { useSessionStore } from './useSessionStore';
 import { useUIStore } from './useUIStore';
@@ -39,6 +41,12 @@ interface GitFocus {
 }
 
 interface GitState {
+  /**
+   * Whether `git` itself exists on this machine. Null until probed. Distinct
+   * from `status.isRepo`: a missing binary and an uninitialised folder both
+   * report `isRepo: false`, and only this can tell them apart.
+   */
+  environment: GitEnvironment | null;
   status: GitStatus | null;
   log: GitCommit[];
   branches: GitBranch[];
@@ -56,6 +64,8 @@ interface GitState {
   generatingMessage: boolean;
 
   hydrate: () => void;
+  /** Probe (or re-probe, with `force`) whether git is installed. */
+  loadEnvironment: (force?: boolean) => Promise<void>;
   setCommitMessage: (text: string) => void;
   generateCommitMessage: () => Promise<void>;
   cancelCommitMessage: () => void;
@@ -95,33 +105,8 @@ function gitApi() {
   return window.limboo?.git;
 }
 
-/**
- * Electron wraps a rejected `ipcRenderer.invoke` as
- * `Error invoking remote method 'git:x': Error: git: <reason>`. Strip the
- * envelope so the toast shows the reason the main process actually gave.
- */
-function cleanIpcError(message: string): string {
-  const stripped = message.replace(/^Error invoking remote method '[^']*':\s*/, '');
-  return stripped.replace(/^Error:\s*/, '').replace(/^git:\s*/, '');
-}
-
-/**
- * Run a git action that can REJECT (main-process `throw`) rather than return a
- * result object, surfacing the failure as a toast instead of an unhandled
- * rejection that silently aborts the caller.
- */
-async function guard<T>(title: string, fn: () => Promise<T>): Promise<T | undefined> {
-  try {
-    return await fn();
-  } catch (err) {
-    useUIStore.getState().addToast({
-      title,
-      description: err instanceof Error ? cleanIpcError(err.message) : String(err),
-      tone: 'danger',
-    });
-    return undefined;
-  }
-}
+/** Surface a rejected git `invoke` as a toast (shared with the other stores). */
+const guard = guardIpc;
 
 function activeWs(): string | null {
   return useWorkspaceStore.getState().activeId;
@@ -140,6 +125,7 @@ let draftBackup = '';
 let sawDelta = false;
 
 export const useGitStore = create<GitState>((set, get) => ({
+  environment: null,
   status: null,
   log: [],
   branches: [],
@@ -185,13 +171,27 @@ export const useGitStore = create<GitState>((set, get) => ({
       }
     });
 
+    api.onEnvironmentChanged?.((env) => set({ environment: env }));
+
     // Initial pull + follow active-workspace switches.
+    void get().loadEnvironment();
     void get().refresh();
     window.limboo?.workspace.onChanged(() => {
       get().cancelCommitMessage();
       set({ diffs: {}, log: [], branches: [], tags: [], commitMessage: '', generatingMessage: false });
       void get().refresh();
     });
+  },
+
+  loadEnvironment: async (force = false) => {
+    const api = gitApi();
+    if (!api?.environment) return;
+    // Best-effort: a failed probe must never block the panel from rendering.
+    try {
+      set({ environment: await api.environment(force ? { force: true } : undefined) });
+    } catch {
+      /* leave the previous answer in place */
+    }
   },
 
   setCommitMessage: (text) => set({ commitMessage: text }),

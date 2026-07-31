@@ -1,7 +1,11 @@
 /**
- * Git settings — local-only (no network, no tokens). Commit identity, message
- * defaults, checkpoint policy, branch-switch safety, and which git operations
- * require confirmation. All git runs argv-only and confined to the workspace repo.
+ * Git settings. Commit identity, message defaults, checkpoint policy,
+ * branch-switch safety, and which git operations require confirmation. All git
+ * runs argv-only and confined to the workspace repo, and no token is ever stored.
+ *
+ * One setting here is NOT local-only: "Contributor photos" is the switch for
+ * Limboo's single outbound network path besides the coding agent (CLAUDE.md §1).
+ * Its hint text has to keep saying so.
  */
 import { GIT_LIMITS, clamp } from '@shared/constants';
 import { useSettingsStore } from '@/renderer/stores/useSettingsStore';
@@ -120,6 +124,17 @@ export function GitPanel() {
               { value: 'rebase', label: 'Rebase' },
             ]}
             onChange={(v) => void update({ git: { pull: { strategy: v } } })}
+          />
+        </Field>
+        <Field
+          id="gitAvatars"
+          label="Contributor photos"
+          hint="Show real profile photos in commit history and the GitHub tab. This is the only thing in Limboo besides the coding agent that reaches the network. Most commit addresses can only be matched to an account by GitHub, so Limboo asks the GitHub CLI once per repository which accounts authored its commits, then downloads their pictures — which means GitHub learns you are browsing this repository. No token is stored and nothing about your code is sent. Off means initials everywhere and no requests at all."
+        >
+          <Toggle
+            checked={git.avatars.enabled}
+            onChange={(v) => void update({ git: { avatars: { enabled: v } } })}
+            aria-label="Show contributor profile photos"
           />
         </Field>
       </Section>

@@ -22,10 +22,7 @@ import { formatPercent, runtimeTone } from './format';
 export function RuntimeIndicator({ anchor }: { anchor: 'composer' | 'header' }) {
   const cfg = useSettingsStore((s) => s.settings.runtime);
   const snapshot = useRuntimeStore((s) => s.snapshot);
-  const history = useRuntimeStore((s) => s.history);
-  const watching = useRuntimeStore((s) => s.watching);
   const setWatching = useRuntimeStore((s) => s.setWatching);
-  const loadHistory = useRuntimeStore((s) => s.loadHistory);
   const reload = useRuntimeStore((s) => s.reload);
   const update = useSettingsStore((s) => s.update);
 
@@ -47,10 +44,6 @@ export function RuntimeIndicator({ anchor }: { anchor: 'composer' | 'header' }) 
     };
   }, [cfg.enabled, cfg.indicator, cfg.pinned, setWatching]);
 
-  useEffect(() => {
-    if (watching && cfg.showHistory) void loadHistory();
-  }, [watching, cfg.showHistory, loadHistory]);
-
   // No snapshot means main has nothing for this session yet (telemetry off, or
   // no session selected). It does NOT mean "no run has happened" — main answers
   // that with an idle snapshot — so the ring appears as soon as telemetry is on
@@ -66,7 +59,7 @@ export function RuntimeIndicator({ anchor }: { anchor: 'composer' | 'header' }) 
       ? (ctx.remainingTokens / ctx.windowTokens) * 100
       : undefined;
 
-  const value = ringValue(cfg.ringMetric, ctx?.pctUsed, remainingPct, snapshot);
+  const value = ringValue(cfg.ringMetric, ctx?.pctUsed, remainingPct);
   const tone = runtimeTone(remainingPct, cfg.warnRemainingPct, cfg.criticalRemainingPct);
   const animate = cfg.animation !== 'none';
 
@@ -105,40 +98,16 @@ export function RuntimeIndicator({ anchor }: { anchor: 'composer' | 'header' }) 
         </span>
       }
     >
-      <RuntimeInspector
-        snapshot={snapshot}
-        history={history}
-        cfg={cfg}
-        onToggleSection={(id) => {
-          const next = cfg.collapsedSections.includes(id)
-            ? cfg.collapsedSections.filter((s) => s !== id)
-            : [...cfg.collapsedSections, id];
-          void update({ runtime: { collapsedSections: next } });
-        }}
-      />
+      <RuntimeInspector snapshot={snapshot} cfg={cfg} />
     </HoverCard>
   );
 }
 
 /** What the arc measures, per `settings.runtime.ringMetric`. */
 function ringValue(
-  metric: 'context-used' | 'context-remaining' | 'quota',
+  metric: 'context-used' | 'context-remaining',
   pctUsed: number | undefined,
   remainingPct: number | undefined,
-  snapshot: { quota?: Array<{ utilization?: number }> },
 ): number {
-  switch (metric) {
-    case 'context-remaining':
-      return remainingPct ?? 0;
-    case 'quota': {
-      // The highest utilization across every reported window — the one that
-      // will actually stop the user first.
-      const utilizations = (snapshot.quota ?? [])
-        .map((q) => q.utilization)
-        .filter((u): u is number => typeof u === 'number');
-      return utilizations.length > 0 ? Math.max(...utilizations) * 100 : 0;
-    }
-    default:
-      return pctUsed ?? 0;
-  }
+  return metric === 'context-remaining' ? (remainingPct ?? 0) : (pctUsed ?? 0);
 }

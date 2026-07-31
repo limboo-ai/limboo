@@ -22,6 +22,50 @@ export interface ReleaseNotesEntry {
 /** Newest first. */
 export const RELEASE_NOTES: ReleaseNotesEntry[] = [
   {
+    version: '1.16.0',
+    date: '2026-07-30',
+    markdown: `A tighter follow-up to the runtime ring. The panel it opens now answers one
+question instead of four, and the conversation beneath it reads as one reply
+again rather than a stack of cards.
+
+### Changed
+
+- **The runtime panel is the context window, and nothing else.** It opened with
+  four collapsible sections, and three of them earned their space only
+  occasionally: request usage and long-term usage said "not reported" on any
+  agent that does not publish quotas, and execution detail was a nineteen-row
+  list behind a header that was folded shut by default. Together they pushed the
+  panel past the height it is allowed inside the workspace, where the bottom of
+  it was cut off rather than scrollable. The context breakdown is now the whole
+  panel — no section headers, no folding, no order to remember, and nothing
+  clipped.
+- **Settings match what the panel now shows.** Show estimated cost, the quota
+  warning threshold, show usage history and the section ordering controls are
+  gone rather than left on screen doing nothing, and "Ring measures" now offers
+  the two context options it can actually draw. If you had it set to quota, it
+  falls back on its own.
+- **Nothing stopped being measured.** Quota windows, usage samples and run
+  rollups are still collected and still stored. The Work Graph's Stats tab and
+  the JSON and CSV exports carry every field they did before — only the hover
+  panel got smaller.
+
+### Fixed
+
+- **A reply broken up by tool calls sprouted a toolbar per fragment.** Message
+  actions rendered on every block of an answer rather than once for the
+  exchange, so a reply interrupted three times showed three sets of buttons.
+  Actions now sit with the message you sent, which is the one stable anchor a
+  turn has.
+- **The conversation read as a stack of cards.** Hidden toolbars still occupied
+  their full height, and consecutive parts of a single answer sat about forty
+  pixels apart. An answer now reads as one continuous reply, with the wider
+  spacing kept for the boundary between exchanges.
+- **Exporting from a message gave you the question without the answer.** Export
+  now covers the whole exchange — what you asked, what came back, and what was
+  run in between. Copy and Copy as Markdown are unchanged and still copy the one
+  message, as their labels say.`,
+  },
+  {
     version: '1.15.0',
     date: '2026-07-29',
     markdown: `You can now see what a long session is actually costing you. A small ring beside
@@ -282,67 +326,6 @@ afterwards — without ever leaving the conversation.
 
 Cursor sessions get the same handling: both providers share one classifier, so an
 interrupted turn behaves and reads identically whichever agent is running.`,
-  },
-  {
-    version: '1.13.0',
-    date: '2026-07-28',
-    markdown: `The conversation stops being something you only read. Every message now carries
-its own actions on hover, and any turn can be rolled back — the workspace returns
-to how it was before the agent touched it, including deleting files it created,
-with the rollback recorded rather than hidden. Plan Mode also stops saying the
-same thing three times.
-
-### Added
-
-- **Actions on every message.** Hovering a message (or reaching it with the
-  keyboard) reveals a row of actions: copy, copy as Markdown, quote it into the
-  composer, reference it in your next prompt, select its text, view it raw,
-  export it, open it as a new session, pin it to memory, regenerate it, or revert
-  to it. Copying an answer that is still being written captures everything that
-  has arrived so far rather than making you wait.
-- **Revert a turn.** Reverting restores the workspace to the checkpoint taken
-  before that turn and drops the conversation after it, so the agent's memory and
-  your files agree again. You are shown exactly what will change first — files
-  restored, files removed, messages dropped — and a safety checkpoint of the
-  current state is taken before anything moves. Only the session's own worktree
-  is touched, so work running in parallel is unaffected.
-- **Live planning progress in the conversation.** While a plan is being written,
-  the stream now names what the agent is doing — reading the repository,
-  searching, indexing symbols, decomposing the requirements — with each finished
-  step settling into a checked line.
-
-### Changed
-
-- **Plan Mode reads once, not three times.** The large plan card is gone from the
-  conversation; the stream carries a single line and the approval buttons, and
-  the Task panel holds the plan itself. That panel is now just two sections —
-  Implementation plan and Live progress — instead of a plan, a duplicate outline
-  of the plan, and a checklist of the same tasks. Live progress is always shown
-  while work is running, rather than appearing only when the outline failed to
-  match.
-- **One in-progress indicator everywhere.** The planning placeholder, the plan
-  header, and each running task now use the same loader the agent uses while it
-  writes, instead of three different spinners and a large completion checkmark.
-- **Restoring a checkpoint now truly undoes the work.** Files the agent created
-  after the checkpoint used to survive a restore and be left behind; they are
-  removed now, and the restore reports how many files it restored and removed.
-  Untracked files that already existed are never touched.
-
-### Fixed
-
-- **Checkpoint comparisons could not see new files.** Both the "what changed
-  since this checkpoint" view and the restore itself compared against staged
-  changes only, so a file the agent created and never staged was invisible —
-  the diff under-reported it and a restore left it behind. Both now compare
-  against the full working state, including files that were never staged.
-- **The selected session no longer has a coloured bar.** It reads by its
-  background and a bolder title, matching the tabs elsewhere in the app.
-
-### Removed
-
-- Four Task-panel settings that no longer controlled anything visible ("stream
-  tasks as they appear", "auto-expand new tasks", "collapse completed tasks", and
-  "show task durations").`,
   },
 ];
 

@@ -31,7 +31,7 @@ import { useUpdateStore } from '@/renderer/stores/useUpdateStore';
 import { useVoiceStore } from '@/renderer/stores/useVoiceStore';
 import { useAttachmentStore } from '@/renderer/stores/useAttachmentStore';
 import { useResumeStore } from '@/renderer/stores/useResumeStore';
-import { useHookStore } from '@/renderer/stores/useHookStore';
+import { useGhStore } from '@/renderer/stores/useGhStore';
 import { useGraphStore } from '@/renderer/stores/useGraphStore';
 import { useRuntimeStore } from '@/renderer/stores/useRuntimeStore';
 
@@ -80,8 +80,8 @@ export function App() {
     useAttachmentStore.getState().hydrate();
     // Subscribe to resume revalidation pushes (banner + header chip + dialog).
     useResumeStore.getState().hydrate();
-    // Subscribe to Hook Engine governance-audit pushes (drives the Hooks tab).
-    useHookStore.getState().hydrate();
+    // Detect the OPTIONAL GitHub CLI and follow its auth state.
+    useGhStore.getState().hydrate();
     // Subscribe to Work Graph deltas + follow the selected session.
     useGraphStore.getState().hydrate();
     // Subscribe to Runtime Telemetry snapshots (drives the ring + inspector).

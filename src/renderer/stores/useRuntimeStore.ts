@@ -7,17 +7,12 @@
  *
  * THE RENDERER NEVER BRANCHES ON PROVIDER. Everything downstream reads
  * `snapshot.capabilities` and `snapshot.notes`, both stamped by main. That is
- * what lets a section hide itself when the running adapter cannot measure it,
+ * what lets the inspector explain a metric the running adapter cannot measure,
  * with no per-provider conditionals scattered through the components — and what
- * lets a third adapter contribute its sections without a renderer edit.
+ * lets a third adapter light it up without a renderer edit.
  */
 import { create } from 'zustand';
-import type {
-  RuntimePush,
-  RuntimeSnapshot,
-  RuntimeUsageHistory,
-  RuntimeExportFormat,
-} from '@shared/types';
+import type { RuntimePush, RuntimeSnapshot, RuntimeExportFormat } from '@shared/types';
 import { useSessionStore } from './useSessionStore';
 
 /** Guarded accessor so the UI still renders in a plain browser preview. */
@@ -30,7 +25,6 @@ interface RuntimeStoreState {
   sessionId: string | null;
   snapshot: RuntimeSnapshot | null;
   seq: number;
-  history: RuntimeUsageHistory[];
   /** True while the inspector is open in this window (gates the push volume). */
   watching: boolean;
 
@@ -38,7 +32,6 @@ interface RuntimeStoreState {
   load: (sessionId: string | null) => Promise<void>;
   /** Re-fetch the current session's snapshot (after telemetry is re-enabled). */
   reload: () => Promise<void>;
-  loadHistory: () => Promise<void>;
   setWatching: (watching: boolean) => void;
   exportText: (format: RuntimeExportFormat) => Promise<string | null>;
   save: (format: RuntimeExportFormat) => Promise<boolean>;
@@ -50,7 +43,6 @@ export const useRuntimeStore = create<RuntimeStoreState>((set, get) => ({
   sessionId: null,
   snapshot: null,
   seq: 0,
-  history: [],
   watching: false,
 
   hydrate: () => {
@@ -88,7 +80,7 @@ export const useRuntimeStore = create<RuntimeStoreState>((set, get) => ({
 
   load: async (sessionId) => {
     if (!sessionId) {
-      set({ sessionId: null, snapshot: null, seq: 0, history: [] });
+      set({ sessionId: null, snapshot: null, seq: 0 });
       return;
     }
     set({ sessionId, seq: 0 });
@@ -110,18 +102,6 @@ export const useRuntimeStore = create<RuntimeStoreState>((set, get) => ({
   reload: async () => {
     const { sessionId } = get();
     if (sessionId) await get().load(sessionId);
-  },
-
-  loadHistory: async () => {
-    const { sessionId } = get();
-    if (!sessionId) return;
-    try {
-      const history = (await api()?.getHistory(sessionId)) ?? [];
-      if (get().sessionId !== sessionId) return;
-      set({ history });
-    } catch {
-      set({ history: [] });
-    }
   },
 
   /**
@@ -158,10 +138,6 @@ export const useRuntimeStore = create<RuntimeStoreState>((set, get) => ({
   },
 
   clearHistory: async () => {
-    try {
-      await api()?.clearHistory();
-    } finally {
-      set({ history: [] });
-    }
+    await api()?.clearHistory();
   },
 }));
