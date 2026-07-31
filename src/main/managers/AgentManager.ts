@@ -122,13 +122,13 @@ import {
   type EffectiveSandbox,
 } from './sandbox/policy';
 import { isReadOnlyShellCommand } from './agent/readOnlyCommands';
+import { clampGitPayload, gitActivityDetail, gitActivityLabel } from './agent/gitActivity';
 import {
   latestPlanFile,
   planFileNameFrom,
   readPlanFile,
   withPlanSettings,
 } from './agent/planFile';
-import { clampGitPayload, gitActivityDetail, gitActivityLabel } from './agent/gitActivity';
 import { redactSecrets as redactPlanSecrets } from './graph/redact';
 import {
   AgentRunError,
