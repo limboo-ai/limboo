@@ -83,12 +83,15 @@ export function instrumentPlainTools(
 ): PlainTool[] {
   return tools.map((tool) => ({
     ...tool,
-    run: (args: Record<string, unknown>): string => {
+    // `async` + `await` is load-bearing, not stylistic: a tool that shells out
+    // to `gh` returns a promise, and measuring around the un-awaited call would
+    // record ~0 ms and 0 chars for every one of them.
+    run: async (args: Record<string, unknown>): Promise<string> => {
       const startedAt = Date.now();
       let ok = true;
       let out = '';
       try {
-        out = tool.run(args);
+        out = await tool.run(args);
         return out;
       } catch (err) {
         ok = false;

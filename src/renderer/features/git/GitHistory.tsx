@@ -6,9 +6,10 @@
 import { useEffect, useState } from 'react';
 import { ChevronDown, ChevronRight, GitCommit as GitCommitIcon, Tag, Workflow } from 'lucide-react';
 import type { GitCommit, GitCommitDetail } from '@shared/types';
-import { EmptyState } from '@/renderer/components/ui';
+import { Avatar, EmptyState } from '@/renderer/components/ui';
 import { cn } from '@/renderer/lib/cn';
 import { relativeTime } from '@/renderer/lib/format';
+import { useGhStore } from '@/renderer/stores/useGhStore';
 import { useGitStore } from '@/renderer/stores/useGitStore';
 import { useGraphStore } from '@/renderer/stores/useGraphStore';
 import { useWorkspaceStore } from '@/renderer/stores/useWorkspaceStore';
@@ -18,11 +19,20 @@ export function GitHistory() {
   const log = useGitStore((s) => s.log);
   const loadHistory = useGitStore((s) => s.loadHistory);
   const loadTags = useGitStore((s) => s.loadTags);
+  const loadAvatars = useGhStore((s) => s.loadAvatars);
 
   useEffect(() => {
     void loadHistory();
     void loadTags();
   }, [loadHistory, loadTags]);
+
+  // ONE batched avatar request per loaded page, never one per row: a 100-commit
+  // history would otherwise be 100 IPC round trips for decoration. Rows render
+  // initials immediately and swap in photos when the batch resolves.
+  useEffect(() => {
+    if (log.length === 0) return;
+    void loadAvatars({ emails: log.map((c) => c.email) });
+  }, [log, loadAvatars]);
 
   if (log.length === 0) {
     return (
@@ -45,6 +55,7 @@ export function GitHistory() {
 }
 
 function CommitRow({ commit }: { commit: GitCommit }) {
+  const avatar = useGhStore((s) => s.avatars[commit.email]);
   const [expanded, setExpanded] = useState(false);
   const [detail, setDetail] = useState<GitCommitDetail | null>(null);
   const wsId = useWorkspaceStore((s) => s.activeId);
@@ -73,6 +84,16 @@ function CommitRow({ commit }: { commit: GitCommit }) {
         ) : (
           <ChevronRight size={13} className="mt-0.5 shrink-0 text-faint" />
         )}
+        {/* Square, and large enough to read: the author is the thing a history
+            scan is usually looking for. Falls back to initials whenever the
+            photo is unavailable — see components/ui/Avatar. */}
+        <Avatar
+          src={avatar}
+          name={commit.author}
+          size={32}
+          shape="square"
+          className="mt-0.5"
+        />
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
             <span className="min-w-0 flex-1 truncate text-[12px] text-fg">{commit.subject}</span>

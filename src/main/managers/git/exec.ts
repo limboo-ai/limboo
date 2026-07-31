@@ -16,6 +16,16 @@ export interface GitResult {
   stdout: string;
   stderr: string;
   code: number;
+  /**
+   * The SPAWN failure code (`'ENOENT'` when the `git` binary is missing,
+   * `'EACCES'`, …), when the process never ran at all.
+   *
+   * `execFile` reports these as a *string* in `err.code`, which the numeric
+   * `code` field below collapses to `1` — making "git is not installed"
+   * indistinguishable from "this is not a repository". Callers that need to
+   * tell those apart (see `environment.ts`) must read this, never `stderr`.
+   */
+  spawnError?: string;
 }
 
 const DEFAULT_TIMEOUT = 15_000;
@@ -57,12 +67,13 @@ export function runGit(
           resolve({ ok: true, stdout: out, stderr: errOut, code: 0 });
           return;
         }
-        const code = (err as { code?: number }).code;
+        const code = (err as { code?: number | string }).code;
         resolve({
           ok: false,
           stdout: out,
           stderr: errOut || err.message,
           code: typeof code === 'number' ? code : 1,
+          spawnError: typeof code === 'string' ? code : undefined,
         });
       },
     );

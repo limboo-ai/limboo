@@ -1,17 +1,7 @@
-import {
-  Activity,
-  Brain,
-  FileDiff,
-  Folder,
-  GitBranch,
-  ListTodo,
-  SquareTerminal,
-  TerminalSquare,
-  Webhook,
-  Workflow,
-} from 'lucide-react';
+import { Brain, FileDiff, Folder, GitBranch, ListTodo, TerminalSquare, Workflow } from 'lucide-react';
 import type { ComponentType } from 'react';
 import type { ActivityTab } from '@shared/types';
+import { ACTIVITY_TAB_IDS } from '@shared/constants';
 
 export interface TabMeta {
   id: ActivityTab;
@@ -19,27 +9,32 @@ export interface TabMeta {
   icon: ComponentType<{ size?: number; className?: string }>;
 }
 
-/** The full set of activity tabs, in display order. */
+/**
+ * The full set of activity tabs, in display order. The id list itself lives in
+ * `@shared/constants` (`ACTIVITY_TAB_IDS`) so the main process can validate a
+ * persisted `layout.activeTab` against exactly this set without importing React.
+ */
 export const ACTIVITY_TABS: TabMeta[] = [
   { id: 'files', label: 'Files', icon: Folder },
   { id: 'changes', label: 'Changes', icon: FileDiff },
   { id: 'git', label: 'Git', icon: GitBranch },
   { id: 'memory', label: 'Memory', icon: Brain },
   { id: 'tasks', label: 'Tasks', icon: ListTodo },
-  { id: 'activity', label: 'Activity', icon: Activity },
   { id: 'console', label: 'Console', icon: TerminalSquare },
-  { id: 'hooks', label: 'Hooks', icon: Webhook },
   { id: 'graph', label: 'Work Graph', icon: Workflow },
-  { id: 'terminal', label: 'Terminal', icon: SquareTerminal },
 ];
 
+// Fail loudly in dev if the two lists drift apart.
+if (ACTIVITY_TABS.length !== ACTIVITY_TAB_IDS.length) {
+  throw new Error('ACTIVITY_TABS and ACTIVITY_TAB_IDS have diverged');
+}
+
 /**
- * Activity, Console, Hooks, and the Work Graph render as a horizontal strip in
- * the top TitleBar (next to Settings) instead of the vertical rail — while
- * still opening their drawer on the right. Everything else stays on the
- * vertical `ActivityRail`.
+ * Console and the Work Graph render as a horizontal strip in the top TitleBar
+ * (next to Settings) instead of the vertical rail — while still opening their
+ * drawer on the right. Everything else stays on the vertical `ActivityRail`.
  */
-export const TOP_BAR_TABS: readonly ActivityTab[] = ['activity', 'console', 'hooks', 'graph'];
+export const TOP_BAR_TABS: readonly ActivityTab[] = ['console', 'graph'];
 
 /** Tabs shown in the top bar, in display order. */
 export const TOP_TABS: TabMeta[] = ACTIVITY_TABS.filter((t) => TOP_BAR_TABS.includes(t.id));

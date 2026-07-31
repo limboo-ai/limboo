@@ -410,12 +410,12 @@ export function AgentPanel() {
 
       <Section
         title="Hook Engine"
-        hint="The provider-neutral governance layer. Every governed action (session, prompt, tool gate, file edit, shell, checkpoint) is recorded to the Hooks audit tab — identically whether Claude or Cursor is running. This only affects the audit trail; it never weakens enforcement (the permission gate always runs)."
+        hint="The provider-neutral governance layer. Every governed action (session, prompt, tool gate, file edit, shell, checkpoint) is recorded to the session's audit trail — identically whether Claude or Cursor is running. The trail feeds the Work Graph and session diagnostics. This only affects what is recorded; it never weakens enforcement (the permission gate always runs)."
       >
         <Field
           id="hookEngineEnabled"
           label="Governance audit"
-          hint="Emit normalized lifecycle events to the Hooks tab. Turning this off hides the audit trail but does not change what the agent is or isn't allowed to do."
+          hint="Record normalized lifecycle events to the audit trail. Turning this off stops the recording but does not change what the agent is or isn't allowed to do."
         >
           <Toggle
             checked={agent.hookEngine.enabled}

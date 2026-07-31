@@ -1,7 +1,33 @@
-import type { AppSettings, WorkspaceConfig } from './types';
+import type { ActivityTab, AppSettings, WorkspaceConfig } from './types';
 
-/** Bumped whenever the {@link AppSettings} shape changes incompatibly. */
-export const SETTINGS_VERSION = 26;
+/**
+ * Bumped whenever the {@link AppSettings} shape changes incompatibly.
+ *
+ * v27 — the Activity and Hooks drawer tabs were removed, and the integrated
+ * terminal became its own column (`layout.terminalOpen`) instead of a drawer
+ * tab. `SettingsManager.normalize` migrates a persisted `layout.activeTab`
+ * naming any of the three.
+ *
+ * v28 — `git.avatars` added. The deep-merge supplies the default, so there is
+ * no data migration; the bump exists so the new key's presence is dated.
+ */
+export const SETTINGS_VERSION = 28;
+
+/**
+ * Every valid right-drawer tab id, in display order. The renderer's
+ * `features/activity/tabs.ts` attaches the labels and icons; this list is the
+ * shared half so MAIN can validate a renderer-authored `layout.activeTab`
+ * without importing React.
+ */
+export const ACTIVITY_TAB_IDS: readonly ActivityTab[] = [
+  'files',
+  'changes',
+  'git',
+  'memory',
+  'tasks',
+  'console',
+  'graph',
+];
 
 /**
  * The agent providers Limboo can run (Claude Code = Anthropic via the Agent
@@ -347,6 +373,79 @@ export const GIT_LIMITS = {
     /** Cap on the final proposed message (post-processed). */
     messageMax: 2_000,
   },
+} as const;
+
+/**
+ * Bounds for the optional GitHub CLI integration.
+ *
+ * There is deliberately NO `settings.gh` key: detection is automatic and the
+ * feature self-hides when `gh` is absent, so there is nothing for a user to
+ * configure. Authentication belongs entirely to the CLI — Limboo stores no
+ * GitHub credential (see `main/managers/gh/exec.ts`).
+ */
+export const GH_LIMITS = {
+  /** Max PRs / issues fetched in one list request. */
+  listMax: 50,
+  /** Default list page size. */
+  listDefault: 20,
+  /** Per-argv-element length cap. */
+  argMax: 256,
+  /** Max argv elements handed to `gh`. */
+  argvMax: 16,
+  /** Timeout (ms) for a `gh` invocation. */
+  timeoutMs: 12_000,
+  /** Max captured output bytes. */
+  maxBuffer: 4 * 1024 * 1024,
+  /** How long an auth classification stays fresh. */
+  authTtlMs: 60_000,
+  /** How long a PR/issue list stays fresh (a keystroke must not spawn a process). */
+  listTtlMs: 20_000,
+  /**
+   * How long the commit-email → GitHub-account map stays fresh. Long: the
+   * mapping for existing commits never changes, and this is the only call that
+   * reaches api.github.com.
+   */
+  authorsTtlMs: 30 * 60 * 1_000,
+  /** Title/label length caps applied before anything reaches the renderer. */
+  titleMax: 200,
+  /** Redacted error string cap. */
+  errorMax: 240,
+  /** Max characters of a comment body the agent may post to a PR or issue. */
+  commentBodyMax: 8_000,
+} as const;
+
+/**
+ * Bounds for contributor avatars.
+ *
+ * This is the only subsystem that makes an outbound request other than the
+ * coding agent itself, so every one of these is a security bound, not a tuning
+ * knob. See `main/managers/gh/avatars.ts` for the policy they enforce.
+ */
+export const AVATAR_LIMITS = {
+  /** Requested pixel size. Larger than the release document's 48 — these render bigger. */
+  px: 64,
+  /**
+   * Hard cap on the downloaded image, enforced on the header AND while streaming.
+   *
+   * Deliberately EQUAL to `RELEASE_LIMITS.avatarBytesMax`, because
+   * `isEmbeddedAvatar` — the shared screen every avatar passes before it reaches
+   * an `<img src>` — derives its length ceiling from that constant. A larger cap
+   * here would mean main happily fetching images the renderer then rejects,
+   * which looks exactly like "avatars are broken" and gives no clue why.
+   */
+  bytesMax: 24_576,
+  /** Per-request timeout. */
+  timeoutMs: 8_000,
+  /** Max simultaneous downloads — a 100-commit history must not open 100 sockets. */
+  maxConcurrent: 6,
+  /** Entries retained in the in-memory cache. */
+  cacheMax: 256,
+  /** How long a resolved avatar stays fresh. */
+  ttlMs: 6 * 60 * 60 * 1_000,
+  /** How long a MISS stays cached, so a 404 is not refetched every render. */
+  negativeTtlMs: 30 * 60 * 1_000,
+  /** Max identities accepted in one batch request from the renderer. */
+  batchMax: 120,
 } as const;
 
 /**
@@ -889,6 +988,9 @@ export const DEFAULT_SETTINGS: AppSettings = {
     },
     pull: {
       strategy: 'ff-only',
+    },
+    avatars: {
+      enabled: true,
     },
     worktrees: {
       enabled: true,

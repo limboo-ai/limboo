@@ -32,6 +32,10 @@ export type UiDensity = 'comfortable' | 'compact';
 
 /**
  * The right activity drawer tabs. Mirrors the rail in the UI.
+ *
+ * The integrated terminal is deliberately absent: it is its own full-height
+ * column inside the workspace card (`settings.layout.terminalOpen`), not a
+ * drawer tab.
  */
 export type ActivityTab =
   | 'files'
@@ -39,11 +43,8 @@ export type ActivityTab =
   | 'git'
   | 'memory'
   | 'tasks'
-  | 'activity'
   | 'console'
-  | 'hooks'
-  | 'graph'
-  | 'terminal';
+  | 'graph';
 
 /** Kinds of center-column workspace document that survive a restart. */
 export type PersistedDocumentKind = 'diff' | 'file';
@@ -369,6 +370,17 @@ export interface AppSettings {
     /** Pull strategy. `ff-only` avoids silent merge commits; `rebase` replays. */
     pull: {
       strategy: 'ff-only' | 'rebase';
+    };
+    /**
+     * Contributor profile photos in commit history and the GitHub sub-tab.
+     *
+     * This is a NETWORK switch, not a cosmetic one: it is the only thing in
+     * Limboo besides the coding agent that makes an outbound request. When it
+     * is off, nothing is fetched and every author renders as initials. See
+     * `main/managers/gh/avatars.ts` for exactly what is and is not sent.
+     */
+    avatars: {
+      enabled: boolean;
     };
     /**
      * Git worktree preferences — a session may own an isolated worktree (its own
@@ -1237,20 +1249,6 @@ export interface SessionDependencies {
   hasPlan: boolean;
 }
 
-/**
- * One entry in a session's unified engineering timeline — a merged, chronological
- * view over the activity feed, diagnostics, git checkpoints, and lifecycle
- * events. Read-only; derived by query, never stored separately.
- */
-export interface SessionTimelineEntry {
-  id: string;
-  kind: 'activity' | 'diagnostic' | 'checkpoint' | 'lifecycle';
-  label: string;
-  detail?: string;
-  /** Epoch ms. */
-  at: number;
-}
-
 /** Options accompanying a session delete (what to do with owned resources). */
 export interface SessionDeleteOptions {
   /** Remove the worktree directory (forced when dirty only if user confirmed). */
@@ -1331,6 +1329,95 @@ export interface GitFileChange {
 }
 
 /** Live repository status — the dashboard the Git workspace renders. */
+/* ------------------------------------------------------------------ */
+/* GitHub CLI (`gh`) — optional, detected, never a dependency           */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Classification of the local GitHub CLI. `error` covers a gh that exists but
+ * could not be interrogated (timeout, unreadable config) — deliberately
+ * distinct from `not-authenticated`, which is a definite answer.
+ */
+export type GhStatus = 'not-installed' | 'not-authenticated' | 'authenticated' | 'error';
+
+/** One host `gh` knows about. Never carries a token — see `gh/exec.ts`. */
+export interface GhHost {
+  host: string;
+  login: string;
+  active: boolean;
+}
+
+/**
+ * The local GitHub CLI's state. Limboo stores NO GitHub credentials: this is a
+ * read-only view of what the CLI already has, and every field here is safe to
+ * show. There is deliberately no token field of any kind.
+ */
+export interface GhState {
+  status: GhStatus;
+  /** `gh --version` output, when it answered. */
+  version?: string;
+  /** The active account, when authenticated. */
+  account?: { login: string; host: string };
+  hosts?: GhHost[];
+  /** The workspace's GitHub remote, when it has one. */
+  repo?: { nameWithOwner: string; host: string };
+  /**
+   * True when auth had to be read from `gh auth status`'s human-readable
+   * output because this CLI predates the `--json` flag. Degraded, not failed.
+   */
+  legacyAuthParse?: boolean;
+  /** Redacted, length-capped reason when `status` is `error`. */
+  error?: string;
+  checkedAt: number;
+}
+
+/** A pull request as listed by `gh pr list --json …`. */
+export interface GhPullRequest {
+  number: number;
+  title: string;
+  /** `OPEN` | `CLOSED` | `MERGED` as gh reports it. */
+  state: string;
+  author?: string;
+  headRefName?: string;
+  baseRefName?: string;
+  url: string;
+  isDraft: boolean;
+  updatedAt: string;
+  /** `APPROVED` | `CHANGES_REQUESTED` | `REVIEW_REQUIRED`, when gh reports it. */
+  reviewDecision?: string;
+}
+
+/** An issue as listed by `gh issue list --json …`. */
+export interface GhIssue {
+  number: number;
+  title: string;
+  state: string;
+  author?: string;
+  url: string;
+  labels: string[];
+  updatedAt: string;
+}
+
+/**
+ * Whether a usable `git` binary exists on this machine.
+ *
+ * Separate from {@link GitStatus} on purpose: a failed `git` spawn and an
+ * uninitialised folder both produce `isRepo: false`, so without this the UI
+ * cannot tell "install git" from "run git init" — and offers the second when
+ * only the first would help.
+ */
+export interface GitEnvironment {
+  available: boolean;
+  /** Parsed version string (e.g. `2.45.2`), when git answered. */
+  version?: string;
+  /** Reported by main so the renderer can pick install guidance without guessing. */
+  platform: NodeJS.Platform;
+  /** Redacted, length-capped failure reason when `available` is false. */
+  error?: string;
+  /** Epoch ms of the probe that produced this result. */
+  checkedAt: number;
+}
+
 export interface GitStatus {
   isRepo: boolean;
   branch?: string;
@@ -2866,7 +2953,54 @@ export type AgentActivityType =
   | 'clarification'
   | 'result'
   | 'error'
-  | 'status';
+  | 'status'
+  | 'git';
+
+/** The git operations that become a conversation-stream entry. */
+export type GitActivityKind =
+  | 'commit'
+  | 'stage'
+  | 'unstage'
+  | 'discard'
+  | 'checkout'
+  | 'branch'
+  | 'tag'
+  | 'fetch'
+  | 'push'
+  | 'pull'
+  | 'init'
+  | 'checkpoint-create'
+  | 'checkpoint-restore'
+  | 'checkpoint-delete';
+
+/**
+ * Structured detail for a `git` activity entry, so the stream row can offer
+ * real actions (open the diff, view the commit, restore the checkpoint) rather
+ * than making the renderer scrape them back out of a label.
+ *
+ * Provider-neutral by construction: `origin` distinguishes the AGENT from the
+ * USER and nothing here records which coding provider was running.
+ */
+export interface GitActivityPayload {
+  kind: GitActivityKind;
+  origin: 'agent' | 'user';
+  ok: boolean;
+  /** Repo-relative paths the operation touched. */
+  paths?: string[];
+  branch?: string;
+  /** Ref the operation targeted (branch/tag name), when different from `branch`. */
+  ref?: string;
+  /** Short commit hash, for "View Commit". */
+  commit?: string;
+  /** Checkpoint id, for "Restore Checkpoint". */
+  checkpointId?: string;
+  /** Terminal to reveal, for "Focus Terminal". */
+  terminalId?: string;
+  /** The equivalent command, redacted — for "Copy Command". */
+  command?: string;
+  adds?: number;
+  dels?: number;
+}
 
 /** An immutable, audit-style entry in the Activity feed. */
 export interface AgentActivityItem {
@@ -2876,6 +3010,11 @@ export interface AgentActivityItem {
   label: string;
   detail?: string;
   tone?: 'info' | 'success' | 'warning' | 'danger';
+  /**
+   * Structured detail for `type: 'git'` entries. Rides inside the existing
+   * `agent_activity.payload` JSON column, so this needs no schema migration.
+   */
+  git?: GitActivityPayload;
   /** Epoch ms; formatted relatively in the UI. */
   at: number;
 }
@@ -3336,15 +3475,6 @@ export interface HookDecisionResult {
   reason?: string;
   updatedInput?: Record<string, unknown>;
 }
-
-/**
- * The renderer-facing payload pushed on the `hooks:audit` channel: either a new
- * appended event, or a signal that a session's (or all sessions') trail was
- * cleared so the panel refetches.
- */
-export type HookAuditPush =
-  | { kind: 'event'; event: HookEvent }
-  | { kind: 'cleared'; sessionId: string | null };
 
 /* ------------------------------------------------------------------ */
 /* Work Graph — the Directed Acyclic Work Graph (DAWG)                 */
@@ -3907,7 +4037,6 @@ export type CommandId =
   | 'drawer.toggleFiles'
   | 'drawer.toggleChanges'
   | 'drawer.toggleTasks'
-  | 'drawer.toggleActivity'
   | 'sidebar.toggle'
   | 'palette.open'
   | 'search.open'

@@ -6,7 +6,7 @@
  */
 import { create } from 'zustand';
 import type { ActivityTab } from '@shared/types';
-import { LAYOUT_LIMITS, clamp } from '@shared/constants';
+import { ACTIVITY_TAB_IDS, LAYOUT_LIMITS, clamp } from '@shared/constants';
 import { debounce } from '@/renderer/lib/debounce';
 
 interface LayoutState {
@@ -19,10 +19,12 @@ interface LayoutState {
   /** Whether the left sessions sidebar is collapsed to a thin rail. */
   sessionsCollapsed: boolean;
   /**
-   * Width (px) used for the right drawer when the Terminal tab is active. The
-   * terminal benefits from a wider drawer than the other tabs, so it keeps its
-   * own remembered width (clamped to the terminal bounds).
+   * Whether the integrated terminal column is open. The terminal is NOT a
+   * drawer tab — it is its own full-height column inside the workspace card,
+   * between the sessions sidebar and the conversation.
    */
+  terminalOpen: boolean;
+  /** Width (px) of the terminal column (clamped to the terminal bounds). */
   terminalWidth: number;
   /**
    * Width (px) used for the right drawer when the Git tab is active. The Git
@@ -42,6 +44,7 @@ interface LayoutState {
     rightWidth: number;
     activeTab: ActivityTab | null;
     sessionsCollapsed?: boolean;
+    terminalOpen?: boolean;
     terminalWidth?: number;
     gitWidth?: number;
     graphWidth?: number;
@@ -57,9 +60,9 @@ interface LayoutState {
   /** Collapse / expand the left sessions sidebar. */
   setSessionsCollapsed: (collapsed: boolean) => void;
   setTerminalWidth: (width: number) => void;
-  /** Open the terminal tab if closed, otherwise collapse the drawer. */
+  /** Open or close the terminal column. */
   setTerminalOpen: (open: boolean) => void;
-  /** Toggle the terminal tab open/closed. */
+  /** Toggle the terminal column open/closed. */
   toggleTerminal: () => void;
 }
 
@@ -70,6 +73,7 @@ const persist = debounce((layout: Partial<LayoutState>) => {
       rightWidth: layout.rightWidth,
       activeTab: layout.activeTab,
       sessionsCollapsed: layout.sessionsCollapsed,
+      terminalOpen: layout.terminalOpen,
       terminalWidth: layout.terminalWidth,
       gitWidth: layout.gitWidth,
       graphWidth: layout.graphWidth,
@@ -83,17 +87,26 @@ export const useLayoutStore = create<LayoutState>((set, get) => ({
   activeTab: 'files',
   lastTab: 'files',
   sessionsCollapsed: false,
+  terminalOpen: false,
   terminalWidth: LAYOUT_LIMITS.terminal.default,
   gitWidth: LAYOUT_LIMITS.git.default,
   graphWidth: LAYOUT_LIMITS.graph.default,
 
-  seed: (layout) =>
+  seed: (layout) => {
+    // Belt and braces: main's `SettingsManager.normalize` already allowlists the
+    // persisted tab, but this store is ALSO seeded from a live `settings:changed`
+    // push, which an older instance could have written.
+    const tab =
+      layout.activeTab !== null && ACTIVITY_TAB_IDS.includes(layout.activeTab)
+        ? layout.activeTab
+        : null;
     set({
       leftWidth: layout.leftWidth,
       rightWidth: layout.rightWidth,
-      activeTab: layout.activeTab,
-      lastTab: layout.activeTab ?? 'files',
+      activeTab: tab,
+      lastTab: tab ?? 'files',
       sessionsCollapsed: layout.sessionsCollapsed ?? false,
+      terminalOpen: layout.terminalOpen ?? false,
       terminalWidth: clamp(
         layout.terminalWidth ?? LAYOUT_LIMITS.terminal.default,
         LAYOUT_LIMITS.terminal.min,
@@ -109,7 +122,8 @@ export const useLayoutStore = create<LayoutState>((set, get) => ({
         LAYOUT_LIMITS.graph.min,
         LAYOUT_LIMITS.graph.max,
       ),
-    }),
+    });
+  },
 
   setLeftWidth: (width) => {
     const leftWidth = clamp(width, LAYOUT_LIMITS.left.min, LAYOUT_LIMITS.left.max);
@@ -163,13 +177,14 @@ export const useLayoutStore = create<LayoutState>((set, get) => ({
     persist(get());
   },
 
-  // The terminal is now a right-drawer tab; opening/closing it just drives the
-  // active tab so it behaves like Files/Changes/Tasks/Console.
+  // The terminal is its own column inside the workspace card, not a drawer tab,
+  // so it opens and closes independently of `activeTab`.
   setTerminalOpen: (open) => {
-    get().setActiveTab(open ? 'terminal' : null);
+    set({ terminalOpen: open });
+    persist(get());
   },
 
   toggleTerminal: () => {
-    get().toggleTab('terminal');
+    get().setTerminalOpen(!get().terminalOpen);
   },
 }));
