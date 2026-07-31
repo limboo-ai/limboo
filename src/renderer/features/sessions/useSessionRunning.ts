@@ -5,7 +5,7 @@
  * Running state is never stored on the session itself; it is purely agent state.
  */
 import type { RequestPhase } from '@shared/types';
-import { RUNNING_REQUEST_PHASES } from '@shared/types';
+import { AWAITING_USER_REQUEST_PHASES, RUNNING_REQUEST_PHASES } from '@shared/types';
 import { useAgentStore } from '@/renderer/stores/useAgentStore';
 
 /**
@@ -14,6 +14,14 @@ import { useAgentStore } from '@/renderer/stores/useAgentStore';
  * what busy means — main proves these phases against its live run map.
  */
 export const RUNNING_PHASES = new Set<RequestPhase>(RUNNING_REQUEST_PHASES);
+
+/**
+ * Phases in which the run is parked on the user and the deciding controls must
+ * stay live. These ARE running phases — the provider process is alive, blocked
+ * on a permission callback — so a surface that presents the decision subtracts
+ * this set from "busy", or it disables the very buttons that release the park.
+ */
+export const AWAITING_USER_PHASES = new Set<RequestPhase>(AWAITING_USER_REQUEST_PHASES);
 
 /**
  * Whether a specific session's agent run is currently in flight. Reads the

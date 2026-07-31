@@ -5,7 +5,8 @@
  * Commands operate on Zustand stores via `getState()` so they can run from
  * anywhere (inside or outside React) without prop drilling.
  */
-import type { CommandId, SessionPermissionMode } from '@shared/types';
+import type { CommandId, PlanDecisionKind, SessionPermissionMode } from '@shared/types';
+import { isPlanBlocking } from '@shared/plan';
 import { useLayoutStore } from '@/renderer/stores/useLayoutStore';
 import { useSessionStore } from '@/renderer/stores/useSessionStore';
 import { useUIStore } from '@/renderer/stores/useUIStore';
@@ -52,6 +53,37 @@ function currentReleaseMarkdown(): string | null {
 /** Set the composer's default permission mode (Plan / Ask before edits / Accept edits). */
 function setDefaultMode(defaultMode: SessionPermissionMode): void {
   void useSettingsStore.getState().update({ agent: { plan: { defaultMode } } });
+}
+
+/**
+ * Palette entries for the plan decisions.
+ *
+ * Generated from one table so the palette can never offer a decision the
+ * buttons do not, and so every entry goes through the same store action — which
+ * carries the revision the UI is showing and holds the in-flight lock. A
+ * hand-written duplicate of the approve path is exactly how the palette used to
+ * bypass both.
+ */
+function planDecisionCommands(): Command[] {
+  const entries: Array<{ id: CommandId; title: string; kind: PlanDecisionKind }> = [
+    { id: 'plan.approve', title: 'Approve plan & execute', kind: 'approve' },
+    { id: 'plan.keepPlanning', title: 'Keep planning', kind: 'keep-planning' },
+    { id: 'plan.reject', title: 'Reject plan', kind: 'reject' },
+    { id: 'plan.archive', title: 'Archive plan', kind: 'archive' },
+  ];
+  return entries.map(({ id, title, kind }) => ({
+    id,
+    title,
+    section: 'Agent' as const,
+    inPalette: true,
+    run: () => {
+      const sessionId = useSessionStore.getState().selectedId;
+      if (!sessionId) return;
+      const plan = useAgentStore.getState().bySession[sessionId]?.plan;
+      if (!isPlanBlocking(plan?.status)) return;
+      useAgentStore.getState().planDecision(sessionId, kind);
+    },
+  }));
 }
 
 /**
@@ -332,18 +364,10 @@ export const COMMANDS: Command[] = [
     inPalette: true,
     run: () => setDefaultMode('default'),
   },
-  {
-    id: 'plan.approve',
-    title: 'Approve plan & execute',
-    section: 'Agent',
-    inPalette: true,
-    run: () => {
-      const id = useSessionStore.getState().selectedId;
-      if (!id) return;
-      const plan = useAgentStore.getState().bySession[id]?.plan;
-      if (plan?.status === 'ready') useAgentStore.getState().approvePlan(id);
-    },
-  },
+  // The plan decisions, reachable from the palette. Each routes through the
+  // same store action the buttons use, so the revision guard and the in-flight
+  // lock apply identically however the decision is made.
+  ...planDecisionCommands(),
   {
     id: 'workspace.reindex',
     title: 'Reindex workspace',

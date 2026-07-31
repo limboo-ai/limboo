@@ -33,6 +33,7 @@ import { useResumeStore } from '@/renderer/stores/useResumeStore';
 import { RuntimeIndicator } from '@/renderer/features/agent/runtime/RuntimeIndicator';
 import { useDocumentStore } from '@/renderer/stores/useDocumentStore';
 import { ResumeBanner } from '@/renderer/features/resume/ResumeBanner';
+import { ActivationRibbon } from './ActivationRibbon';
 import { DiffWorkspace } from '@/renderer/features/git/diff/DiffWorkspace';
 import { ReleaseNotesDocument } from '@/renderer/features/updates/ReleaseNotesDocument';
 import { useReleaseNotes, useReleaseNotesTab } from '@/renderer/features/updates/useReleaseNotes';
@@ -122,6 +123,8 @@ export function CenterWorkspace() {
       {session && <SessionHeader sessionId={session.id} title={session.title} branch={session.branch} adds={session.adds} dels={session.dels} />}
       {/* Supervised services for this session (hidden when none are declared). */}
       {session && <ServicesStrip sessionId={session.id} />}
+      {/* Main is still rebinding the root-bound services after a switch. */}
+      {session && <ActivationRibbon sessionId={session.id} />}
       {/* Recovery affordance when the session's worktree directory vanished. */}
       {session?.worktreeStatus === 'missing' && <MissingWorktreeBanner sessionId={session.id} />}
       {/* Repository drift since this session's last snapshot (resume pipeline). */}

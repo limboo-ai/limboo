@@ -85,8 +85,10 @@ import type {
   SearchQueryOptions,
   PermissionDecision,
   PermissionRequest,
+  PlanDecisionKind,
   PlanRevision,
   Session,
+  SessionActivationState,
   SessionDeleteOptions,
   SessionDependencies,
   SessionPermissionMode,
@@ -222,6 +224,13 @@ const sessionApi = {
   onUpdated: (cb: () => void): (() => void) => subscribe<void>(IpcEvents.sessionsUpdated, cb),
   onActiveChanged: (cb: (session: Session | null) => void): (() => void) =>
     subscribe<Session | null>(IpcEvents.sessionActiveChanged, cb),
+  /**
+   * Progress of the pipeline that rebinds every root-bound service after a
+   * switch. Always terminates in `ready` or `error`, so a UI keyed on it cannot
+   * stick — but see the renderer-side watchdog, which does not take that on faith.
+   */
+  onActivationChanged: (cb: (state: SessionActivationState) => void): (() => void) =>
+    subscribe<SessionActivationState>(IpcEvents.sessionActivationChanged, cb),
 };
 
 const worktreeApi = {
@@ -287,18 +296,24 @@ const agentApi = {
   stop: (sessionId: string): Promise<void> => ipcRenderer.invoke(IpcChannels.agentStop, sessionId),
   getPlan: (sessionId: string): Promise<SessionPlan | null> =>
     ipcRenderer.invoke(IpcChannels.agentGetPlan, sessionId),
-  approvePlan: (sessionId: string, execMode?: SessionPermissionMode): Promise<void> =>
-    ipcRenderer.invoke(IpcChannels.agentApprovePlan, sessionId, execMode),
-  rejectPlan: (sessionId: string): Promise<void> =>
-    ipcRenderer.invoke(IpcChannels.agentRejectPlan, sessionId),
-  regeneratePlan: (sessionId: string, extra?: string): Promise<void> =>
-    ipcRenderer.invoke(IpcChannels.agentRegeneratePlan, sessionId, extra),
-  setPlanPinned: (sessionId: string, pinned: boolean): Promise<void> =>
-    ipcRenderer.invoke(IpcChannels.agentSetPlanPinned, sessionId, pinned),
+  /**
+   * Decide a pending plan. `rev` is the revision the UI is showing — main
+   * refuses a mismatch, so a stale window cannot approve a superseded plan.
+   */
+  planDecision: (
+    sessionId: string,
+    rev: number,
+    kind: PlanDecisionKind,
+    feedback?: string,
+    execMode?: SessionPermissionMode,
+  ): Promise<void> =>
+    ipcRenderer.invoke(IpcChannels.agentPlanDecision, sessionId, rev, kind, feedback, execMode),
+  setPlanPinned: (sessionId: string, rev: number, pinned: boolean): Promise<void> =>
+    ipcRenderer.invoke(IpcChannels.agentSetPlanPinned, sessionId, rev, pinned),
   listPlanRevisions: (sessionId: string): Promise<PlanRevision[]> =>
     ipcRenderer.invoke(IpcChannels.agentListPlanRevisions, sessionId),
-  restorePlanRevision: (sessionId: string, revisionId: string): Promise<void> =>
-    ipcRenderer.invoke(IpcChannels.agentRestorePlanRevision, sessionId, revisionId),
+  restorePlanRevision: (sessionId: string, rev: number, revisionId: string): Promise<void> =>
+    ipcRenderer.invoke(IpcChannels.agentRestorePlanRevision, sessionId, rev, revisionId),
   /** Measure what a revert to `messageId` would do. Mutates nothing. */
   revertPreview: (sessionId: string, messageId: string): Promise<ConversationRevertPreview> =>
     ipcRenderer.invoke(IpcChannels.agentRevertPreview, sessionId, messageId),

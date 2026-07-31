@@ -97,9 +97,12 @@ export const IpcChannels = {
 
   // Plan Mode — review-first workflow over the coding agent.
   agentGetPlan: 'agent:getPlan',
-  agentApprovePlan: 'agent:approvePlan',
-  agentRejectPlan: 'agent:rejectPlan',
-  agentRegeneratePlan: 'agent:regeneratePlan',
+  /**
+   * The single plan-decision channel: approve / keep-planning / edit / reject /
+   * archive. Replaces the former approve/reject/regenerate trio, which had no
+   * revision token and so could act on a plan the user was no longer seeing.
+   */
+  agentPlanDecision: 'agent:planDecision',
   agentSetPlanPinned: 'agent:setPlanPinned',
   agentListPlanRevisions: 'agent:listPlanRevisions',
   agentRestorePlanRevision: 'agent:restorePlanRevision',
@@ -346,6 +349,11 @@ export const IpcEvents = {
   sessionsUpdated: 'sessions:updated',
   /** The active session changed (switched, created, or deleted). */
   sessionActiveChanged: 'session:active-changed',
+  /**
+   * Progress of the activation pipeline that rebinds every root-bound service
+   * after a session/workspace switch. Always ends in `ready` or `error`.
+   */
+  sessionActivationChanged: 'session:activation-changed',
   /** The agent runtime state changed (status / install / active session). */
   agentStateChanged: 'agent:state-changed',
   /** The Cursor provider's auth state changed (probe / login / key set). */

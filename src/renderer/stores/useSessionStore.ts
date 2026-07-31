@@ -12,11 +12,27 @@
  * since it is purely presentational and shared across the sidebar surfaces.
  */
 import { create } from 'zustand';
-import type { RepoConfig, Session, SessionDeleteOptions, SessionSort } from '@shared/types';
+import type {
+  RepoConfig,
+  Session,
+  SessionActivationState,
+  SessionDeleteOptions,
+  SessionSort,
+} from '@shared/types';
 import { useWorkspaceStore } from './useWorkspaceStore';
 import { useSettingsStore } from './useSettingsStore';
 import { useServiceStore } from './useServiceStore';
 import { useUIStore } from './useUIStore';
+
+/**
+ * How long the renderer will believe an "activating" state before clearing it
+ * itself. Generous — the pipeline waits up to 3s on a cold search index alone —
+ * because this is a safety net, not a timeout.
+ */
+const ACTIVATION_WATCHDOG_MS = 15_000;
+
+/** Module state: nothing renders from it, it only cancels the pending net. */
+let activationWatchdog: ReturnType<typeof setTimeout> | null = null;
 
 interface SessionState {
   sessions: Session[];
@@ -35,6 +51,12 @@ interface SessionState {
   deleteDialogId: string | null;
   /** Pending repo-config confirmation (repo-authored commands shown verbatim). */
   hooksPrompt: { sessionId: string; config: RepoConfig; hash: string } | null;
+  /**
+   * Progress of main's activation pipeline. Presentational ONLY — the session
+   * switch itself is optimistic, so this drives a ribbon and disables send, and
+   * never gates what is rendered. See `managers/session/activation.ts`.
+   */
+  activation: SessionActivationState | null;
 
   hydrate: () => Promise<void>;
   refresh: () => Promise<void>;
@@ -118,6 +140,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   groupByFolder: true,
   deleteDialogId: null,
   hooksPrompt: null,
+  activation: null,
 
   hydrate: async () => {
     if (get().hydrated) return;
@@ -127,6 +150,24 @@ export const useSessionStore = create<SessionState>((set, get) => ({
 
     api.onUpdated(() => void get().refresh());
     api.onActiveChanged((session) => set({ selectedId: session?.id ?? null }));
+    api.onActivationChanged?.((state) => {
+      if (activationWatchdog) clearTimeout(activationWatchdog);
+      set({ activation: state });
+      // The pipeline emits a terminal event from `finally`, so this should never
+      // fire. It exists because a stuck ribbon would silently disable the
+      // composer — a UI that cannot be typed into must not depend on another
+      // process remembering to send one more message.
+      if (state.phase === 'activating') {
+        activationWatchdog = setTimeout(() => {
+          activationWatchdog = null;
+          set((prev) =>
+            prev.activation?.phase === 'activating'
+              ? { activation: { ...prev.activation, phase: 'ready', step: undefined } }
+              : {},
+          );
+        }, ACTIVATION_WATCHDOG_MS);
+      }
+    });
     // Follow the active workspace: a switch re-scopes the session list.
     useWorkspaceStore.subscribe((s, prev) => {
       if (s.activeId !== prev.activeId) void get().refresh();

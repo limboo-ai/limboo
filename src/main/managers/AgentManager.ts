@@ -57,9 +57,12 @@ import type {
   GitCommitMessageStreamEvent,
   PermissionDecision,
   PermissionRequest,
+  PlanApprovalPath,
+  PlanEndReason,
   PlanMeta,
   PlanRevision,
   PlanStatus,
+  PlanTextSource,
   RateLimitInfo,
   RequestOutcome,
   HookEvent,
@@ -73,6 +76,13 @@ import type {
 } from '@shared/types';
 import { RUNNING_REQUEST_PHASES } from '@shared/types';
 import {
+  assertPlanTransition,
+  isPlanBlocking,
+  isPlanImplementing,
+  isPlanSettled,
+  normalizePlanStatus,
+} from '@shared/plan';
+import {
   ACTIVITY_LIMITS,
   AGENT_LIMITS,
   SUBAGENT_LIMITS,
@@ -83,8 +93,10 @@ import {
   DEFAULT_SETTINGS,
   GIT_LIMITS,
   MEMORY_LIMITS,
+  PLAN_LIMITS,
   RESUME_LIMITS,
   SEARCH_LIMITS,
+  clamp,
   providerForModel,
 } from '@shared/constants';
 import type { AgentProvider } from '@shared/constants';
@@ -110,7 +122,14 @@ import {
   type EffectiveSandbox,
 } from './sandbox/policy';
 import { isReadOnlyShellCommand } from './agent/readOnlyCommands';
+import {
+  latestPlanFile,
+  planFileNameFrom,
+  readPlanFile,
+  withPlanSettings,
+} from './agent/planFile';
 import { clampGitPayload, gitActivityDetail, gitActivityLabel } from './agent/gitActivity';
+import { redactSecrets as redactPlanSecrets } from './graph/redact';
 import {
   AgentRunError,
   classifyTerminalResult,
@@ -681,6 +700,47 @@ interface SessionRuntime {
   toolCalls: AgentToolCall[];
 }
 
+/**
+ * A stale plan revision. Distinct from a generic error so the IPC layer can
+ * tell the renderer "someone beat you to it, refetch" rather than surfacing it
+ * as a failure — two windows on one session, or a click racing a re-capture,
+ * are ordinary events, not bugs.
+ */
+export class PlanRevisionConflictError extends Error {
+  readonly currentRev: number;
+  readonly expectedRev: number;
+  constructor(currentRev: number, expectedRev: number) {
+    super('This plan has been updated — review it again before deciding.');
+    this.name = 'PlanRevisionConflictError';
+    this.currentRev = currentRev;
+    this.expectedRev = expectedRev;
+  }
+}
+
+/**
+ * A run was refused because the session's plan is waiting on a human. This is
+ * the execution barrier: main is authoritative, so it refuses even when the
+ * renderer's mirror of the state is stale or bypassed entirely.
+ */
+export class PlanBlockedError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'PlanBlockedError';
+  }
+}
+
+/** A parked `ExitPlanMode` permission callback awaiting the user's decision. */
+interface PlanDecisionEntry {
+  /** The plan rev this park belongs to; a decision must match it. */
+  rev: number;
+  /** The tool input, returned verbatim on approve. */
+  input: Record<string, unknown>;
+  /** Resolves the parked `canUseTool` promise. */
+  resolve: (result: PermissionResult) => void;
+  /** Clears the park-timeout timer and the abort listener. */
+  dispose: () => void;
+}
+
 interface ActiveRun {
   abort: AbortController;
   query: { close?: () => void } | null;
@@ -704,6 +764,25 @@ interface ActiveRun {
   result?: TerminalResult;
   /** Set true once an ExitPlanMode plan was captured (suppresses the failure throw). */
   planCaptured?: boolean;
+  /**
+   * The `tool_use` id of this run's ExitPlanMode call, so the tool RESULT can be
+   * recognized once the call is allowed. The result is where the authoritative
+   * plan text lives (`ExitPlanModeOutput.plan` / `.filePath`) — the input never
+   * carried it.
+   */
+  planToolUseId?: string;
+  /**
+   * Assistant text produced during THIS planning pass, accumulated as a
+   * fallback plan source for CLIs that neither pass the plan in the tool input
+   * nor write a readable plan file. Bounded; reset per run.
+   */
+  planNarrative?: string;
+  /**
+   * The plan revision this run was released to implement. Only a run bound to
+   * the current revision may mark that plan completed — otherwise any later
+   * successful run would file someone else's plan as done.
+   */
+  implementsPlanRev?: number;
   /** Set once this run has taken its single automatic pre-write checkpoint. */
   checkpointed?: boolean;
   /**
@@ -779,6 +858,23 @@ export class AgentManager {
   private readonly retrievalCounts = new Map<string, { memory: number; search: number }>();
   private readonly runtimes = new Map<string, SessionRuntime>();
   private readonly runs = new Map<string, ActiveRun>();
+  /**
+   * Per-session monotonic sequence for `plan` events, mirroring the Runtime
+   * Telemetry / Work Graph push discipline. Each event carries the WHOLE plan,
+   * so a receiver that spots a gap refetches rather than replaying.
+   */
+  private readonly planSeq = new Map<string, number>();
+  /**
+   * Parked `ExitPlanMode` decisions, keyed by sessionId (`agent_plans` is 1:1,
+   * so is this). The entry holds the permission callback's `resolve`, so the
+   * provider run stays blocked until a human decides — the SDK documents that
+   * permission prompts have no park deadline, which is what makes a true
+   * execution barrier possible rather than a UI convention.
+   *
+   * A decision id deliberately never crosses IPC: the renderer sends
+   * `(sessionId, rev)` and main looks the entry up itself.
+   */
+  private readonly pendingPlanDecisions = new Map<string, PlanDecisionEntry>();
   /**
    * Per-session run phase. Sessions can run concurrently (see {@link runs}), so
    * this MUST be keyed by sessionId rather than a single shared value — a
@@ -1263,7 +1359,10 @@ export class AgentManager {
   start(): void {
     this.setLifecycle('initializing');
     this.diag('lifecycle', 'info', 'Agent manager starting');
-    this.reconcilePlans();
+    // NOTE: plan reconciliation is NOT done here. It reads each session's
+    // effective root, which is not trustworthy until worktree recovery has run —
+    // so the composition root calls `reconcilePlans()` from inside
+    // `worktrees.recover().finally(...)`, after the first retarget.
     this.lastModel = this.settings.getAll().agent.model;
     this.probeHealth(true);
     this.startHeartbeat();
@@ -1657,6 +1756,17 @@ export class AgentManager {
         entry.resolve({ behavior: 'deny', message: 'Run stopped by the user.', interrupt: true });
       }
     }
+    // A parked plan approval blocks canUseTool the same way. The PLAN survives —
+    // stopping the run is not a verdict on it — but the in-turn path does not,
+    // so it degrades to detached rather than being decided for the user.
+    if (this.pendingPlanDecisions.has(sessionId)) {
+      this.releaseParkedPlan(sessionId, {
+        behavior: 'deny',
+        message: 'Run stopped by the user.',
+        interrupt: true,
+      });
+      this.degradeParkedPlan(sessionId, 'run-cancelled');
+    }
     this.runs.delete(sessionId);
     this.completeRequest(sessionId, 'cancelled');
     if (!this.isCapabilityDegraded()) this.setLifecycle('ready', { activeSessionId: null });
@@ -1844,6 +1954,13 @@ export class AgentManager {
         sessionId,
         at,
       );
+      db.prepare('DELETE FROM plan_revisions WHERE session_id = ? AND created_at > ?').run(
+        sessionId,
+        at,
+      );
+      // Resumption state describes a plan row that may have just been deleted;
+      // it is rebuilt on the next capture/approval either way.
+      db.prepare('DELETE FROM plan_state WHERE session_id = ?').run(sessionId);
     });
     truncate();
 
@@ -1890,11 +2007,18 @@ export class AgentManager {
     db.prepare('DELETE FROM agent_provider_sessions WHERE session_id = ?').run(sessionId);
     db.prepare('DELETE FROM agent_diagnostics WHERE session_id = ?').run(sessionId);
     db.prepare('DELETE FROM agent_plans WHERE session_id = ?').run(sessionId);
+    // Revisions and resumption state used to survive their plan, accumulating
+    // rows for sessions that no longer existed.
+    db.prepare('DELETE FROM plan_revisions WHERE session_id = ?').run(sessionId);
+    db.prepare('DELETE FROM plan_state WHERE session_id = ?').run(sessionId);
     db.prepare('DELETE FROM hook_audit WHERE session_id = ?').run(sessionId);
     // Work Graph: edges BEFORE nodes. The FK cascade would handle it, but being
     // explicit keeps this correct even if `foreign_keys` is ever off.
     db.prepare('DELETE FROM work_graph_edges WHERE session_id = ?').run(sessionId);
     db.prepare('DELETE FROM work_graph_nodes WHERE session_id = ?').run(sessionId);
+    // The plan row is gone; tell the renderer so, and drop the sequence with it
+    // — otherwise the next capture would emit a seq the receiver reads as a gap.
+    this.resetPlan(sessionId);
   }
 
   /** Abort every active run + stop all supervision timers. Called on quit. */
@@ -2131,6 +2255,19 @@ export class AgentManager {
     if (this.runs.has(sessionId)) {
       throw new Error('The agent is already working on this session.');
     }
+    // THE EXECUTION BARRIER. A plan awaiting a decision blocks every new run —
+    // and main is the authority, not the composer: the renderer's mirror can be
+    // stale, and `window.limboo.agent.send` is reachable from devtools.
+    //
+    // No bypass flag is needed. Every legitimate release (approve, keep
+    // planning, reject, archive) moves the plan OUT of a blocking status inside
+    // its transaction before it reaches this line.
+    const pendingPlan = this.loadPlan(sessionId);
+    if (pendingPlan && isPlanBlocking(pendingPlan.status)) {
+      throw new PlanBlockedError(
+        'A plan is waiting for your approval — approve, keep planning, reject or archive it first.',
+      );
+    }
     const provider = providerForModel(this.settings.getAll().agent.model);
     if (provider === 'cursor') {
       await this.assertCursorReady();
@@ -2231,6 +2368,16 @@ export class AgentManager {
     } finally {
       const captured = this.runs.get(sessionId)?.planCaptured;
       this.runs.delete(sessionId);
+      // The run that owned any parked approval is gone. The plan survives; the
+      // in-turn path does not, so record that before anything can observe a
+      // `live` plan with nothing alive behind it.
+      if (this.pendingPlanDecisions.has(sessionId)) {
+        this.releaseParkedPlan(sessionId, {
+          behavior: 'deny',
+          message: 'Run ended before the plan was decided.',
+        });
+        this.degradeParkedPlan(sessionId, abort.signal.aborted ? 'run-cancelled' : 'run-error');
+      }
       // Release waiters immediately after the map entry is gone, so anyone who
       // wakes on it observes an idle session. Kept ahead of the teardown work
       // below (and outside its failure modes) so a throw can never strand them.
@@ -2240,13 +2387,22 @@ export class AgentManager {
       // changed the repo. Fire-and-forget; never delays run teardown.
       this.resume?.onRunFinished(sessionId);
       // A plan run that ended without presenting a plan (error/cancel) must not
-      // leave the panel stuck "analyzing" — settle it back to a rejected state.
+      // leave the panel stuck "analyzing".
+      //
+      // It settles to ARCHIVED, not rejected. The run was ended by an error or a
+      // cancel — nobody declined anything, and `rejected` is reserved for a
+      // human verdict. Conflating the two made "the user said no" and "the run
+      // crashed" indistinguishable in the timeline and in the graph.
       if (isPlan && !captured) {
         const plan = this.loadPlan(sessionId);
         if (plan && plan.status === 'planning') {
-          const settled: SessionPlan = { ...plan, status: 'rejected' };
-          this.savePlan(settled);
-          this.pushEvent({ kind: 'plan', sessionId, plan: settled });
+          try {
+            this.transitionPlan(sessionId, plan.rev, 'archived', {
+              meta: { endReason: abort.signal.aborted ? 'run-cancelled' : 'run-error' },
+            });
+          } catch {
+            /* a concurrent decision already settled it */
+          }
         }
       }
       if (!this.isCapabilityDegraded()) this.setLifecycle('ready', { activeSessionId: null });
@@ -2277,16 +2433,21 @@ export class AgentManager {
           // The user stopped mid-stream; stop() already recorded 'cancelled'.
           return;
         }
-        // A captured plan ends the read-only run cleanly — it is not a failure.
-        if (this.runs.get(sessionId)?.planCaptured) {
+        const finishedRun = this.runs.get(sessionId);
+        // A captured plan that was never approved ends the read-only run
+        // cleanly — it is not a failure. A run RELEASED into implementation
+        // falls through: it has real work to account for.
+        if (finishedRun?.planCaptured && finishedRun.implementsPlanRev === undefined) {
           this.completeRequest(sessionId, 'success');
           this.markHeartbeatOk();
           return;
         }
-        // A successful implement run that fulfilled a plan marks it completed.
-        // Ask runs are read-only exploration — they never fulfil a plan.
-        if (permMode === 'default' || permMode === 'acceptEdits') {
-          this.markPlanCompletedIfImplementing(sessionId);
+        // A successful implement run that fulfilled a plan marks it completed —
+        // but only the run actually released for THAT revision (see
+        // markPlanCompletedIfImplementing). Ask runs are read-only exploration
+        // and never fulfil a plan.
+        if (permMode === 'default' || permMode === 'acceptEdits' || finishedRun?.implementsPlanRev) {
+          this.markPlanCompletedIfImplementing(sessionId, finishedRun);
         }
         this.completeRequest(sessionId, 'success');
         this.markHeartbeatOk();
@@ -2504,6 +2665,17 @@ export class AgentManager {
       if (!streaming) return;
       if (typeof finalText === 'string' && finalText.length > 0) streaming.text = finalText;
       streaming.streaming = false;
+      // Accumulate this pass's narration as the last-resort plan source, for a
+      // CLI that neither passes the plan in the tool input nor leaves a readable
+      // plan file. Bounded, and only while planning — an implement run's prose
+      // is not a plan.
+      const active = this.runs.get(sessionId);
+      if (active?.mode === 'plan' && streaming.text.trim().length > 0) {
+        const joined = active.planNarrative
+          ? `${active.planNarrative}\n\n${streaming.text}`
+          : streaming.text;
+        active.planNarrative = joined.slice(-AGENT_LIMITS.planMarkdownMax);
+      }
       this.persistMessage(streaming);
       this.pushEvent({ kind: 'message-done', sessionId, message: { ...streaming } });
       // Badge the session as unread if the user is looking at a different one.
@@ -2688,9 +2860,42 @@ export class AgentManager {
       this.setRequest(sessionId, { phase: 'streaming' });
       this.diag('stream', 'debug', 'Streaming response', undefined, sessionId);
 
-      for await (const msg of q) {
-        if (abort.signal.aborted) break;
-        this.handleMessage(sessionId, msg, ensureStreaming, finishStreaming, queueDelta);
+      // `started` distinguishes "staging the settings file failed" from "the
+      // stream failed": only the former may fall back to an unstaged run.
+      // Without it a mid-stream error would be retried as a whole second turn.
+      let started = false;
+      const consume = async (): Promise<void> => {
+        started = true;
+        for await (const msg of q) {
+          if (abort.signal.aborted) break;
+          this.handleMessage(sessionId, msg, ensureStreaming, finishStreaming, queueDelta);
+        }
+      };
+
+      // Plan runs get a generated `.claude/settings.local.json` pointing the
+      // CLI's plan files at a directory Limboo owns, so the approval gate can
+      // read the plan instead of guessing at it. Snapshot/restore is handled by
+      // `withSessionFile`, so the working tree ends the run as it started.
+      //
+      // If the settings file cannot be written the run still proceeds — the
+      // plan text falls back down `resolvePlanText`'s chain rather than failing
+      // the turn over a convenience.
+      if (permMode === 'plan') {
+        try {
+          await withPlanSettings(cwd, consume);
+        } catch (err) {
+          if (started) throw err;
+          this.diag(
+            'request',
+            'warning',
+            'Could not stage the plan settings file',
+            err instanceof Error ? err.message : String(err),
+            sessionId,
+          );
+          await consume();
+        }
+      } else {
+        await consume();
       }
     } finally {
       finishStreaming();
@@ -2702,9 +2907,11 @@ export class AgentManager {
       this.settleOrphanedToolCalls(sessionId);
     }
 
-    // A captured plan halts the read-only run via an ExitPlanMode interrupt;
-    // that is the intended terminal state, not an error to classify/retry.
-    if (this.runs.get(sessionId)?.planCaptured) return;
+    // A plan that was captured and then declined/interrupted ends the read-only
+    // run; that is the intended terminal state, not an error to classify/retry.
+    // A run released into implementation is excluded — its result is real.
+    const planRun = this.runs.get(sessionId);
+    if (planRun?.planCaptured && planRun.implementsPlanRev === undefined) return;
 
     // A non-success terminal result is surfaced as a throw so the recovery loop
     // can classify it (rate-limit / auth / context / transient / hard failure).
@@ -3451,7 +3658,13 @@ export class AgentManager {
     // Plan capture, style 'result': Cursor has no ExitPlanMode tool — in plan
     // mode the plan IS the final result text.
     if (isPlan && outcome.result?.ok && outcome.result.text.trim().length > 0) {
-      this.capturePlan(sessionId, outcome.result.text);
+      // Always DETACHED: the `--print` turn has already ended by the time this
+      // text exists, so there is nothing left to unblock. Cursor's approval is
+      // structurally a fresh `--force --resume` run, and the plan row says so.
+      this.capturePlan(sessionId, outcome.result.text, {
+        approvalPath: 'detached',
+        textSource: 'result-text',
+      });
       const active = this.runs.get(sessionId);
       if (active) active.planCaptured = true;
       return;
@@ -3484,7 +3697,10 @@ export class AgentManager {
     const header =
       `> Cursor proposed ${n} change${n === 1 ? '' : 's'} without applying ` +
       '(propose-only run). Approve to apply them.';
-    this.capturePlan(sessionId, `${header}\n\n${outcome.result?.text ?? ''}`);
+    this.capturePlan(sessionId, `${header}\n\n${outcome.result?.text ?? ''}`, {
+      approvalPath: 'detached',
+      textSource: 'result-text',
+    });
   }
 
   /** Register a tool invocation (drives the inline chip + activity + changes). */
@@ -3501,14 +3717,31 @@ export class AgentManager {
       this.onTodoWrite(sessionId, input);
       return;
     }
-    // ExitPlanMode presents the plan. It is normally captured in canUseTool; do
-    // it here too as a fallback (in case the SDK doesn't route it through the
-    // permission callback) and never render it as a tool chip.
+    // ExitPlanMode presents the plan. Capture belongs to canUseTool, which can
+    // PARK on the decision; this path cannot block, so it only records the call
+    // id (the tool result is where the authoritative plan text arrives) and
+    // never renders a tool chip.
+    //
+    // The one case that still needs a capture here is an SDK that bypassed the
+    // permission callback entirely — then nothing is parked, so the plan can
+    // only ever be approved detached.
     if (name === EXIT_PLAN_TOOL) {
       const run = this.runs.get(sessionId);
-      if (!run?.planCaptured) {
-        this.capturePlan(sessionId, typeof input.plan === 'string' ? input.plan : '');
+      if (run) run.planToolUseId = id;
+      if (!run?.planCaptured && !this.pendingPlanDecisions.has(sessionId)) {
         if (run) run.planCaptured = true;
+        try {
+          const resolved = this.resolvePlanText(sessionId, input, run);
+          this.capturePlan(sessionId, resolved.markdown, {
+            approvalPath: 'detached',
+            textSource: resolved.source,
+            ...(resolved.planFile ? { planFile: resolved.planFile } : {}),
+          });
+        } catch (err) {
+          // A rev conflict here means the permission path won the race — the
+          // decision it parked owns the plan, and this fallback is redundant.
+          if (!(err instanceof PlanRevisionConflictError)) throw err;
+        }
       }
       return;
     }
@@ -3975,6 +4208,13 @@ export class AgentManager {
     // Complete any mirrored command record first (independent of toolCalls state).
     this.mirrorCommandEnd(sessionId, toolUseId, status, output);
 
+    // ExitPlanMode's RESULT is where the authoritative plan text lives — the
+    // input never carried it. Handled before the toolCalls lookup below,
+    // because the plan tool deliberately renders no chip and so has no entry.
+    if (status === 'done' && this.runs.get(sessionId)?.planToolUseId === toolUseId) {
+      this.absorbPlanToolOutput(sessionId, output);
+    }
+
     const rt = this.runtimes.get(sessionId);
     if (!rt) return;
     const call = rt.toolCalls.find((c) => c.id === toolUseId);
@@ -4134,6 +4374,384 @@ export class AgentManager {
   }
 
   /**
+   * Rebind the agent to a newly activated session. Called by the activation
+   * pipeline, in order, rather than from an ad-hoc active-changed listener.
+   *
+   * Its one load-bearing job is the plan: a renderer holds the previous
+   * session's plan in `bySession` until it hears otherwise, so a switch pushes
+   * either the new session's plan or an explicit reset. Without this a plan
+   * could appear to leak across a session switch — and, with the composer now
+   * gated on plan status, could block prompts in a session that has no plan.
+   */
+  onSessionActivated(scope: { sessionId: string | null }): void {
+    const sessionId = scope.sessionId;
+    if (!sessionId) return;
+    try {
+      const plan = this.loadPlan(sessionId);
+      if (plan) this.emitPlan(plan);
+      else this.resetPlan(sessionId);
+    } catch (err) {
+      this.diag(
+        'lifecycle',
+        'warning',
+        'Could not rebind the session plan',
+        err instanceof Error ? err.message : String(err),
+        sessionId,
+      );
+    }
+  }
+
+  /**
+   * Park the run on the user's plan decision.
+   *
+   * This is the execution barrier. `canUseTool` is allowed to block
+   * indefinitely — the SDK states plainly that "permission prompts have no park
+   * deadline" — so returning a promise here genuinely stops the model rather
+   * than merely hiding a button. It is the same technique
+   * {@link requestClarification} and the permission prompt already use.
+   *
+   * The plan text is resolved BEFORE parking, because the user cannot judge a
+   * plan they cannot read.
+   */
+  private awaitPlanDecision(
+    sessionId: string,
+    input: Record<string, unknown>,
+    signal: AbortSignal,
+  ): Promise<PermissionResult> {
+    const run = this.runs.get(sessionId);
+    const resolved = this.resolvePlanText(sessionId, input, run);
+
+    let plan: SessionPlan;
+    try {
+      plan = this.capturePlan(sessionId, resolved.markdown, {
+        approvalPath: 'live',
+        textSource: resolved.source,
+        ...(resolved.planFile ? { planFile: resolved.planFile } : {}),
+      });
+    } catch (err) {
+      if (err instanceof PlanRevisionConflictError) {
+        // Another path already captured this plan (the onToolUse fallback, or a
+        // duplicate permission event). Deny without a second write; the parked
+        // entry that won the race owns the decision.
+        return Promise.resolve({
+          behavior: 'deny',
+          message: 'Plan already captured for review.',
+        });
+      }
+      throw err;
+    }
+
+    this.setLifecycle('awaiting-permission');
+    this.setRequest(sessionId, { phase: 'awaiting-plan-approval' });
+    this.pushActivity(sessionId, 'status', 'Plan ready for review', undefined, 'info');
+    this.diag(
+      'request',
+      'info',
+      'Plan captured — execution blocked pending approval',
+      `source=${resolved.source} rev=${plan.rev}`,
+      sessionId,
+    );
+
+    return new Promise<PermissionResult>((resolve) => {
+      const settle = (result: PermissionResult, reason: PlanEndReason | null) => {
+        if (!this.pendingPlanDecisions.delete(sessionId)) return;
+        cleanup();
+        if (reason) this.degradeParkedPlan(sessionId, reason);
+        resolve(result);
+      };
+      const onAbort = () =>
+        settle({ behavior: 'deny', message: 'Run stopped.', interrupt: true }, 'run-cancelled');
+      // A forgotten plan would otherwise hold a provider session open forever.
+      // Expiry does NOT decide the plan — it only gives up the in-turn path.
+      const timer = setTimeout(
+        () =>
+          settle(
+            { behavior: 'deny', message: 'Plan approval timed out.', interrupt: true },
+            'park-timeout',
+          ),
+        this.parkTimeoutMs(),
+      );
+      timer.unref?.();
+      const cleanup = () => {
+        clearTimeout(timer);
+        signal.removeEventListener('abort', onAbort);
+      };
+
+      if (signal.aborted) return onAbort();
+      signal.addEventListener('abort', onAbort, { once: true });
+      this.pendingPlanDecisions.set(sessionId, {
+        rev: plan.rev,
+        input,
+        resolve: (result) => settle(result, null),
+        dispose: cleanup,
+      });
+    });
+  }
+
+  /**
+   * Resolve the parked `ExitPlanMode` callback, if one is waiting.
+   *
+   * Every decision goes through here rather than resolving the promise inline,
+   * so "is there anything to release?" is asked in exactly one place — the
+   * difference between the live and detached paths.
+   */
+  private releaseParkedPlan(sessionId: string, result: PermissionResult): boolean {
+    const entry = this.pendingPlanDecisions.get(sessionId);
+    if (!entry) return false;
+    this.pendingPlanDecisions.delete(sessionId);
+    entry.dispose();
+    const run = this.runs.get(sessionId);
+    if (result.behavior === 'allow') {
+      // `approved` is a BLOCKING status — it is the window between the approval
+      // committing and the agent being let go. Closing that window here, BEFORE
+      // the callback resolves, is what lets the freed run act at all: otherwise
+      // the barrier in decideToolUse would deny the very first tool the model
+      // reaches for after leaving plan mode.
+      const plan = this.loadPlan(sessionId);
+      if (plan?.status === 'approved') {
+        const running = this.transitionPlan(sessionId, plan.rev, 'implementing');
+        // Bind the run to the revision it was released for, so only THIS run
+        // can later mark THIS plan completed.
+        if (run) run.implementsPlanRev = running.rev;
+      } else if (plan && run) {
+        run.implementsPlanRev = plan.rev;
+      }
+    }
+    if (run) this.setRequest(sessionId, { phase: 'streaming' });
+    entry.resolve(result);
+    return true;
+  }
+
+  /**
+   * The in-turn path is gone (abort, timeout, process teardown) but the plan
+   * itself survives. Record that it can now only be approved detached — the
+   * decision stays live, its mechanism does not.
+   */
+  private degradeParkedPlan(sessionId: string, reason: PlanEndReason): void {
+    try {
+      const plan = this.loadPlan(sessionId);
+      if (!plan || !isPlanBlocking(plan.status) || plan.approvalPath !== 'live') return;
+      this.transitionPlan(sessionId, plan.rev, 'waiting-approval', {
+        approvalPath: 'detached',
+        meta: { endReason: reason },
+      });
+      this.diag('request', 'info', `Plan park released (${reason})`, undefined, sessionId);
+    } catch {
+      /* housekeeping must never surface as a run failure */
+    }
+  }
+
+  /**
+   * Upgrade the stored plan to the text `ExitPlanMode` actually produced.
+   *
+   * The tool only runs once approved, so this fires AFTER the decision — the
+   * user judged the pre-approval text (the plan file, normally the same bytes)
+   * and this replaces it with the provider's own record. `ExitPlanModeOutput`
+   * carries `plan` directly, and `filePath` when it wrote one.
+   *
+   * Entirely best-effort: the plan is already approved and running, and a
+   * failure to improve its text must never disturb that.
+   */
+  private absorbPlanToolOutput(sessionId: string, output?: string): void {
+    if (!output) return;
+    try {
+      const plan = this.loadPlan(sessionId);
+      if (!plan || !isPlanImplementing(plan.status)) return;
+
+      let parsed: Record<string, unknown> | null = null;
+      try {
+        const value = JSON.parse(output) as unknown;
+        if (value && typeof value === 'object' && !Array.isArray(value)) {
+          parsed = value as Record<string, unknown>;
+        }
+      } catch {
+        /* not JSON — the flattened-string shape; fall through */
+      }
+      if (!parsed) return;
+
+      let markdown: string | null = null;
+      let source: PlanTextSource | null = null;
+      if (typeof parsed.plan === 'string' && parsed.plan.trim().length > 0) {
+        markdown = parsed.plan;
+        source = 'tool-output';
+      } else {
+        const root = this.rootFor(sessionId);
+        // The reported path is re-screened against the directory WE chose, even
+        // though we chose it: a path from a tool result is data, not authority.
+        const name = root ? planFileNameFrom(root, parsed.filePath) : null;
+        const text = root && name ? readPlanFile(root, name) : null;
+        if (text && text.trim().length > 0) {
+          markdown = text;
+          source = 'plan-file';
+        }
+      }
+      if (!markdown || !source) return;
+      if (markdown.trim() === plan.markdown.trim()) return;
+
+      this.snapshotRevision(plan, true, 'pre-tool-output');
+      this.transitionPlan(sessionId, plan.rev, plan.status, {
+        markdown: markdown.slice(0, AGENT_LIMITS.planMarkdownMax),
+        meta: { textSource: source },
+      });
+    } catch {
+      /* the plan is already approved and running — never disturb it */
+    }
+  }
+
+  /**
+   * The session's effective execution root — the worktree when it has one, else
+   * the active workspace. The WorktreeManager is the single resolver; this is
+   * only the null-safe read of it.
+   */
+  private rootFor(sessionId: string): string | null {
+    return this.resolveSessionRoot?.(sessionId) ?? this.workspace.getActive()?.path ?? null;
+  }
+
+  private parkTimeoutMs(): number {
+    const b = PLAN_LIMITS.parkTimeoutMs;
+    return clamp(this.settings.getAll().agent.plan.parkTimeoutMs ?? b.default, b.min, b.max);
+  }
+
+  /**
+   * Where the plan text comes from, in descending order of fidelity.
+   *
+   * `ExitPlanMode`'s input carries no `plan` field on current SDKs — the plan is
+   * written to a file — so the file Limboo pointed the CLI at is the primary
+   * source. The rest are fallbacks for older CLIs, for a run whose settings file
+   * could not be written, and finally for "we genuinely could not read it",
+   * which is stated rather than rendered as an empty plan.
+   */
+  private resolvePlanText(
+    sessionId: string,
+    input: Record<string, unknown>,
+    run: ActiveRun | undefined,
+  ): { markdown: string; source: PlanTextSource; planFile?: string } {
+    const root = this.rootFor(sessionId);
+
+    // 1. The plan file, at a path this process chose.
+    if (root) {
+      const name = latestPlanFile(root);
+      if (name) {
+        const text = readPlanFile(root, name);
+        if (text && text.trim().length > 0) {
+          return { markdown: text, source: 'plan-file', planFile: name };
+        }
+      }
+    }
+
+    // 2. `input.plan` — absent from the declared schema, but the index signature
+    //    permits it and older CLIs populated it. Free to check.
+    if (typeof input.plan === 'string' && input.plan.trim().length > 0) {
+      return { markdown: input.plan, source: 'tool-input' };
+    }
+
+    // 3. What the agent said in this pass before presenting. A reconstruction,
+    //    labelled as one.
+    const narrative = (run?.planNarrative ?? '').trim();
+    if (narrative.length > 0) return { markdown: narrative, source: 'assistant-text' };
+
+    // 4. Never an empty plan. An empty card looks like a bug and gives the user
+    //    nothing to decide on; this at least says what happened and what to do.
+    return {
+      markdown:
+        'The agent presented a plan, but Limboo could not read its text.\n\n' +
+        'Choose **Keep planning** to ask for the plan in writing, or **Approve** to ' +
+        'let the agent proceed with the plan it holds.',
+      source: 'placeholder',
+    };
+  }
+
+  /**
+   * Persist everything needed to reopen this plan after a restart: which repo,
+   * which conversation, which retrieval, which checkpoint.
+   *
+   * Best-effort by design — resumption metadata must never be the reason an
+   * approval fails.
+   */
+  private savePlanState(
+    sessionId: string,
+    plan: SessionPlan,
+    mode: SessionPermissionMode,
+    approvalPath: PlanApprovalPath,
+  ): void {
+    try {
+      const ws = this.workspace.getActive();
+      const session = this.sessions?.get(sessionId) ?? null;
+      const root = this.rootFor(sessionId) ?? ws?.path ?? '';
+      const model = this.settings.getAll().agent.model;
+      const provider = providerForModel(model);
+      const cap = PLAN_LIMITS.stateListMax;
+      const run = this.runs.get(sessionId);
+      const counts = this.retrievalCounts.get(sessionId);
+      const now = Date.now();
+
+      getDb()
+        .prepare(
+          `INSERT OR REPLACE INTO plan_state
+             (session_id, plan_rev, approval_path, exec_mode, provider, provider_session_id,
+              workspace_id, worktree_id, branch, root, head, dirty_hash, checkpoint_id,
+              attachment_ids, memory_ids, search_refs, settings_snapshot, orchestration,
+              created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .run(
+          sessionId,
+          plan.rev,
+          approvalPath,
+          mode,
+          provider,
+          this.loadProviderSession(sessionId, provider) ?? null,
+          ws?.id ?? '',
+          session?.worktreePath ?? null,
+          session?.worktreeBranch ?? null,
+          root,
+          null,
+          '',
+          plan.meta.checkpointId ?? null,
+          JSON.stringify((run?.attachmentIds ?? []).slice(0, cap)),
+          JSON.stringify([]),
+          JSON.stringify([]),
+          JSON.stringify({
+            model,
+            execMode: mode,
+            memoryChars: counts?.memory ?? 0,
+            searchChars: counts?.search ?? 0,
+          }),
+          JSON.stringify({ planFile: plan.planFile ?? null, textSource: plan.meta.textSource ?? null }),
+          now,
+          now,
+        );
+    } catch (err) {
+      this.diag(
+        'request',
+        'warning',
+        'Could not persist plan resumption state',
+        err instanceof Error ? err.message : String(err),
+        sessionId,
+      );
+    }
+  }
+
+  /**
+   * Checkpoint the tree before implementation begins, and RETURN its id so the
+   * approval transaction can record it.
+   *
+   * Deliberately separate from {@link maybeAutoCheckpoint}, which is
+   * fire-and-forget mid-run: this one is awaited, because "the plan was approved
+   * at this tree state" is part of what makes the approval recoverable.
+   */
+  private async checkpointForPlan(sessionId: string): Promise<string | null> {
+    if (!this.git) return null;
+    if (!this.settings.getAll().git.autoCheckpoint) return null;
+    const ws = this.workspace.getActive();
+    if (!ws) return null;
+    const cp = await this.git.createCheckpoint(ws.id, sessionId, 'Before implementing the plan', {
+      auto: true,
+    });
+    return cp?.id ?? null;
+  }
+
+  /**
    * Unfinished work for the Resume Pipeline's context reconstruction: the live
    * TodoWrite checklist when it has incomplete items, else the unchecked
    * checkboxes of a persisted, not-yet-completed plan. Read-only and bounded;
@@ -4149,7 +4767,7 @@ export class AgentManager {
         items: live.slice(0, cap).map((t) => t.label),
       };
     }
-    if (!plan || (plan.status !== 'ready' && plan.status !== 'implementing')) return null;
+    if (!plan || !(isPlanBlocking(plan.status) || plan.status === 'implementing')) return null;
     const items: string[] = [];
     for (const line of plan.markdown.split(/\r?\n/)) {
       const m = /^\s*(?:[-*]|\d+\.)\s*\[ \]\s+(.+)$/.exec(line);
@@ -4172,22 +4790,53 @@ export class AgentManager {
    * can be alive. Writes the DB only — no window exists yet to receive an event,
    * and every renderer hydrates through {@link getSnapshot}, which reads it.
    */
-  private reconcilePlans(): void {
+  reconcilePlans(): void {
     try {
       const rows = getDb()
-        .prepare("SELECT session_id FROM agent_plans WHERE status IN ('planning', 'implementing')")
+        .prepare(
+          `SELECT session_id FROM agent_plans
+            WHERE status IN ('planning', 'waiting-approval', 'approved', 'implementing', 'ready')`,
+        )
         .all() as Array<{ session_id: string }>;
       let settled = 0;
       for (const row of rows) {
         const plan = this.loadPlan(row.session_id);
         if (!plan) continue;
-        // A planning run that never presented a plan is over; an implementation
-        // that never finished goes back to `ready` so it can be approved again —
-        // 'completed' would claim work that demonstrably did not happen.
-        const status: PlanStatus = plan.status === 'planning' ? 'rejected' : 'ready';
-        this.savePlan({ ...plan, status });
+
+        // A plan awaiting a decision SURVIVES — that is the whole point of
+        // persisting it. What does not survive is the parked permission
+        // callback, which died with the process, so the only honest thing to
+        // record is that approving now has to start a fresh run.
+        if (isPlanBlocking(plan.status)) {
+          if (plan.approvalPath === 'live' || plan.status === 'approved') {
+            // 'approved' means the transaction committed but the agent was
+            // never released — return it to the decision point rather than
+            // leaving a session that refuses prompts with nothing running.
+            this.transitionPlan(row.session_id, plan.rev, 'waiting-approval', {
+              approvalPath: 'detached',
+              ...(plan.status === 'approved' ? { meta: { endReason: 'restart' } } : {}),
+            });
+            settled += 1;
+          }
+          continue;
+        }
+
+        // A planning pass that never presented a plan was ENDED by the
+        // shutdown, not declined by a human — 'archived' says that; 'rejected'
+        // would put words in the user's mouth. An implementation that never
+        // finished returns to the decision point; 'completed' would claim work
+        // that demonstrably did not happen.
+        const next: PlanStatus = plan.status === 'planning' ? 'archived' : 'waiting-approval';
+        this.transitionPlan(row.session_id, plan.rev, next, {
+          approvalPath: 'detached',
+          meta: { endReason: 'restart' },
+        });
         settled += 1;
       }
+      // Drop resumption state for sessions that no longer exist.
+      getDb()
+        .prepare('DELETE FROM plan_state WHERE session_id NOT IN (SELECT session_id FROM agent_plans)')
+        .run();
       if (settled > 0) {
         this.diag('lifecycle', 'info', `Settled ${settled} plan(s) interrupted by the last shutdown`);
       }
@@ -4204,51 +4853,104 @@ export class AgentManager {
 
   /** Open a fresh planning artifact when a plan run starts. */
   private beginPlan(sessionId: string, prompt: string): void {
-    // A plan awaiting approval is a user-visible artifact — never overwrite one
-    // without filing it in History first. Restoring the composer's default
-    // `plan` mode after a restart made this reachable by simply typing.
     const existing = this.loadPlan(sessionId);
-    if (existing && (existing.status === 'ready' || existing.status === 'implementing')) {
-      this.snapshotRevision(existing);
+    if (existing && isPlanBlocking(existing.status)) {
+      // Refused, not overwritten. A plan awaiting a decision is the execution
+      // barrier itself — starting another pass would silently discard the thing
+      // the user was asked to judge. `send()` refuses first, so reaching here
+      // means an internal caller skipped the gate.
+      throw new PlanBlockedError(
+        'A plan is waiting for your approval — approve, keep planning, reject or archive it first.',
+      );
+    }
+    const now = Date.now();
+    if (existing) {
+      // Superseding a settled plan still files the old text in History, even
+      // with retainPlanHistory off: that setting governs the UI, not data loss.
+      this.snapshotRevision(existing, true, 'superseded');
     }
     const plan: SessionPlan = {
       sessionId,
       status: 'planning',
+      rev: (existing?.rev ?? 0) + 1,
       title: deriveTitle('', prompt),
       markdown: '',
-      meta: { frameworks: this.workspace.getActive()?.metadata.frameworks?.slice(0, 6) },
-      createdAt: Date.now(),
+      meta: {
+        frameworks: this.workspace.getActive()?.metadata.frameworks?.slice(0, 6),
+        ...(existing ? { endReason: undefined } : {}),
+      },
+      approvalPath: 'detached',
+      // A FRESH boundary for this pass. `createdAt` survives re-captures, so
+      // milestone derivation must not use it — a regenerated plan would replay
+      // the previous pass's tool calls.
+      runStartedAt: now,
+      createdAt: existing?.createdAt ?? now,
+      updatedAt: now,
+      pinned: existing?.pinned,
     };
-    this.savePlan(plan);
-    this.pushEvent({ kind: 'plan', sessionId, plan });
+    this.insertPlan(plan);
+    this.emitPlan(plan);
     this.pushActivity(sessionId, 'status', 'Planning started', 'Analyzing the repository (read-only)', 'info');
     this.diag('request', 'info', 'Plan run started', undefined, sessionId);
   }
 
-  /** Capture the plan the agent presented through ExitPlanMode, awaiting approval. */
-  private capturePlan(sessionId: string, rawMarkdown: string): void {
-    const markdown = rawMarkdown.slice(0, AGENT_LIMITS.planMarkdownMax);
-    const existing = this.loadPlan(sessionId);
-    const rt = this.runtimes.get(sessionId);
-    const taskCount = rt?.tasks.length || undefined;
-    const plan: SessionPlan = {
-      sessionId,
-      status: 'ready',
-      title: deriveTitle(markdown, existing?.title),
+  /**
+   * Record the plan the agent presented, moving the session into the blocking
+   * `waiting-approval` state. Returns the stored plan so the caller can park on
+   * its rev.
+   *
+   * Idempotent by construction: `transitionPlan`'s `WHERE rev = ?` guard means a
+   * second capture for the same rev throws rather than writing twice. The old
+   * code guarded this with an in-memory boolean that was unreachable once the
+   * run map had dropped the entry.
+   */
+  private capturePlan(
+    sessionId: string,
+    rawMarkdown: string,
+    opts: {
+      approvalPath: PlanApprovalPath;
+      textSource: PlanTextSource;
+      planFile?: string;
+    },
+  ): SessionPlan {
+    // A plan is prose the model wrote about a repository, so it can quote a
+    // config file or a command line verbatim. Redacted before it is persisted,
+    // rendered, exported, or written into memory — a stored plan carrying a live
+    // token is worse than a plan with a placeholder in it.
+    const cleaned = this.settings.getAll().agent.plan.redactSecrets
+      ? redactPlanSecrets(rawMarkdown)
+      : rawMarkdown;
+    const markdown = cleaned.slice(0, AGENT_LIMITS.planMarkdownMax);
+    let existing = this.loadPlan(sessionId);
+    // Not every plan artifact comes from a plan run. A Cursor propose-only pass
+    // runs in `default` mode and surfaces its proposed mutations through this
+    // same pipeline, so there may be no row at all — and if there is one, it is
+    // a settled plan from an earlier cycle that cannot legally transition here.
+    if (!existing || isPlanSettled(existing.status)) {
+      this.beginPlan(sessionId, '');
+      existing = this.loadPlan(sessionId);
+      if (!existing) throw new Error('There is no plan for this session.');
+    }
+    // A re-capture after `keep-planning` supersedes the text the user already
+    // saw — file it before it is replaced.
+    if (existing.markdown.trim().length > 0) {
+      this.snapshotRevision(existing, true, 'recaptured');
+    }
+    const taskCount = this.runtimes.get(sessionId)?.tasks.length || undefined;
+    return this.transitionPlan(sessionId, existing.rev, 'waiting-approval', {
+      title: deriveTitle(markdown, existing.title),
       markdown,
+      capturedAt: Date.now(),
+      approvalPath: opts.approvalPath,
+      ...(opts.planFile ? { planFile: opts.planFile } : {}),
       meta: {
         taskCount,
         affectedFiles: countAffectedFiles(markdown),
         risk: estimateRisk(taskCount),
-        frameworks: existing?.meta.frameworks,
+        textSource: opts.textSource,
+        endReason: undefined,
       },
-      createdAt: existing?.createdAt ?? Date.now(),
-      pinned: existing?.pinned,
-    };
-    this.savePlan(plan);
-    this.pushEvent({ kind: 'plan', sessionId, plan });
-    this.pushActivity(sessionId, 'status', 'Plan ready for review', undefined, 'info');
-    this.diag('request', 'info', 'Plan captured — awaiting approval', undefined, sessionId);
+    });
   }
 
   /**
@@ -4256,32 +4958,54 @@ export class AgentManager {
    * writes (implement mode), and resumes the same SDK session so the agent keeps
    * the plan in context. The only transition that lets the agent touch the repo.
    */
-  async approvePlan(sessionId: string, execMode: SessionPermissionMode = 'default'): Promise<void> {
-    if (this.loadPlan(sessionId)?.status !== 'ready') {
-      throw new Error('There is no plan ready to approve for this session.');
+  async approvePlan(
+    sessionId: string,
+    rev: number,
+    execMode: SessionPermissionMode = 'default',
+  ): Promise<void> {
+    const initial = this.loadPlan(sessionId);
+    if (!initial || initial.status !== 'waiting-approval') {
+      throw new Error('There is no plan waiting for approval in this session.');
     }
-    // The plan run that produced this plan is usually still unwinding — wait for
-    // it BEFORE mutating anything, so a timeout leaves the plan 'ready' and the
-    // Approve button retryable rather than stranding the session.
-    await this.waitForRunSettle(sessionId);
-    // Re-read: the settling run republishes the plan on its way out (the
-    // planning→rejected settle in send's finally), so the pre-wait snapshot may
-    // be stale. Bail without mutating if it moved off 'ready'.
-    const plan = this.loadPlan(sessionId);
-    if (!plan || plan.status !== 'ready') {
-      throw new Error('There is no plan ready to approve for this session.');
-    }
-    // Approving a plan never starts another planning pass — coerce a stray
-    // read-only mode ('plan'/'ask') to the ask-before-edits execution mode.
+    if (initial.rev !== rev) throw new PlanRevisionConflictError(initial.rev, rev);
+
+    // Approving never starts another planning pass — coerce a stray read-only
+    // mode ('plan'/'ask') to the ask-before-edits execution mode.
     const mode: SessionPermissionMode =
       execMode === 'plan' || execMode === 'ask' ? 'default' : execMode;
-    const approved: SessionPlan = { ...plan, status: 'implementing', approvedAt: Date.now() };
-    // Committed BEFORE the send on purpose: runCursorOnce re-reads this row to
-    // decide whether the implement pass runs with --force.
-    this.savePlan(approved);
-    this.pushEvent({ kind: 'plan', sessionId, plan: approved });
+
+    const parked = this.pendingPlanDecisions.get(sessionId);
+    if (parked && parked.rev === rev && initial.approvalPath === 'live') {
+      await this.commitApproval(sessionId, rev, mode, 'live');
+      // Released only AFTER the commit: if persistence fails the agent stays
+      // parked and the plan stays decidable, which is the whole point of making
+      // approval transactional.
+      this.releaseParkedPlan(sessionId, { behavior: 'allow', updatedInput: parked.input });
+      this.pushActivity(sessionId, 'status', 'Plan approved — implementing', undefined, 'success');
+      this.diag('request', 'info', `Plan approved in-turn (${mode})`, undefined, sessionId);
+      return;
+    }
+
+    // ---- Detached path -------------------------------------------------
+    // Nothing is parked (restart, park timeout, or Cursor, whose --print turn
+    // ended before we ever saw the plan). A fresh run carrying the plan text is
+    // the only way to implement it.
+    //
+    // The producing run may still be unwinding — wait BEFORE mutating, so a
+    // timeout leaves the plan decidable rather than stranding the session.
+    await this.waitForRunSettle(sessionId);
+    const plan = this.loadPlan(sessionId);
+    if (!plan || plan.status !== 'waiting-approval') {
+      throw new Error('There is no plan waiting for approval in this session.');
+    }
+    if (plan.rev !== rev) throw new PlanRevisionConflictError(plan.rev, rev);
+
+    // Commits `approved` AND `implementing` in one transaction: runCursorOnce
+    // re-reads this row to decide whether the implement pass runs with --force,
+    // so the row must land in exactly the state that check expects.
+    await this.commitApproval(sessionId, rev, mode, 'detached');
     this.pushActivity(sessionId, 'status', 'Plan approved — implementing', undefined, 'success');
-    this.diag('request', 'info', `Plan approved (${mode})`, undefined, sessionId);
+    this.diag('request', 'info', `Plan approved (${mode}, detached)`, undefined, sessionId);
 
     // Cursor implement passes re-run with --force on the resumed chat (see
     // runCursorOnce), so the prompt asks it to apply what it already proposed.
@@ -4290,14 +5014,10 @@ export class AgentManager {
         ? 'The plan below is approved — implement it now, applying the proposed changes exactly as planned, working through the steps in order.'
         : 'The plan below is approved. Implement it now, working through the steps in order and tracking your progress with the TodoWrite tool. Ask for approval before any change you are unsure about.';
     // The plan RIDES THE PROMPT rather than relying on the provider conversation
-    // to still hold it. A plan run always ends on an ExitPlanMode deny with
-    // `interrupt: true`, which leaves a tool call unanswered — exactly the
-    // condition `stop()` (and quit, via `cleanup()`) uses to forget the stored
-    // resume/chat id. Without this the approval that follows a restart opened a
-    // FRESH conversation and pointed it at a plan the model had never seen: the
-    // run "succeeded" having done nothing, and markPlanCompletedIfImplementing
-    // then filed the plan as completed. Approve must not depend on state that
-    // does not survive the process.
+    // to still hold it. On this path the producing run is gone — after a restart
+    // the stored resume/chat id is gone with it — so without the text inline the
+    // approval would open a FRESH conversation pointed at a plan the model had
+    // never seen, "succeed" having done nothing, and file itself as completed.
     const body = plan.markdown.trim().slice(0, AGENT_LIMITS.planPromptMax);
     const prompt = body ? `${instruction}\n\n<approved-plan>\n${body}\n</approved-plan>` : instruction;
     try {
@@ -4309,11 +5029,16 @@ export class AgentManager {
         ...(body ? { body } : {}),
       });
     } catch (err) {
-      // The approval never took effect — put the plan back so Approve renders
-      // again. Without this the session is stranded: 'implementing' hides the
-      // controls forever AND makes every later Cursor run silently --force.
-      this.savePlan(plan);
-      this.pushEvent({ kind: 'plan', sessionId, plan });
+      // The approval never took effect — put the plan back so the decision
+      // renders again. Without this the session is stranded: 'implementing'
+      // hides the controls forever AND makes every later Cursor run --force.
+      const stuck = this.loadPlan(sessionId);
+      if (stuck && isPlanImplementing(stuck.status)) {
+        this.transitionPlan(sessionId, stuck.rev, 'waiting-approval', {
+          approvalPath: 'detached',
+          approvedAt: undefined,
+        });
+      }
       this.pushActivity(
         sessionId,
         'status',
@@ -4325,37 +5050,142 @@ export class AgentManager {
     }
   }
 
-  /** Pin / unpin the current plan so it is preserved even after a new plan begins. */
-  setPlanPinned(sessionId: string, pinned: boolean): void {
-    const plan = this.loadPlan(sessionId);
-    if (!plan) return;
-    const next: SessionPlan = { ...plan, pinned };
-    this.savePlan(next);
-    this.pushEvent({ kind: 'plan', sessionId, plan: next });
+  /**
+   * Persist the approval, atomically, before anything is released.
+   *
+   * The checkpoint is taken OUTSIDE the transaction and awaited first —
+   * better-sqlite3 transactions are synchronous and a git spawn is not — so only
+   * its id crosses into the commit. A checkpoint failure is recorded and does
+   * not block (the existing best-effort posture for auto-checkpoints).
+   *
+   * `live` stops at `approved`; the run itself moves it to `implementing` once
+   * the parked callback is released. `detached` writes both in one transaction
+   * because `runCursorOnce` reads `implementing` to derive `--force`.
+   */
+  private async commitApproval(
+    sessionId: string,
+    rev: number,
+    mode: SessionPermissionMode,
+    path: PlanApprovalPath,
+  ): Promise<void> {
+    let checkpointId: string | undefined;
+    let checkpointError: string | undefined;
+    try {
+      checkpointId = (await this.checkpointForPlan(sessionId)) ?? undefined;
+    } catch (err) {
+      checkpointError = err instanceof Error ? err.message : String(err);
+    }
+
+    const approved = this.transitionPlan(sessionId, rev, 'approved', {
+      approvedAt: Date.now(),
+      meta: {
+        ...(checkpointId ? { checkpointId } : {}),
+        ...(checkpointError ? { checkpointError } : {}),
+        endReason: undefined,
+      },
+    });
+    this.savePlanState(sessionId, approved, mode, path);
+
+    if (path === 'detached') {
+      this.transitionPlan(sessionId, approved.rev, 'implementing');
+    }
   }
 
-  /** Reject a ready plan; the session returns to an idle, no-plan state. */
-  rejectPlan(sessionId: string): void {
+  /** Pin / unpin the current plan so it is preserved even after a new plan begins. */
+  setPlanPinned(sessionId: string, rev: number, pinned: boolean): void {
     const plan = this.loadPlan(sessionId);
     if (!plan) return;
-    const rejected: SessionPlan = { ...plan, status: 'rejected' };
-    this.savePlan(rejected);
-    this.pushEvent({ kind: 'plan', sessionId, plan: rejected });
+    if (plan.rev !== rev) throw new PlanRevisionConflictError(plan.rev, rev);
+    // Pinning is not a lifecycle change — stay in the same status.
+    this.transitionPlan(sessionId, rev, plan.status, { pinned });
+  }
+
+  /**
+   * Reject a plan. A human said no — the only thing that may write `rejected`.
+   *
+   * On the live path this resolves the parked `ExitPlanMode` callback with a
+   * plain deny (no interrupt), so the turn ends naturally rather than being
+   * torn down mid-flight.
+   */
+  rejectPlan(sessionId: string, rev: number): void {
+    const plan = this.loadPlan(sessionId);
+    if (!plan) return;
+    if (plan.rev !== rev) throw new PlanRevisionConflictError(plan.rev, rev);
+    this.transitionPlan(sessionId, rev, 'rejected', { meta: { endReason: 'user-rejected' } });
+    this.releaseParkedPlan(sessionId, {
+      behavior: 'deny',
+      message: 'The user rejected this plan. Do not implement it.',
+    });
     this.pushActivity(sessionId, 'status', 'Plan rejected', undefined, 'warning');
     this.diag('request', 'info', 'Plan rejected', undefined, sessionId);
   }
 
-  /** Discard the current plan and run a fresh planning pass (optionally guided). */
-  async regeneratePlan(sessionId: string, extra?: string): Promise<void> {
-    // Same race as approvePlan: "Keep planning" is offered the instant the plan
-    // renders, while the run that produced it is still tearing down.
-    await this.waitForRunSettle(sessionId);
+  /**
+   * Archive a plan: ended by something other than a human verdict, or abandoned
+   * outright. Interrupts a live run — unlike reject, there is nothing more the
+   * agent should say.
+   */
+  archivePlan(sessionId: string, rev: number, reason: PlanEndReason = 'user-archived'): void {
     const plan = this.loadPlan(sessionId);
-    // Preserve the outgoing plan as a revision before the new pass overwrites it,
-    // so iterative planning cycles can be compared/restored.
-    if (plan && plan.markdown.trim().length > 0) this.snapshotRevision(plan);
-    const base = plan?.title ? `Reconsider the plan for: ${plan.title}.` : 'Produce a new implementation plan.';
-    const prompt = extra && extra.trim().length > 0 ? `${base}\n\n${extra.trim()}` : base;
+    if (!plan) return;
+    if (plan.rev !== rev) throw new PlanRevisionConflictError(plan.rev, rev);
+    this.transitionPlan(sessionId, rev, 'archived', { meta: { endReason: reason } });
+    this.releaseParkedPlan(sessionId, {
+      behavior: 'deny',
+      message: 'Plan archived by the user.',
+      interrupt: true,
+    });
+    this.pushActivity(sessionId, 'status', 'Plan archived', undefined, 'info');
+    this.diag('request', 'info', `Plan archived (${reason})`, undefined, sessionId);
+  }
+
+  /**
+   * Keep planning: hand the agent feedback and let it revise.
+   *
+   * On the LIVE path this is a plain `deny` carrying the feedback — the
+   * documented "No, keep planning" behavior. The model stays in plan mode,
+   * revises, and calls `ExitPlanMode` again, which re-captures at the next rev.
+   * No new run, no new turn, no lost context.
+   *
+   * On the DETACHED path there is nothing to unblock, so it falls back to a
+   * fresh planning run.
+   */
+  async regeneratePlan(sessionId: string, rev: number, extra?: string): Promise<void> {
+    const plan = this.loadPlan(sessionId);
+    if (plan && plan.rev !== rev) throw new PlanRevisionConflictError(plan.rev, rev);
+    const feedback = (extra ?? '').trim().slice(0, AGENT_LIMITS.planFeedbackMax);
+
+    if (plan && isPlanBlocking(plan.status) && this.pendingPlanDecisions.has(sessionId)) {
+      // Back to `planning` BEFORE releasing: the barrier must never be open
+      // while the agent is already free to act.
+      this.transitionPlan(sessionId, rev, 'planning', {
+        runStartedAt: Date.now(),
+        meta: { endReason: undefined },
+      });
+      this.releaseParkedPlan(sessionId, {
+        behavior: 'deny',
+        message: feedback
+          ? `The user did not approve this plan yet. Revise it with this feedback, then call ExitPlanMode again:\n\n${feedback}`
+          : 'The user did not approve this plan yet. Refine it, then call ExitPlanMode again.',
+      });
+      this.pushActivity(sessionId, 'status', 'Kept planning — feedback sent', undefined, 'info');
+      return;
+    }
+
+    // Detached: the producing run is gone, so a new pass is the only option.
+    await this.waitForRunSettle(sessionId);
+    const current = this.loadPlan(sessionId);
+    if (current && isPlanBlocking(current.status)) {
+      // Leave the barrier before `send()` refuses us for holding it.
+      this.transitionPlan(sessionId, current.rev, 'planning', {
+        runStartedAt: Date.now(),
+        meta: { endReason: undefined },
+      });
+    }
+    const base = current?.title
+      ? `Reconsider the plan for: ${current.title}.`
+      : 'Produce a new implementation plan.';
+    const prompt = feedback ? `${base}\n\n${feedback}` : base;
     await this.send(sessionId, prompt, 'plan');
   }
 
@@ -4364,7 +5194,7 @@ export class AgentManager {
     if (!this.settings.getAll().agent.plan.retainPlanHistory) return [];
     const rows = getDb()
       .prepare(
-        'SELECT id, session_id, rev, status, title, markdown, meta, created_at FROM plan_revisions WHERE session_id = ? ORDER BY rev DESC',
+        'SELECT id, session_id, rev, status, title, markdown, meta, reason, created_at FROM plan_revisions WHERE session_id = ? ORDER BY rev DESC',
       )
       .all(sessionId) as Array<{
       id: string;
@@ -4374,6 +5204,7 @@ export class AgentManager {
       title: string;
       markdown: string;
       meta: string;
+      reason: string | null;
       created_at: number;
     }>;
     return rows.map((r) => {
@@ -4387,48 +5218,58 @@ export class AgentManager {
         id: r.id,
         sessionId: r.session_id,
         rev: r.rev,
-        status: r.status as PlanStatus,
+        status: normalizePlanStatus(r.status),
         title: r.title,
         markdown: r.markdown,
         meta,
+        reason: r.reason ?? undefined,
         createdAt: r.created_at,
       };
     });
   }
 
-  /** Restore a historical revision as the session's current (ready) plan. */
-  restorePlanRevision(sessionId: string, revisionId: string): void {
-    const rev = this.listPlanRevisions(sessionId).find((r) => r.id === revisionId);
-    if (!rev) throw new Error('That plan revision no longer exists.');
+  /** Restore a historical revision as the session's current pending plan. */
+  restorePlanRevision(sessionId: string, planRev: number, revisionId: string): void {
+    const revision = this.listPlanRevisions(sessionId).find((r) => r.id === revisionId);
+    if (!revision) throw new Error('That plan revision no longer exists.');
     const current = this.loadPlan(sessionId);
-    // Snapshot the current plan first so the restore itself is reversible.
-    if (current && current.markdown.trim().length > 0) this.snapshotRevision(current);
-    const restored: SessionPlan = {
-      sessionId,
-      status: 'ready',
-      title: rev.title,
-      markdown: rev.markdown,
-      meta: rev.meta,
-      createdAt: current?.createdAt ?? Date.now(),
-      pinned: current?.pinned,
-    };
-    this.savePlan(restored);
-    this.pushEvent({ kind: 'plan', sessionId, plan: restored });
+    if (!current) throw new Error('There is no plan for this session.');
+    if (current.rev !== planRev) throw new PlanRevisionConflictError(current.rev, planRev);
+    // Snapshot the outgoing plan first so the restore itself is reversible.
+    if (current.markdown.trim().length > 0) {
+      this.snapshotRevision(current, true, 'replaced-by-restore');
+    }
+    this.transitionPlan(sessionId, planRev, 'waiting-approval', {
+      title: revision.title,
+      markdown: revision.markdown,
+      capturedAt: Date.now(),
+      // A restored revision has no live run behind it, whatever the current
+      // plan's path was — nothing is parked on this text.
+      approvalPath: 'detached',
+      meta: { ...revision.meta, endReason: undefined },
+    });
     this.pushActivity(sessionId, 'status', 'Plan revision restored', undefined, 'info');
   }
 
-  /** Persist a plan snapshot into `plan_revisions`, pruning to the history limit. */
-  private snapshotRevision(plan: SessionPlan): void {
+  /**
+   * Persist a plan snapshot into `plan_revisions`, pruning to the history limit.
+   *
+   * `force` ignores `retainPlanHistory`. That setting means "show history in the
+   * UI" — it must never mean "silently lose the plan the user was looking at",
+   * which is exactly what it did when a new planning pass displaced a pending
+   * plan with history turned off.
+   */
+  private snapshotRevision(plan: SessionPlan, force = false, reason?: string): void {
     const planCfg = this.settings.getAll().agent.plan;
-    if (!planCfg.retainPlanHistory) return;
+    if (!planCfg.retainPlanHistory && !force) return;
     const db = getDb();
     const next =
       ((db
         .prepare('SELECT MAX(rev) AS m FROM plan_revisions WHERE session_id = ?')
         .get(plan.sessionId) as { m: number | null } | undefined)?.m ?? 0) + 1;
     db.prepare(
-      `INSERT INTO plan_revisions (id, session_id, rev, status, title, markdown, meta, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO plan_revisions (id, session_id, rev, status, title, markdown, meta, reason, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     ).run(
       newId(),
       plan.sessionId,
@@ -4437,6 +5278,7 @@ export class AgentManager {
       plan.title,
       plan.markdown,
       JSON.stringify(plan.meta ?? {}),
+      reason ?? null,
       Date.now(),
     );
     // Prune older revisions beyond the configured limit.
@@ -4449,13 +5291,20 @@ export class AgentManager {
     ).run(plan.sessionId, plan.sessionId, planCfg.historyLimit);
   }
 
-  /** When a plan was being implemented and the run succeeds, mark it completed. */
-  private markPlanCompletedIfImplementing(sessionId: string): void {
+  /**
+   * When THIS run was the one implementing the plan and it succeeded, mark the
+   * plan completed.
+   *
+   * The `implementsPlanRev` check is load-bearing. Completion used to fire on
+   * any successful `default`/`acceptEdits` run, so an unrelated prompt sent
+   * after an implementation had stalled would file the plan as done. A run may
+   * only complete the exact revision it was released for.
+   */
+  private markPlanCompletedIfImplementing(sessionId: string, run?: ActiveRun): void {
     const plan = this.loadPlan(sessionId);
     if (!plan || plan.status !== 'implementing') return;
-    const completed: SessionPlan = { ...plan, status: 'completed' };
-    this.savePlan(completed);
-    this.pushEvent({ kind: 'plan', sessionId, plan: completed });
+    if (run?.implementsPlanRev !== plan.rev) return;
+    const completed = this.transitionPlan(sessionId, plan.rev, 'completed');
     this.diag('request', 'info', 'Plan implementation completed', undefined, sessionId);
     this.savePlanToMemory(completed);
   }
@@ -4490,41 +5339,60 @@ export class AgentManager {
     }
   }
 
-  private savePlan(plan: SessionPlan): void {
+  /**
+   * Insert the FIRST revision of a session's plan. Every later write goes
+   * through {@link transitionPlan}, which is the only place a plan's status or
+   * rev may change.
+   */
+  private insertPlan(plan: SessionPlan): void {
     getDb()
       .prepare(
         `INSERT OR REPLACE INTO agent_plans
-           (session_id, status, title, markdown, meta, pinned, created_at, approved_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+           (session_id, status, rev, title, markdown, meta, pinned, approval_path,
+            run_started_at, captured_at, plan_file, created_at, approved_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         plan.sessionId,
         plan.status,
+        plan.rev,
         plan.title,
         plan.markdown,
         JSON.stringify(plan.meta ?? {}),
         plan.pinned ? 1 : 0,
+        plan.approvalPath,
+        plan.runStartedAt,
+        plan.capturedAt ?? null,
+        plan.planFile ?? null,
         plan.createdAt,
         plan.approvedAt ?? null,
-        Date.now(),
+        plan.updatedAt,
       );
   }
 
   private loadPlan(sessionId: string): SessionPlan | null {
     const row = getDb()
       .prepare(
-        'SELECT session_id, status, title, markdown, meta, pinned, created_at, approved_at FROM agent_plans WHERE session_id = ?',
+        `SELECT session_id, status, rev, title, markdown, meta, pinned, approval_path,
+                run_started_at, captured_at, plan_file, created_at, approved_at, updated_at
+           FROM agent_plans WHERE session_id = ?`,
       )
       .get(sessionId) as
       | {
           session_id: string;
           status: string;
+          rev: number;
           title: string;
           markdown: string;
           meta: string;
           pinned: number;
+          approval_path: string | null;
+          run_started_at: number | null;
+          captured_at: number | null;
+          plan_file: string | null;
           created_at: number;
           approved_at: number | null;
+          updated_at: number | null;
         }
       | undefined;
     if (!row) return null;
@@ -4536,14 +5404,133 @@ export class AgentManager {
     }
     return {
       sessionId: row.session_id,
-      status: row.status as PlanStatus,
+      // Legacy 'ready' rows are rewritten by the migration, but a restored
+      // backup can reintroduce them at any time — normalize on every read.
+      status: normalizePlanStatus(row.status),
+      rev: row.rev > 0 ? row.rev : 1,
       title: row.title,
       markdown: row.markdown,
       meta,
       pinned: row.pinned === 1,
+      approvalPath: row.approval_path === 'live' ? 'live' : 'detached',
+      runStartedAt: row.run_started_at ?? row.created_at,
+      capturedAt: row.captured_at ?? undefined,
+      planFile: row.plan_file ?? undefined,
       createdAt: row.created_at,
       approvedAt: row.approved_at ?? undefined,
+      updatedAt: row.updated_at ?? row.created_at,
     };
+  }
+
+  /**
+   * The ONLY writer of a plan's status. Every mutation runs here so the
+   * transition table, the concurrency check and the broadcast can never be
+   * skipped by a caller that forgot one of them.
+   *
+   * `expectedRev` is the concurrency token. Pass the rev the caller believes it
+   * is acting on (renderer-supplied for a user decision, `plan.rev` for an
+   * internal transition); pass `null` only when the caller genuinely does not
+   * care which revision it lands on, which in practice is just the boot
+   * reconciler. The `WHERE ... AND rev = ?` guard is what makes a double
+   * capture impossible — the old code relied on an in-memory `planCaptured`
+   * boolean that is unreachable once the run map has dropped the entry.
+   *
+   * Throws {@link PlanRevisionConflictError} on a stale rev and on an illegal
+   * transition, so a caller can distinguish "someone beat me to it" from a bug.
+   */
+  private transitionPlan(
+    sessionId: string,
+    expectedRev: number | null,
+    next: PlanStatus,
+    patch: Partial<Omit<SessionPlan, 'sessionId' | 'rev' | 'status' | 'updatedAt'>> = {},
+    opts: { snapshot?: 'force' | 'if-enabled' | 'none'; reason?: string } = {},
+  ): SessionPlan {
+    const db = getDb();
+    const now = Date.now();
+    let result: SessionPlan | null = null;
+
+    db.transaction(() => {
+      const current = this.loadPlan(sessionId);
+      if (!current) throw new Error('There is no plan for this session.');
+      if (expectedRev !== null && current.rev !== expectedRev) {
+        throw new PlanRevisionConflictError(current.rev, expectedRev);
+      }
+      assertPlanTransition(current.status, next);
+
+      if (opts.snapshot && opts.snapshot !== 'none') {
+        this.snapshotRevision(current, opts.snapshot === 'force', opts.reason);
+      }
+
+      const merged: SessionPlan = {
+        ...current,
+        ...patch,
+        // A patch may not smuggle these — they are this function's job.
+        sessionId,
+        status: next,
+        rev: current.rev + 1,
+        updatedAt: now,
+        meta: patch.meta ? { ...current.meta, ...patch.meta } : current.meta,
+      };
+
+      const info = db
+        .prepare(
+          `UPDATE agent_plans
+              SET status = ?, rev = ?, title = ?, markdown = ?, meta = ?, pinned = ?,
+                  approval_path = ?, run_started_at = ?, captured_at = ?, plan_file = ?,
+                  approved_at = ?, updated_at = ?
+            WHERE session_id = ? AND rev = ?`,
+        )
+        .run(
+          merged.status,
+          merged.rev,
+          merged.title,
+          merged.markdown,
+          JSON.stringify(merged.meta ?? {}),
+          merged.pinned ? 1 : 0,
+          merged.approvalPath,
+          merged.runStartedAt,
+          merged.capturedAt ?? null,
+          merged.planFile ?? null,
+          merged.approvedAt ?? null,
+          merged.updatedAt,
+          sessionId,
+          current.rev,
+        );
+      // Lost the race inside the transaction — treat it exactly like a stale rev.
+      if (info.changes !== 1) throw new PlanRevisionConflictError(current.rev, expectedRev ?? -1);
+
+      result = merged;
+    })();
+
+    const plan = result as SessionPlan | null;
+    if (!plan) throw new Error('Plan transition produced no row.');
+    // Carry the run↔plan binding across the rev bump. A run released to
+    // implement rev N still owns the plan after an unrelated patch (pinning it,
+    // or upgrading its markdown from the tool output) moves it to N+1 — and
+    // without this it would silently stop being able to complete it.
+    const owner = this.runs.get(sessionId);
+    if (owner && owner.implementsPlanRev === plan.rev - 1) {
+      owner.implementsPlanRev = plan.rev;
+    }
+    this.emitPlan(plan);
+    return plan;
+  }
+
+  /** Broadcast a plan with the next per-session sequence number. */
+  private emitPlan(plan: SessionPlan): void {
+    const seq = (this.planSeq.get(plan.sessionId) ?? 0) + 1;
+    this.planSeq.set(plan.sessionId, seq);
+    this.pushEvent({ kind: 'plan', sessionId: plan.sessionId, plan, seq });
+  }
+
+  /**
+   * Tell the renderer this session has no plan. Sent when a plan row is deleted
+   * and on session activation, so a plan can never appear to leak across a
+   * session switch.
+   */
+  private resetPlan(sessionId: string): void {
+    this.planSeq.delete(sessionId);
+    this.pushEvent({ kind: 'plan-reset', sessionId });
   }
 
   /* ---------------------------------------------------------------- */
@@ -4579,6 +5566,20 @@ export class AgentManager {
       // bypassPermissions is never used (safety); the auto/approve-all knobs are
       // enforced on top inside canUseTool.
       permissionMode: permMode === 'ask' ? 'default' : permMode,
+      // Plan-mode steering. This REPLACES the CLI's default workflow body (it
+      // still wraps the read-only preamble and the ExitPlanMode footer), so it
+      // stays short and says only what Limboo needs that the default does not
+      // guarantee: that the plan is written down before it is presented, since
+      // the file is how the approval gate obtains the text to show.
+      ...(permMode === 'plan' && agent.plan.restateInMessage
+        ? {
+            planModeInstructions:
+              'Research the repository read-only, then write your complete implementation ' +
+              'plan to your plan file as Markdown — headings, ordered steps, and the exact ' +
+              'file paths you intend to touch. Present that written plan with ExitPlanMode. ' +
+              'Do not modify anything until the plan is approved.',
+          }
+        : {}),
       canUseTool: this.makeCanUseTool(sessionId, cwd, permMode),
       maxTurns: agent.maxTurns,
       includePartialMessages: true,
@@ -4665,15 +5666,15 @@ export class AgentManager {
       input: Record<string, unknown>,
       { signal }: { signal: AbortSignal },
     ): Promise<PermissionResult> => {
-      // ExitPlanMode: the agent is presenting its plan. Capture it for review and
-      // interrupt the run — nothing is executed until the user approves.
+      // ExitPlanMode: the agent is presenting its plan. PARK here until the user
+      // decides. This is the execution barrier — the SDK documents that
+      // permission prompts have no park deadline, so blocking the callback
+      // genuinely stops the model rather than merely hiding a button, and
+      // approving resolves it so the SAME turn continues into implementation.
       if (toolName === EXIT_PLAN_TOOL) {
         const run = this.runs.get(sessionId);
-        if (!run?.planCaptured) {
-          this.capturePlan(sessionId, typeof input.plan === 'string' ? input.plan : '');
-          if (run) run.planCaptured = true;
-        }
-        return { behavior: 'deny', message: 'Plan captured for your review.', interrupt: true };
+        if (run) run.planCaptured = true;
+        return this.awaitPlanDecision(sessionId, input, signal);
       }
 
       // AskUserQuestion: a workflow pause point, not a tool to approve. Handle it
@@ -4767,6 +5768,24 @@ export class AgentManager {
     signal: AbortSignal,
     gate?: { prompted: boolean },
   ): Promise<PermissionResult> {
+      // THE EXECUTION BARRIER, second layer. `send()` refuses to START a run
+      // while a plan awaits a decision; this refuses every TOOL, which is what
+      // covers work already in flight — subagent spawns, background tasks, and
+      // the Cursor hook bridge, since both providers funnel through here.
+      //
+      // ExitPlanMode itself never reaches this method (it is intercepted in
+      // makeCanUseTool), so the gate cannot deadlock the very tool that opens it.
+      {
+        const pending = this.loadPlan(sessionId);
+        if (pending && isPlanBlocking(pending.status)) {
+          return {
+            behavior: 'deny',
+            message:
+              'A plan is waiting for the user to approve it. Do not act until the plan is approved.',
+          };
+        }
+      }
+
       // Sandbox-escape audit (G4): when a tool sets the SDK's
       // `dangerouslyDisableSandbox` flag, it is being retried OUTSIDE the OS jail
       // and falls back to this normal permission flow. Record it in the timeline

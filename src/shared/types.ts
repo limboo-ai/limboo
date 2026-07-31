@@ -193,6 +193,20 @@ export interface AppSettings {
       allowManualReorder: boolean;
       /** Fire a desktop notification when a plan phase completes. */
       notifyOnPhaseComplete: boolean;
+      /**
+       * How long a parked ExitPlanMode approval holds the provider run open
+       * before it degrades to detached approval. Bounded by
+       * `PLAN_LIMITS.parkTimeoutMs`.
+       */
+      parkTimeoutMs: number;
+      /**
+       * Steer the agent (via `planModeInstructions`) to write its plan down
+       * before presenting it, so the approval gate has real text to show.
+       * Turning this off restores the CLI's default plan-mode workflow body.
+       */
+      restateInMessage: boolean;
+      /** Strip secret-shaped material from plan markdown before it is persisted. */
+      redactSecrets: boolean;
     };
     /**
      * Integrated-terminal preferences. Appearance + behavior knobs for the
@@ -2388,6 +2402,7 @@ export type RequestPhase =
   | 'connecting' // query() spawned, awaiting first SDK message
   | 'streaming' // tokens / tool calls flowing
   | 'awaiting-permission'
+  | 'awaiting-plan-approval' // ExitPlanMode parked; execution blocked on a human
   | 'recovering' // recovery loop re-attempting this run
   | 'done'; // completed (see outcome)
 
@@ -2404,6 +2419,19 @@ export const RUNNING_REQUEST_PHASES: readonly RequestPhase[] = [
   'streaming',
   'recovering',
   'awaiting-permission',
+  'awaiting-plan-approval',
+];
+
+/**
+ * Phases in which the run is parked on a human and the UI must stay usable.
+ *
+ * `RUNNING_REQUEST_PHASES` gates every busy/disabled control, so a parked
+ * approval would disable the very buttons being waited on. Surfaces that
+ * present the decision subtract this set from "busy".
+ */
+export const AWAITING_USER_REQUEST_PHASES: readonly RequestPhase[] = [
+  'awaiting-permission',
+  'awaiting-plan-approval',
 ];
 
 /** Live state of the active run, mirrored to the renderer. */
@@ -3020,14 +3048,98 @@ export interface AgentActivityItem {
 }
 
 /**
- * Lifecycle of a Plan Mode artifact:
- * - `planning`  — the agent is doing read-only analysis, plan not ready yet.
- * - `ready`     — plan captured, awaiting the user's explicit approval.
- * - `implementing` — approved; the agent is executing the plan.
- * - `completed` — the implementation run finished successfully.
- * - `rejected`  — the user declined the plan.
+ * Lifecycle of a Plan Mode artifact. The transition table, the predicates and
+ * the legacy normalizer all live in `src/shared/plan.ts` — this is only the
+ * vocabulary.
+ *
+ * - `planning`         — the agent is doing read-only analysis, plan not ready yet.
+ * - `waiting-approval` — plan captured, execution BLOCKED pending the user's decision.
+ * - `approved`         — the approval transaction committed; the agent has not been released yet.
+ * - `implementing`     — released; the agent is executing the plan.
+ * - `completed`        — the implementation run that carried this plan finished successfully.
+ * - `rejected`         — a human declined the plan.
+ * - `archived`         — superseded, abandoned, or ended by something other than a human decision.
+ * - `ready`            — @deprecated legacy name for `waiting-approval`. Normalized on read,
+ *                        never written; kept in the union so pre-migration rows type-check.
  */
-export type PlanStatus = 'planning' | 'ready' | 'implementing' | 'completed' | 'rejected';
+export type PlanStatus =
+  | 'planning'
+  | 'waiting-approval'
+  | 'approved'
+  | 'implementing'
+  | 'completed'
+  | 'rejected'
+  | 'archived'
+  | 'ready';
+
+/**
+ * Progress of the session activation pipeline — the ordered rebinding of every
+ * root-bound service (watcher, git, search, memory, MCP, services, agent) that
+ * a session switch triggers.
+ *
+ * The renderer switches optimistically and shows this as a ribbon rather than
+ * gating on it: blocking the UI on a cold search index would be worse than
+ * briefly-stale data. A terminal `ready`/`error` is always emitted, so the
+ * ribbon cannot stick.
+ */
+export interface SessionActivationState {
+  /** The session being activated, or null when no workspace is active. */
+  sessionId: string | null;
+  phase: 'idle' | 'activating' | 'ready' | 'error';
+  /** Which step is running. Absent on terminal phases. */
+  step?: 'workspace' | 'worktree' | 'files' | 'git' | 'search' | 'memory' | 'mcp';
+  /** What triggered this activation. */
+  reason: 'boot' | 'session' | 'workspace' | 'worktree';
+  /** Set on `ready` when the search index is still rebuilding in the background. */
+  searchIndexing?: boolean;
+  /** Set on `error`. Already a message, never a raw path. */
+  error?: string;
+}
+
+/**
+ * How a pending plan can be released.
+ *
+ * - `live` — the provider run is still alive with its `ExitPlanMode` permission
+ *   callback parked, so approving resolves that callback and the SAME turn
+ *   continues into implementation.
+ * - `detached` — there is nothing left to unblock, so approving starts a fresh
+ *   run carrying the plan text. The only possible path after an app restart (a
+ *   parked promise dies with the process) and the only path Cursor ever has.
+ */
+export type PlanApprovalPath = 'live' | 'detached';
+
+/**
+ * What the user chose at the approval gate. These map onto the choices Claude
+ * Code's own plan prompt offers — notably `keep-planning`, documented as "stay
+ * in plan mode and tell Claude what to change", which is a deny carrying
+ * feedback rather than an interrupt.
+ *
+ * The transition table and predicates live in `src/shared/plan.ts`.
+ */
+export type PlanDecisionKind = 'approve' | 'keep-planning' | 'reject' | 'archive' | 'edit';
+
+/** Why a plan stopped being active. `rejected` alone cannot say this. */
+export type PlanEndReason =
+  | 'user-rejected'
+  | 'user-archived'
+  | 'run-error'
+  | 'run-cancelled'
+  | 'superseded'
+  | 'restart'
+  | 'park-timeout';
+
+/**
+ * Where the plan markdown came from. Recorded because the sources differ wildly
+ * in fidelity: the plan file and the tool output are authoritative, assistant
+ * text is a reconstruction, and `placeholder` means we genuinely could not read it.
+ */
+export type PlanTextSource =
+  | 'plan-file'
+  | 'tool-output'
+  | 'tool-input'
+  | 'assistant-text'
+  | 'result-text'
+  | 'placeholder';
 
 /** Best-effort planning metadata shown in the plan header. */
 export interface PlanMeta {
@@ -3039,6 +3151,14 @@ export interface PlanMeta {
   risk?: 'low' | 'medium' | 'high';
   /** Detected frameworks (from the workspace metadata). */
   frameworks?: string[];
+  /** Why the plan left its active state. Absent while active. */
+  endReason?: PlanEndReason;
+  /** Provenance of {@link SessionPlan.markdown}. */
+  textSource?: PlanTextSource;
+  /** Checkpoint guarding the tree at approval, when one was taken. */
+  checkpointId?: string;
+  /** Set when the pre-implementation checkpoint could not be taken. */
+  checkpointError?: string;
 }
 
 /**
@@ -3048,14 +3168,39 @@ export interface PlanMeta {
 export interface SessionPlan {
   sessionId: string;
   status: PlanStatus;
+  /**
+   * Monotonic revision of THIS session's plan, 1-based. Bumped by every
+   * transition. Every mutating plan IPC carries the rev the renderer believes
+   * it is acting on, and main refuses a mismatch — so a stale window can never
+   * approve a plan that has since been replaced.
+   */
+  rev: number;
   /** Short human title for the plan (derived from the first heading / prompt). */
   title: string;
-  /** The raw plan markdown the agent produced via ExitPlanMode. */
+  /** The raw plan markdown the agent produced. */
   markdown: string;
   meta: PlanMeta;
   createdAt: number;
+  /** Epoch ms of the last transition. */
+  updatedAt: number;
+  /**
+   * Whether a pending plan can be released in-turn. See `PlanApprovalPath` in
+   * `src/shared/plan.ts` — this is `detached` after a restart and always
+   * `detached` on Cursor.
+   */
+  approvalPath: PlanApprovalPath;
+  /**
+   * Epoch ms the CURRENT planning pass began. Distinct from `createdAt`, which
+   * survives re-captures: milestone derivation needs the boundary of this pass,
+   * or a regenerated plan replays the previous pass's tool calls.
+   */
+  runStartedAt: number;
+  /** Epoch ms the plan markdown was captured. */
+  capturedAt?: number;
   /** Epoch ms the user approved execution, if approved. */
   approvedAt?: number;
+  /** Basename of the plan file inside Limboo's plans directory, when one exists. */
+  planFile?: string;
   /** Pinned plans are preserved even after a new plan begins. */
   pinned?: boolean;
 }
@@ -3076,6 +3221,8 @@ export interface PlanRevision {
   title: string;
   markdown: string;
   meta: PlanMeta;
+  /** Why this snapshot was taken (`superseded`, `keep-planning`, `approved`, …). */
+  reason?: string;
   /** Epoch ms the revision was recorded. */
   createdAt: number;
 }
@@ -3112,7 +3259,14 @@ export type AgentEvent =
   | { kind: 'file-change'; sessionId: string; change: FileChange }
   | { kind: 'activity'; sessionId: string; item: AgentActivityItem }
   | { kind: 'tasks'; sessionId: string; tasks: TaskItem[] }
-  | { kind: 'plan'; sessionId: string; plan: SessionPlan }
+  /**
+   * The whole plan, after every transition. `seq` is a per-session monotonic
+   * counter mirroring {@link RuntimePush} — the payload is complete, so a
+   * receiver that spots a gap simply refetches rather than trying to replay.
+   */
+  | { kind: 'plan'; sessionId: string; plan: SessionPlan; seq: number }
+  /** The session has no plan (cleared, reverted, or switched away from). */
+  | { kind: 'plan-reset'; sessionId: string }
   | { kind: 'result'; sessionId: string; ok: boolean; text: string }
   | { kind: 'error'; sessionId: string; message: string; outcome: RequestOutcome }
   | { kind: 'request-state'; sessionId: string; request: RequestState }
@@ -4051,6 +4205,9 @@ export type CommandId =
   | 'agent.planMode'
   | 'agent.implementMode'
   | 'plan.approve'
+  | 'plan.keepPlanning'
+  | 'plan.reject'
+  | 'plan.archive'
   | 'terminal.toggle'
   | 'terminal.new'
   | 'worktree.prune'

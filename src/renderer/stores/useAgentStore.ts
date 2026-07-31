@@ -27,6 +27,7 @@ import type {
   CursorAuthState,
   FileChange,
   PermissionRequest,
+  PlanDecisionKind,
   PlanRevision,
   RateLimitInfo,
   RequestState,
@@ -53,6 +54,35 @@ function emptySnapshot(): AgentSessionSnapshot {
  * returned with no toast, no log and no visible effect.
  */
 const approvalsInFlight = new Set<string>();
+
+/**
+ * Last plan sequence applied per session. Module state for the same reason as
+ * {@link approvalsInFlight}: nothing renders from it, it only detects a dropped
+ * push. Cleared with the session's snapshot on load/reset.
+ */
+const planSeq = new Map<string, number>();
+
+/** What went wrong, phrased for the decision the user actually pressed. */
+const PLAN_DECISION_ERROR_TITLE: Record<PlanDecisionKind, string> = {
+  approve: 'Could not start implementation',
+  'keep-planning': 'Could not send that feedback',
+  edit: 'Could not send your edited plan',
+  reject: 'Could not reject the plan',
+  archive: 'Could not archive the plan',
+};
+
+/** Re-read the authoritative plan after a sequence gap. */
+async function refetchPlan(
+  sessionId: string,
+  set: (fn: (state: AgentStoreState) => Partial<AgentStoreState>) => void,
+): Promise<void> {
+  const plan = (await window.limboo?.agent?.getPlan?.(sessionId)) ?? null;
+  set((state) => {
+    const prev = state.bySession[sessionId];
+    if (!prev) return {};
+    return { bySession: { ...state.bySession, [sessionId]: { ...prev, plan } } };
+  });
+}
 
 const IDLE_REQUEST: RequestState = {
   sessionId: null,
@@ -127,9 +157,15 @@ interface AgentStoreState {
     answers: Record<string, string | string[]>,
     response?: string,
   ) => void;
-  approvePlan: (sessionId: string, execMode?: SessionPermissionMode) => void;
-  rejectPlan: (sessionId: string) => void;
-  regeneratePlan: (sessionId: string, extra?: string) => void;
+  /**
+   * Decide the session's pending plan. The revision is read from the plan
+   * currently in the store, so the decision is always tied to what was shown.
+   */
+  planDecision: (
+    sessionId: string,
+    kind: PlanDecisionKind,
+    opts?: { feedback?: string; execMode?: SessionPermissionMode },
+  ) => void;
   setPlanPinned: (sessionId: string, pinned: boolean) => void;
   listPlanRevisions: (sessionId: string) => Promise<PlanRevision[]>;
   restorePlanRevision: (sessionId: string, revisionId: string) => void;
@@ -226,7 +262,22 @@ export const useAgentStore = create<AgentStoreState>((set, get) => {
 
     // Main commits the plan transition and pushes it BEFORE it starts the run,
     // so the first plan event is the earliest honest proof the approval landed.
-    if (event.kind === 'plan') approvalsInFlight.delete(event.sessionId);
+    if (event.kind === 'plan' || event.kind === 'plan-reset') {
+      approvalsInFlight.delete(event.sessionId);
+    }
+
+    // Plan sequencing, mirroring useRuntimeStore: every push carries the WHOLE
+    // plan, so a gap is repaired by refetching rather than by replaying. Keeps
+    // `seq` honest so the NEXT gap is still detectable.
+    if (event.kind === 'plan') {
+      const seen = planSeq.get(event.sessionId) ?? 0;
+      if (seen !== 0 && event.seq !== seen + 1) {
+        planSeq.set(event.sessionId, event.seq);
+        void refetchPlan(event.sessionId, set);
+      } else {
+        planSeq.set(event.sessionId, event.seq);
+      }
+    }
 
     set((state) => {
       const patch: Partial<AgentStoreState> = {};
@@ -289,7 +340,13 @@ export const useAgentStore = create<AgentStoreState>((set, get) => {
           next.tasks = event.tasks;
           break;
         case 'plan':
+          // Assignment, never append — a session has exactly ONE plan, and its
+          // revisions live in history. This is what keeps a single plan block in
+          // the stream no matter how many times the agent refines it.
           next.plan = event.plan;
+          break;
+        case 'plan-reset':
+          next.plan = null;
           break;
         case 'result':
         case 'error':
@@ -410,8 +467,10 @@ export const useAgentStore = create<AgentStoreState>((set, get) => {
       const api = window.limboo?.agent;
       if (!api) return;
       // Reopening a session re-reads its plan from the DB, so any approval this
-      // window still believes is in flight is stale by definition.
+      // window still believes is in flight is stale by definition — and the
+      // snapshot's plan is authoritative, so the sequence restarts with it.
       approvalsInFlight.delete(sessionId);
+      planSeq.delete(sessionId);
       const snapshot = await api.getSnapshot(sessionId);
       set((state) => ({ bySession: { ...state.bySession, [sessionId]: snapshot } }));
     },
@@ -607,31 +666,47 @@ export const useAgentStore = create<AgentStoreState>((set, get) => {
       }));
     },
 
-    approvePlan: (sessionId, execMode) => {
+    /**
+     * The one path every plan decision takes. `rev` comes from the plan the UI
+     * is actually showing, so main can refuse a decision made against a plan
+     * that has since been replaced.
+     */
+    planDecision: (sessionId, kind, opts) => {
       const api = window.limboo?.agent;
-      if (!api?.approvePlan) return;
+      if (!api?.planDecision) return;
+      const plan = get().bySession[sessionId]?.plan;
+      if (!plan) return;
+      // Guards a double-click, and a command-palette invoke racing the button.
       if (approvalsInFlight.has(sessionId)) return;
       approvalsInFlight.add(sessionId);
-      // Flip the composer out of Plan mode immediately — mirror main's coercion
-      // (approving never starts another planning pass) so the composer shows the
-      // exact mode the implementation run will use. The invoke below only
-      // settles when the whole run does, so this cannot wait on it.
+
       const previousMode = get().composerModeBySession[sessionId];
-      const mode: SessionPermissionMode =
-        !execMode || execMode === 'plan' ? 'default' : execMode;
-      get().setComposerMode(sessionId, mode);
+      let mode: SessionPermissionMode | undefined;
+      if (kind === 'approve') {
+        // Flip the composer out of Plan mode immediately — mirror main's
+        // coercion (approving never starts another planning pass) so it shows
+        // the mode the implementation run will actually use. The invoke settles
+        // only when the whole run does, so this cannot wait on it.
+        mode = !opts?.execMode || opts.execMode === 'plan' ? 'default' : opts.execMode;
+        get().setComposerMode(sessionId, mode);
+      }
+
       api
-        .approvePlan(sessionId, execMode)
+        .planDecision(sessionId, plan.rev, kind, opts?.feedback, mode)
         .catch((err: unknown) => {
-          // The run never started: main has already restored the plan to
-          // 'ready', so put the composer back too rather than leaving it in an
-          // implement mode with nothing running. After a restart this session
-          // has no remembered mode at all — fall back to 'plan', which is what a
-          // plan awaiting approval actually means, instead of stranding the
-          // composer in 'default'.
-          get().setComposerMode(sessionId, previousMode ?? 'plan');
+          if (kind === 'approve') {
+            // The run never started: main has already returned the plan to
+            // waiting-approval, so put the composer back rather than leaving it
+            // in an implement mode with nothing running. After a restart this
+            // session has no remembered mode — 'plan' is what a plan awaiting
+            // approval actually means.
+            get().setComposerMode(sessionId, previousMode ?? 'plan');
+          }
+          // A rev conflict is an ordinary event (two windows, or a click racing
+          // a re-capture), not a failure — refetch and let the user re-read.
+          void refetchPlan(sessionId, set);
           useUIStore.getState().addToast({
-            title: 'Could not start implementation',
+            title: PLAN_DECISION_ERROR_TITLE[kind],
             description: err instanceof Error ? err.message : String(err),
             tone: 'danger',
           });
@@ -641,16 +716,16 @@ export const useAgentStore = create<AgentStoreState>((set, get) => {
         });
     },
 
-    rejectPlan: (sessionId) => {
-      void window.limboo?.agent?.rejectPlan?.(sessionId);
-    },
-
-    regeneratePlan: (sessionId, extra) => {
-      void window.limboo?.agent?.regeneratePlan?.(sessionId, extra);
-    },
-
     setPlanPinned: (sessionId, pinned) => {
-      void window.limboo?.agent?.setPlanPinned?.(sessionId, pinned);
+      const plan = get().bySession[sessionId]?.plan;
+      if (!plan) return;
+      window.limboo?.agent?.setPlanPinned?.(sessionId, plan.rev, pinned)?.catch((err: unknown) => {
+        useUIStore.getState().addToast({
+          title: 'Could not update the plan',
+          description: err instanceof Error ? err.message : String(err),
+          tone: 'danger',
+        });
+      });
     },
 
     listPlanRevisions: async (sessionId) => {
@@ -664,7 +739,18 @@ export const useAgentStore = create<AgentStoreState>((set, get) => {
     },
 
     restorePlanRevision: (sessionId, revisionId) => {
-      void window.limboo?.agent?.restorePlanRevision?.(sessionId, revisionId);
+      const plan = get().bySession[sessionId]?.plan;
+      if (!plan) return;
+      window.limboo?.agent
+        ?.restorePlanRevision?.(sessionId, plan.rev, revisionId)
+        ?.catch((err: unknown) => {
+          void refetchPlan(sessionId, set);
+          useUIStore.getState().addToast({
+            title: 'Could not restore that revision',
+            description: err instanceof Error ? err.message : String(err),
+            tone: 'danger',
+          });
+        });
     },
 
     revertPreview: async (sessionId, messageId) => {

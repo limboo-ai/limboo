@@ -73,7 +73,9 @@ const STRATEGY = { id: 'strategy', label: 'Drafting the implementation strategy'
  *               `since` are considered, so a previous run's tools don't leak in.
  * @param status The plan's current status — anything past `planning` marks the
  *               whole list complete.
- * @param since  Epoch ms the plan run began (`SessionPlan.createdAt`).
+ * @param since  Epoch ms THIS planning pass began (`SessionPlan.runStartedAt`).
+ *               Not `createdAt`, which survives a re-capture and would drag the
+ *               previous pass's tool calls into this one's milestones.
  */
 export function planMilestones(
   calls: readonly AgentToolCall[],
