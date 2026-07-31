@@ -174,7 +174,7 @@ export function createMemoryMcpServer(
     version: '1.0.0',
     tools: memoryPlainTools(memory, workspace).map((t) =>
       tool(t.name, t.description, MEMORY_ZOD_ARGS[t.name] ?? {}, async (args) =>
-        text(t.run(args as Record<string, unknown>)),
+        text(await t.run(args as Record<string, unknown>)),
       ),
     ),
   });

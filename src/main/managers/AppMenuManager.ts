@@ -88,7 +88,6 @@ export class AppMenuManager {
         { label: 'Files', click: () => sendCommand('drawer.toggleFiles') },
         { label: 'Changes', click: () => sendCommand('drawer.toggleChanges') },
         { label: 'Tasks', click: () => sendCommand('drawer.toggleTasks') },
-        { label: 'Activity', click: () => sendCommand('drawer.toggleActivity') },
         { type: 'separator' },
         { label: 'Toggle Sidebar', accelerator: 'CmdOrCtrl+B', click: () => sendCommand('sidebar.toggle') },
         { type: 'separator' },

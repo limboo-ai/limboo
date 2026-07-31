@@ -54,7 +54,6 @@ export const IpcChannels = {
   sessionGetActive: 'session:getActive',
   sessionCreateInWorktree: 'session:createInWorktree',
   sessionGetDependencies: 'session:getDependencies',
-  sessionTimeline: 'session:timeline',
 
   // Git worktrees — session-owned isolated checkouts (own directory + branch).
   worktreeList: 'worktree:list',
@@ -136,6 +135,13 @@ export const IpcChannels = {
   terminalClear: 'terminal:clear',
 
   // Deep Git integration — read + safe-write git ops, all workspace-scoped.
+  /**
+   * Whether a usable `git` binary exists at all (process-global, memoised).
+   * Deliberately NOT folded into `git:status`: status is per-workspace and
+   * refetched on every `git:changed`, and it early-returns before it could
+   * carry this.
+   */
+  gitEnvironment: 'git:environment',
   gitStatus: 'git:status',
   gitDiff: 'git:diff',
   gitStage: 'git:stage',
@@ -167,6 +173,19 @@ export const IpcChannels = {
   gitCheckpointDiff: 'git:checkpointDiff',
   gitCheckpointRestore: 'git:checkpointRestore',
   gitCheckpointDelete: 'git:checkpointDelete',
+
+  // GitHub CLI (`gh`) — OPTIONAL, read-only. There is deliberately no channel
+  // for `gh api` (it can POST) and none that could return a token.
+  ghState: 'gh:state',
+  ghPullRequests: 'gh:pullRequests',
+  ghPullRequest: 'gh:pullRequest',
+  ghIssues: 'gh:issues',
+  ghIssue: 'gh:issue',
+  /**
+   * Batched contributor avatars. BATCHED on purpose: a history render needs up
+   * to 100, and one invoke per row would be 100 IPC round trips.
+   */
+  ghAvatars: 'gh:avatars',
 
   // Auto-update — electron-updater driven, GitHub releases feed (packaged only).
   updateGetState: 'update:getState',
@@ -264,10 +283,6 @@ export const IpcChannels = {
   mcpImport: 'mcp:import',
   mcpExportToProject: 'mcp:exportToProject',
 
-  // Provider-Neutral Hook Engine — governance/audit trail across providers.
-  hooksGetAudit: 'hooks:getAudit',
-  hooksClearAudit: 'hooks:clearAudit',
-
   // Resume Pipeline — repository revalidation + delta on session activation.
   resumeGetState: 'resume:getState',
   resumeGetDelta: 'resume:getDelta',
@@ -355,6 +370,10 @@ export const IpcEvents = {
   terminalCommand: 'terminal:command',
   /** The active workspace's git state changed (status/branch/commit/stage). */
   gitChanged: 'git:changed',
+  /** A forced re-probe found git newly available (or newly missing). */
+  gitEnvironmentChanged: 'git:environment-changed',
+  /** The GitHub CLI's auth state changed (signed in / out / installed). */
+  ghChanged: 'gh:changed',
   /** Streaming AI commit-message proposal (delta / done / error / canceled). */
   gitCommitMessageStream: 'git:commit-message-stream',
   /** A session's git checkpoints changed (created / restored / pruned). */
@@ -371,8 +390,6 @@ export const IpcEvents = {
   mcpServersChanged: 'mcp:servers-changed',
   /** One MCP server's live runtime advanced (status / tools / latency / error). */
   mcpServerStatus: 'mcp:server-status',
-  /** A normalized Hook Engine lifecycle event was appended to the audit trail. */
-  hooksAudit: 'hooks:audit',
   /** An incremental Work Graph delta (appended nodes/edges), or a reset signal. */
   graphChanged: 'graph:changed',
   /** A coalesced Runtime Telemetry snapshot for one session, or a reset signal. */

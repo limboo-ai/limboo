@@ -285,6 +285,7 @@ export const SETTINGS_CATALOG: SettingsCategory[] = [
       { id: 'gitAutoSetUpstream', label: 'Publish new branches on first push', keywords: ['push', 'upstream', 'track', 'remote', 'publish'] },
       { id: 'gitConfirmForcePush', label: 'Confirm before force push', keywords: ['push', 'force', 'lease', 'safety'] },
       { id: 'gitPullStrategy', label: 'Pull strategy', keywords: ['pull', 'rebase', 'fast-forward', 'merge', 'sync'] },
+      { id: 'gitAvatars', label: 'Contributor photos', keywords: ['avatar', 'photo', 'profile', 'picture', 'github', 'network', 'privacy', 'offline'] },
       { id: 'gitAutoCheckpoint', label: 'Auto-checkpoint before agent edits', keywords: ['snapshot', 'recovery', 'safety'] },
       { id: 'gitMaxCheckpoints', label: 'Max checkpoints per session', keywords: ['prune', 'snapshot'] },
       { id: 'gitWtEnabled', label: 'Enable worktree sessions', keywords: ['worktree', 'isolation', 'parallel', 'sessions'] },

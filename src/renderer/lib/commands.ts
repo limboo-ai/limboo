@@ -432,13 +432,6 @@ export const COMMANDS: Command[] = [
     run: () => useLayoutStore.getState().toggleTab('tasks'),
   },
   {
-    id: 'drawer.toggleActivity',
-    title: 'Show Activity',
-    section: 'View',
-    inPalette: true,
-    run: () => useLayoutStore.getState().toggleTab('activity'),
-  },
-  {
     id: 'voice.toggle',
     title: 'Toggle voice input',
     section: 'Agent',

@@ -16,6 +16,8 @@ import type { SearchHit } from '@shared/types';
 import { intArg, strArg, type PlainTool } from '../cursor/bridge/plainTool';
 import { observePlainTools } from '../graph/instrument';
 import { releasePlainTools } from './releaseTools';
+import { ghPlainTools } from '../gh/ghTools';
+import type { GhManager } from '../gh/GhManager';
 import type { SearchManager } from './SearchManager';
 import type { WorkspaceManager } from '../WorkspaceManager';
 
@@ -50,7 +52,11 @@ function querySchema(queryHint: string, limitHint: string): Record<string, unkno
  * handler implementation behind both the SDK-shaped server (Claude runs) and
  * the stdio bridge dispatcher (Cursor runs). Read-only, workspace-scoped.
  */
-export function searchPlainTools(search: SearchManager, workspace: WorkspaceManager): PlainTool[] {
+export function searchPlainTools(
+  search: SearchManager,
+  workspace: WorkspaceManager,
+  gh?: GhManager | null,
+): PlainTool[] {
   const wsId = (): string | null => workspace.getActive()?.id ?? null;
   // Release notes join this server rather than getting one of their own: they
   // are retrieval, `limboo_search` is the retrieval server, and a third server
@@ -121,7 +127,11 @@ export function searchPlainTools(search: SearchManager, workspace: WorkspaceMana
         return hits.map(fmt).join('\n');
       },
     },
-  ], 'limboo_search').concat(releasePlainTools());
+  ], 'limboo_search')
+    .concat(releasePlainTools())
+    // GitHub tools ride this server rather than a third one (see the module
+    // note). `gh` is optional, so they simply do not appear when it is absent.
+    .concat(gh ? observePlainTools(ghPlainTools(gh, workspace), 'limboo_search') : []);
 }
 
 /**
@@ -138,9 +148,22 @@ const QUERY_ARGS = {
   limit: z.number().int().min(1).max(50).optional(),
 };
 
+const GH_LIST_ARGS = {
+  state: z.string().optional(),
+  limit: z.number().int().min(1).max(50).optional(),
+};
+const GH_NUMBER_ARGS = { number: z.number().int().min(1) };
+const GH_COMMENT_ARGS = { number: z.number().int().min(1), body: z.string().min(1) };
+
 const ZOD_ARGS: Record<string, z.ZodRawShape> = {
   release_notes: { version: z.string().min(1) },
   list_releases: {},
+  list_pull_requests: GH_LIST_ARGS,
+  view_pull_request: GH_NUMBER_ARGS,
+  list_issues: GH_LIST_ARGS,
+  view_issue: GH_NUMBER_ARGS,
+  comment_on_pull_request: GH_COMMENT_ARGS,
+  comment_on_issue: GH_COMMENT_ARGS,
 };
 
 /**
@@ -151,15 +174,16 @@ export function createSearchMcpServer(
   sdk: SdkMcpApi,
   search: SearchManager,
   workspace: WorkspaceManager,
+  gh?: GhManager | null,
 ): McpSdkServerConfigWithInstance {
   const { createSdkMcpServer, tool } = sdk;
 
   return createSdkMcpServer({
     name: 'limboo_search',
     version: '1.0.0',
-    tools: searchPlainTools(search, workspace).map((t) =>
+    tools: searchPlainTools(search, workspace, gh).map((t) =>
       tool(t.name, t.description, ZOD_ARGS[t.name] ?? QUERY_ARGS, async (args) =>
-        text(t.run(args)),
+        text(await t.run(args)),
       ),
     ),
   });

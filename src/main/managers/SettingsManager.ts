@@ -8,6 +8,7 @@
 import { BrowserWindow } from 'electron';
 import type { AppSettings, DeepPartial, PersistedDocument } from '@shared/types';
 import {
+  ACTIVITY_TAB_IDS,
   AGENT_CONNECTION_LIMITS,
   AGENT_LIMITS,
   SUBAGENT_LIMITS,
@@ -128,6 +129,33 @@ export class SettingsManager {
       LAYOUT_LIMITS.graph.min,
       LAYOUT_LIMITS.graph.max,
     );
+    // These two were previously clamped only in the renderer's layout store, so
+    // a hand-edited settings.json could seed an unbounded panel width.
+    merged.layout.terminalWidth = clamp(
+      merged.layout.terminalWidth,
+      LAYOUT_LIMITS.terminal.min,
+      LAYOUT_LIMITS.terminal.max,
+    );
+    merged.layout.gitWidth = clamp(
+      merged.layout.gitWidth,
+      LAYOUT_LIMITS.git.min,
+      LAYOUT_LIMITS.git.max,
+    );
+    merged.layout.terminalOpen = merged.layout.terminalOpen === true;
+    // Allowlist — the open drawer tab is renderer-authored and may name a tab
+    // that no longer exists (or never did). Seeding a dead id renders an empty
+    // drawer wearing the fallback tab's header, so fall back explicitly.
+    // v26 -> v27: 'terminal' became its own column; 'activity' / 'hooks' are gone.
+    // Widened to `string` because `ActivityTab` no longer contains 'terminal' —
+    // the value can still be there in an older settings.json.
+    const persistedTab: string | null = merged.layout.activeTab;
+    if (persistedTab === 'terminal') {
+      merged.layout.terminalOpen = true;
+      merged.layout.activeTab = DEFAULT_SETTINGS.layout.activeTab;
+    }
+    if (merged.layout.activeTab !== null && !ACTIVITY_TAB_IDS.includes(merged.layout.activeTab)) {
+      merged.layout.activeTab = DEFAULT_SETTINGS.layout.activeTab;
+    }
     // Restored workspace document tabs. This list is authored by the renderer and
     // replayed at launch, so every element is rebuilt field-by-field from
     // primitives: an attacker-controlled object here must not smuggle extra keys
@@ -288,6 +316,8 @@ export class SettingsManager {
     if (!['ff-only', 'rebase'].includes(merged.git.pull.strategy)) {
       merged.git.pull.strategy = 'ff-only';
     }
+    // A network switch — coerce hard rather than trusting whatever is on disk.
+    merged.git.avatars.enabled = merged.git.avatars.enabled === true;
 
     // Worktrees + Scripts & Services — coerce booleans, cap the root path, and
     // whitelist the branch prefix to git-ref-safe characters (a renderer-supplied

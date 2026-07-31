@@ -1,5 +1,6 @@
 export { IconButton } from './IconButton';
 export { CopyButton } from './CopyButton';
+export { Avatar, Monogram, type AvatarShape } from './Avatar';
 export { DiffStat } from './DiffStat';
 export { ResizeHandle } from './ResizeHandle';
 export { EmptyState } from './EmptyState';

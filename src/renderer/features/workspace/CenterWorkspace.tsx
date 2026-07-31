@@ -281,7 +281,7 @@ function SessionHeader({
 }) {
   const running = useIsSessionRunning(sessionId);
   const planStatus = useAgentStore((s) => s.bySession[sessionId]?.plan?.status);
-  const terminalOpen = useLayoutStore((s) => s.activeTab === 'terminal');
+  const terminalOpen = useLayoutStore((s) => s.terminalOpen);
   const toggleTerminal = useLayoutStore((s) => s.toggleTerminal);
   const gitOpen = useLayoutStore((s) => s.activeTab === 'git');
   const toggleGit = useLayoutStore((s) => s.toggleTab);

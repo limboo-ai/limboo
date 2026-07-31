@@ -4,8 +4,13 @@
  * The single governance/observability layer between every coding provider
  * (Claude SDK, Cursor CLI, a future ACP adapter) and every Limboo subsystem.
  * Providers emit NORMALIZED lifecycle events ({@link HookEvent}) onto this one
- * bus; the engine persists them to a redacted audit trail, fans them out to any
- * in-process subscribers, and broadcasts them to the renderer's Hooks panel.
+ * bus; the engine persists them to a redacted audit trail and fans them out to
+ * any in-process subscribers.
+ *
+ * The trail has NO renderer surface: it is read by the Work Graph and the
+ * session diagnostics, never pushed to a panel. That is why nothing here
+ * touches `BrowserWindow` — if you find yourself adding an IPC broadcast, the
+ * consumer you want is almost certainly a subscriber instead.
  *
  * SECURITY MODEL (CLAUDE.md §6/§8):
  * - The engine holds NO policy. Tool-permission decisions stay in
@@ -22,10 +27,8 @@
  * an extension point, not the load-bearing path.
  */
 import crypto from 'node:crypto';
-import { BrowserWindow } from 'electron';
-import { IpcEvents } from '@shared/ipc-channels';
 import { HOOK_LIMITS, providerForModel } from '@shared/constants';
-import type { DiagnosticSeverity, HookAuditPush, HookEvent, HookPhase } from '@shared/types';
+import type { DiagnosticSeverity, HookEvent, HookPhase } from '@shared/types';
 import { getDb } from '../../db/database';
 import { logger } from '../../logger';
 // The redactor is shared with the Work Graph so both observability sinks apply
@@ -105,9 +108,9 @@ export class HookEngine {
   }
 
   /**
-   * Record one already-constructed lifecycle event: fan-out to subscribers,
-   * persist to the redacted `hook_audit` ring, and broadcast to the renderer —
-   * subject to the emission gate and audit-verbosity preference. Never throws.
+   * Record one already-constructed lifecycle event: fan-out to subscribers and
+   * persist to the redacted `hook_audit` ring — subject to the emission gate
+   * and the audit-verbosity preference. Never throws.
    */
   record(event: HookEvent): void {
     let cfg;
@@ -130,12 +133,11 @@ export class HookEngine {
       }
     }
 
-    // Audit persistence + renderer broadcast honor the verbosity preference.
+    // Audit persistence honors the verbosity preference.
     if (cfg.audit === 'off') return;
     if (cfg.audit === 'lifecycle' && !LIFECYCLE_PHASES.has(clamped.phase)) return;
 
     this.persist(clamped);
-    this.broadcast(clamped);
   }
 
   /** The redacted audit trail for a session, oldest first. */
@@ -167,7 +169,6 @@ export class HookEngine {
       } else {
         getDb().prepare('DELETE FROM hook_audit').run();
       }
-      this.broadcast(null, sessionId);
     } catch (err) {
       logger.warn('hook audit clear failed', err);
     }
@@ -202,19 +203,6 @@ export class HookEngine {
       ).run(event.sessionId, event.sessionId, HOOK_LIMITS.auditRingPerSession);
     } catch (err) {
       logger.warn('hook audit persist failed', err);
-    }
-  }
-
-  /**
-   * Broadcast to the renderer. `event` null signals a clear (the panel refetches
-   * for `sessionId`, or all sessions when omitted).
-   */
-  private broadcast(event: HookEvent | null, clearedSessionId?: string): void {
-    const payload: HookAuditPush = event
-      ? { kind: 'event', event }
-      : { kind: 'cleared', sessionId: clearedSessionId ?? null };
-    for (const win of BrowserWindow.getAllWindows()) {
-      if (!win.isDestroyed()) win.webContents.send(IpcEvents.hooksAudit, payload);
     }
   }
 }

@@ -14,6 +14,7 @@ import {
   DownloadCloud,
   FolderGit2,
   GitBranch,
+  GitPullRequest,
   History,
   ListChecks,
   Minus,
@@ -33,17 +34,20 @@ import { useLayoutStore } from '@/renderer/stores/useLayoutStore';
 import { useSettingsStore } from '@/renderer/stores/useSettingsStore';
 import { useUIStore } from '@/renderer/stores/useUIStore';
 import { ChangesNavigator } from './ChangesNavigator';
+import { GitUnavailable } from './GitUnavailable';
 import { GitHistory } from './GitHistory';
 import { GitCheckpoints } from './GitCheckpoints';
 import { GitBranches } from './GitBranches';
+import { GitHubPanel } from './GitHubPanel';
 
-type SubTab = 'changes' | 'history' | 'checkpoints' | 'branches';
+type SubTab = 'changes' | 'history' | 'checkpoints' | 'branches' | 'github';
 
 const SUB_TABS: { id: SubTab; label: string; icon: typeof GitBranch }[] = [
   { id: 'changes', label: 'Changes', icon: ListChecks },
   { id: 'history', label: 'History', icon: History },
   { id: 'checkpoints', label: 'Checkpoints', icon: Save },
   { id: 'branches', label: 'Branches', icon: GitBranch },
+  { id: 'github', label: 'GitHub', icon: GitPullRequest },
 ];
 
 /** Map an activity-card focus view onto a sub-tab. */
@@ -56,6 +60,7 @@ function tabForView(view: GitView): SubTab {
 
 export function GitPanel() {
   const status = useGitStore((s) => s.status);
+  const environment = useGitStore((s) => s.environment);
   const loading = useGitStore((s) => s.loading);
   const refresh = useGitStore((s) => s.refresh);
   const fetch = useGitStore((s) => s.fetch);
@@ -68,7 +73,7 @@ export function GitPanel() {
   const setActiveTab = useLayoutStore((s) => s.setActiveTab);
   const confirmForcePush = useSettingsStore((s) => s.settings.git.push.confirmForcePush);
   const addToast = useUIStore((s) => s.addToast);
-  const [tab, setTab] = useState<SubTab>('changes');
+  const [tab, setTab] = useState<SubTab>('history'); // TEMP-VERIFY
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
@@ -119,6 +124,16 @@ export function GitPanel() {
     }
   };
 
+  // Checked BEFORE `!isRepo`: a missing binary also reports `isRepo: false`, and
+  // offering "Initialize git" there is offering something that cannot work.
+  if (environment && !environment.available) {
+    return (
+      <Shell branch={undefined} tab={tab} onTab={setTab} status={status} onClose={() => setActiveTab(null)}>
+        <GitUnavailable env={environment} />
+      </Shell>
+    );
+  }
+
   if (status && !status.isRepo) {
     return (
       <Shell branch={undefined} tab={tab} onTab={setTab} status={status} onClose={() => setActiveTab(null)}>
@@ -162,6 +177,7 @@ export function GitPanel() {
       {tab === 'history' && <GitHistory />}
       {tab === 'checkpoints' && <GitCheckpoints />}
       {tab === 'branches' && <GitBranches />}
+      {tab === 'github' && <GitHubPanel />}
     </Shell>
   );
 }
