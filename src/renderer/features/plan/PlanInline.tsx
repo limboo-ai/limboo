@@ -25,7 +25,8 @@ import { Check, ChevronRight } from 'lucide-react';
 import type { AgentToolCall, SessionPlan, TaskItem } from '@shared/types';
 import { HelixLoader } from '@/renderer/components/ui';
 import { cn } from '@/renderer/lib/cn';
-import { RUNNING_PHASES } from '@/renderer/features/sessions/useSessionRunning';
+import { AWAITING_USER_PHASES, RUNNING_PHASES } from '@/renderer/features/sessions/useSessionRunning';
+import { isPlanBlocking, PLAN_STATUS_LABEL } from '@shared/plan';
 import { useAgentStore } from '@/renderer/stores/useAgentStore';
 import { useLayoutStore } from '@/renderer/stores/useLayoutStore';
 import { useSettingsStore } from '@/renderer/stores/useSettingsStore';
@@ -42,12 +43,14 @@ function PlanRow({ sessionId, plan }: { sessionId: string; plan: SessionPlan }) 
   const settings = useSettingsStore((s) => s.settings.agent.plan);
   const tasks = useAgentStore((s) => s.bySession[sessionId]?.tasks) ?? EMPTY_TASKS;
   const toolCalls = useAgentStore((s) => s.bySession[sessionId]?.toolCalls) ?? EMPTY_CALLS;
-  const approvePlan = useAgentStore((s) => s.approvePlan);
-  const rejectPlan = useAgentStore((s) => s.rejectPlan);
-  const regeneratePlan = useAgentStore((s) => s.regeneratePlan);
+  const planDecision = useAgentStore((s) => s.planDecision);
 
   const request = useAgentStore((s) => s.requestsBySession[sessionId]);
-  const running = !!request && RUNNING_PHASES.has(request.phase);
+  // A parked approval IS a running phase — the provider run is alive, blocked on
+  // this very decision. Subtracting it is what keeps the buttons usable; without
+  // it the barrier would disable the controls that release it.
+  const running =
+    !!request && RUNNING_PHASES.has(request.phase) && !AWAITING_USER_PHASES.has(request.phase);
 
   const progress = useMemo(() => {
     let completed = 0;
@@ -62,8 +65,8 @@ function PlanRow({ sessionId, plan }: { sessionId: string; plan: SessionPlan }) 
     return <LivePlanningProgress plan={plan} calls={toolCalls} />;
   }
 
-  /* ---- ready: the proposal + approval, on one line ---- */
-  if (plan.status === 'ready') {
+  /* ---- waiting for approval: the proposal + decision, on one line ---- */
+  if (isPlanBlocking(plan.status)) {
     return (
       <div className="flex flex-col gap-1.5 animate-fade-in">
         <div className="flex min-w-0 items-baseline gap-2 text-[12px]">
@@ -90,15 +93,16 @@ function PlanRow({ sessionId, plan }: { sessionId: string; plan: SessionPlan }) 
           settings={settings}
           busy={running}
           variant="inline"
-          onApprove={(mode) => approvePlan(sessionId, mode)}
-          onRegenerate={() => regeneratePlan(sessionId)}
-          onReject={() => rejectPlan(sessionId)}
+          onApprove={(mode) => planDecision(sessionId, 'approve', { execMode: mode })}
+          onRegenerate={() => planDecision(sessionId, 'keep-planning')}
+          onReject={() => planDecision(sessionId, 'reject')}
+          onArchive={() => planDecision(sessionId, 'archive')}
         />
       </div>
     );
   }
 
-  /* ---- implementing / completed / rejected: one settled line ---- */
+  /* ---- implementing / completed / rejected / archived: one settled line ---- */
   const label =
     plan.status === 'implementing'
       ? progress.total > 0
@@ -108,7 +112,9 @@ function PlanRow({ sessionId, plan }: { sessionId: string; plan: SessionPlan }) 
         ? progress.total > 0
           ? `Plan complete · ${progress.total} task${progress.total === 1 ? '' : 's'}`
           : 'Plan complete'
-        : 'Plan rejected';
+        : // 'rejected' means a human declined it; 'archived' means something
+          // else ended it. Saying which is the whole point of separating them.
+          `Plan ${PLAN_STATUS_LABEL[plan.status].toLowerCase()}`;
 
   return (
     <button
@@ -138,8 +144,11 @@ function PlanRow({ sessionId, plan }: { sessionId: string; plan: SessionPlan }) 
  */
 function LivePlanningProgress({ plan, calls }: { plan: SessionPlan; calls: AgentToolCall[] }) {
   const milestones = useMemo(
-    () => planMilestones(calls, plan.status, plan.createdAt),
-    [calls, plan.status, plan.createdAt],
+    // `runStartedAt`, NOT `createdAt`. createdAt survives a re-capture, so a
+    // regenerated plan would replay the previous pass's tool calls as if they
+    // belonged to this one.
+    () => planMilestones(calls, plan.status, plan.runStartedAt ?? plan.createdAt),
+    [calls, plan.status, plan.runStartedAt, plan.createdAt],
   );
   const current = currentMilestone(milestones);
 

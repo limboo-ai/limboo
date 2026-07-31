@@ -20,6 +20,8 @@ import type {
   SessionPermissionMode,
   SessionPlan,
 } from '@shared/types';
+import type { PlanDecisionKind } from '@shared/plan';
+import { isPlanDecisionKind } from '@shared/plan';
 import type { AgentManager } from '../managers/AgentManager';
 import { handle } from './registry';
 
@@ -62,6 +64,36 @@ function assertExecMode(value: unknown): SessionPermissionMode {
   if (value !== 'default' && value !== 'acceptEdits') {
     throw new Error('Execution mode must be "default" or "acceptEdits"');
   }
+  return value;
+}
+
+/**
+ * The plan revision the renderer believes it is acting on.
+ *
+ * Every mutating plan channel carries one, and main refuses a mismatch, so a
+ * stale window (or a second window that lost the race) can never approve a plan
+ * that has since been replaced. A plain bounded integer — the concurrency token
+ * is a number, not an opaque handle, so there is nothing here to forge.
+ */
+function assertPlanRev(value: unknown): number {
+  if (typeof value !== 'number' || !Number.isInteger(value) || value < 1 || value > 2_147_483_647) {
+    throw new Error('Expected a valid plan revision');
+  }
+  return value;
+}
+
+function assertPlanDecisionKind(value: unknown): PlanDecisionKind {
+  if (!isPlanDecisionKind(value)) {
+    throw new Error('Unknown plan decision');
+  }
+  return value;
+}
+
+/** Free text the user attaches to a decision. Relayed to the model, so capped. */
+function assertPlanFeedback(value: unknown): string | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value !== 'string') throw new Error('Plan feedback must be a string');
+  if (value.length > AGENT_LIMITS.planFeedbackMax) throw new Error('Plan feedback is too long');
   return value;
 }
 
@@ -145,21 +177,47 @@ export function registerAgentHandlers(agent: AgentManager): void {
     agent.getPlan(assertSessionId(sessionId)),
   );
 
-  handle<[string, SessionPermissionMode?], void>(
-    IpcChannels.agentApprovePlan,
-    async (_event, sessionId, execMode) => {
-      await agent.approvePlan(assertSessionId(sessionId), assertExecMode(execMode));
+  /**
+   * The single plan-decision channel. Ids, an enum and capped text — nothing
+   * else crosses, so the renderer never chooses a path, a ref, or a blast
+   * radius (the `agentRevertToMessage` precedent below).
+   *
+   * `rev` is the concurrency token: main refuses a mismatch rather than acting
+   * on a plan the user is no longer looking at.
+   */
+  handle<[string, number, PlanDecisionKind, string?, SessionPermissionMode?], void>(
+    IpcChannels.agentPlanDecision,
+    async (_event, sessionId, rev, kind, feedback, execMode) => {
+      const id = assertSessionId(sessionId);
+      const planRev = assertPlanRev(rev);
+      const decision = assertPlanDecisionKind(kind);
+      const text = assertPlanFeedback(feedback);
+      switch (decision) {
+        case 'approve':
+          await agent.approvePlan(id, planRev, assertExecMode(execMode));
+          return;
+        // An edit takes the same path as keep-planning: ExitPlanMode's input
+        // has no `plan` field to overwrite, so the edited text is relayed as
+        // feedback the model must adopt.
+        case 'keep-planning':
+        case 'edit': {
+          await agent.regeneratePlan(id, planRev, text);
+          return;
+        }
+        case 'reject':
+          agent.rejectPlan(id, planRev);
+          return;
+        case 'archive':
+          agent.archivePlan(id, planRev);
+          return;
+      }
     },
   );
 
-  handle<[string], void>(IpcChannels.agentRejectPlan, (_event, sessionId) => {
-    agent.rejectPlan(assertSessionId(sessionId));
-  });
-
-  handle<[string, boolean], void>(
+  handle<[string, number, boolean], void>(
     IpcChannels.agentSetPlanPinned,
-    (_event, sessionId, pinned) => {
-      agent.setPlanPinned(assertSessionId(sessionId), pinned === true);
+    (_event, sessionId, rev, pinned) => {
+      agent.setPlanPinned(assertSessionId(sessionId), assertPlanRev(rev), pinned === true);
     },
   );
 
@@ -167,14 +225,15 @@ export function registerAgentHandlers(agent: AgentManager): void {
     agent.listPlanRevisions(assertSessionId(sessionId)),
   );
 
-  handle<[string, string], void>(
+  handle<[string, number, string], void>(
     IpcChannels.agentRestorePlanRevision,
-    (_event, sessionId, revisionId) => {
+    (_event, sessionId, rev, revisionId) => {
       const id = assertSessionId(sessionId);
+      const planRev = assertPlanRev(rev);
       if (typeof revisionId !== 'string' || revisionId.length === 0 || revisionId.length > 200) {
         throw new Error('Expected a valid revision id');
       }
-      agent.restorePlanRevision(id, revisionId);
+      agent.restorePlanRevision(id, planRev, revisionId);
     },
   );
 
@@ -196,19 +255,6 @@ export function registerAgentHandlers(agent: AgentManager): void {
       agent.revertToMessage(assertSessionId(sessionId), assertMessageId(messageId)),
   );
 
-  handle<[string, string?], void>(
-    IpcChannels.agentRegeneratePlan,
-    async (_event, sessionId, extra) => {
-      const id = assertSessionId(sessionId);
-      if (extra !== undefined && typeof extra !== 'string') {
-        throw new Error('Regenerate instructions must be a string');
-      }
-      if (typeof extra === 'string' && extra.length > AGENT_LIMITS.promptMax) {
-        throw new Error('Regenerate instructions are too long');
-      }
-      await agent.regeneratePlan(id, extra);
-    },
-  );
 
   handle<[PermissionDecision], void>(IpcChannels.agentPermissionRespond, (_event, decision) => {
     if (!decision || typeof decision !== 'object') {

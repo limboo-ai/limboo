@@ -21,10 +21,19 @@ import { useAgentStore } from '@/renderer/stores/useAgentStore';
 
 export const STATUS_BADGE: Record<PlanStatus, { label: string; cls: string }> = {
   planning: { label: 'Planning', cls: 'text-accent' },
-  ready: { label: 'Ready for approval', cls: 'text-accent' },
+  'waiting-approval': { label: 'Waiting for approval', cls: 'text-accent' },
+  // The window between "the approval committed" and "the agent was released".
+  // Brief, but it must not render as an unlabelled gap.
+  approved: { label: 'Approved — starting', cls: 'text-accent' },
   implementing: { label: 'Active execution', cls: 'text-warning' },
   completed: { label: 'Completed', cls: 'text-success' },
+  // 'rejected' is a human verdict; 'archived' is everything else that ended a
+  // plan (a failed run, a shutdown, a supersede). Distinct labels, because
+  // conflating them is what made "the user said no" unreadable in the timeline.
   rejected: { label: 'Rejected', cls: 'text-faint' },
+  archived: { label: 'Archived', cls: 'text-faint' },
+  // @deprecated legacy row; normalized on read, kept so the map stays total.
+  ready: { label: 'Waiting for approval', cls: 'text-accent' },
 };
 
 export const RISK_CLS: Record<NonNullable<PlanMeta['risk']>, string> = {
@@ -98,6 +107,7 @@ export function ApprovalControls({
   onApprove,
   onRegenerate,
   onReject,
+  onArchive,
 }: {
   settings: { requireSecondaryConfirm: boolean };
   busy?: boolean;
@@ -105,6 +115,7 @@ export function ApprovalControls({
   onApprove: (mode: SessionPermissionMode) => void;
   onRegenerate: () => void;
   onReject: () => void;
+  onArchive: () => void;
 }) {
   const [confirming, setConfirming] = useState<SessionPermissionMode | null>(null);
 
@@ -127,6 +138,19 @@ export function ApprovalControls({
   const regenerate = () => {
     if (busy) return;
     onRegenerate();
+  };
+
+  // Reject and Archive are gated on `busy` like every other control. They used
+  // not to be, which let a verdict land while the producing run was still
+  // unwinding — main would then refuse it on the revision guard.
+  const reject = () => {
+    if (busy) return;
+    onReject();
+  };
+
+  const archive = () => {
+    if (busy) return;
+    onArchive();
   };
 
   const DISABLED = 'disabled:cursor-not-allowed disabled:opacity-50';
@@ -160,10 +184,19 @@ export function ApprovalControls({
         </button>
         <button
           type="button"
-          onClick={onReject}
-          className="text-faint transition-colors hover:text-danger"
+          disabled={busy}
+          onClick={reject}
+          className={cn('text-faint transition-colors hover:text-danger', DISABLED)}
         >
           Reject
+        </button>
+        <button
+          type="button"
+          disabled={busy}
+          onClick={archive}
+          className={cn('text-faint transition-colors hover:text-fg', DISABLED)}
+        >
+          Archive
         </button>
         {busy && <span className="text-faint">finishing the planning run…</span>}
       </div>
@@ -214,8 +247,23 @@ export function ApprovalControls({
         </button>
         <button
           type="button"
-          onClick={onReject}
-          className="ml-auto rounded-md px-2.5 py-1.5 text-[12px] text-faint transition-colors hover:text-danger"
+          disabled={busy}
+          onClick={archive}
+          className={cn(
+            'ml-auto rounded-md px-2.5 py-1.5 text-[12px] text-faint transition-colors hover:text-fg',
+            DISABLED,
+          )}
+        >
+          Archive
+        </button>
+        <button
+          type="button"
+          disabled={busy}
+          onClick={reject}
+          className={cn(
+            'rounded-md px-2.5 py-1.5 text-[12px] text-faint transition-colors hover:text-danger',
+            DISABLED,
+          )}
         >
           Reject
         </button>

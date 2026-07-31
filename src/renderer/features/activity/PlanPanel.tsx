@@ -44,7 +44,11 @@ import { isSubagentTool } from '@shared/subagents';
 import { EmptyState, HelixLoader, IconButton } from '@/renderer/components/ui';
 import { cn } from '@/renderer/lib/cn';
 import { applyRuntime, parsePlanOutline, type TaskExecStatus } from '@/renderer/lib/planOutline';
-import { RUNNING_PHASES } from '@/renderer/features/sessions/useSessionRunning';
+import {
+  AWAITING_USER_PHASES,
+  RUNNING_PHASES,
+} from '@/renderer/features/sessions/useSessionRunning';
+import { isPlanBlocking } from '@shared/plan';
 import { useSessionStore } from '@/renderer/stores/useSessionStore';
 import { useAgentStore } from '@/renderer/stores/useAgentStore';
 import { useGitStore } from '@/renderer/stores/useGitStore';
@@ -99,14 +103,15 @@ function PlanView({
   tasks: TaskItem[];
 }) {
   const settings = useSettingsStore((s) => s.settings.agent.plan);
-  const approvePlan = useAgentStore((s) => s.approvePlan);
-  const rejectPlan = useAgentStore((s) => s.rejectPlan);
-  const regeneratePlan = useAgentStore((s) => s.regeneratePlan);
+  const planDecision = useAgentStore((s) => s.planDecision);
 
   // Run signals used to derive live per-task execution states.
   const awaitingPermission = useAgentStore((s) => (sessionId ? !!s.pendingBySession[sessionId] : false));
   const request = useAgentStore((s) => (sessionId ? s.requestsBySession[sessionId] : undefined));
-  const running = !!request && RUNNING_PHASES.has(request.phase);
+  // A parked plan approval is a running phase whose whole purpose is to wait on
+  // these controls — subtract it, or the barrier disables its own release.
+  const running =
+    !!request && RUNNING_PHASES.has(request.phase) && !AWAITING_USER_PHASES.has(request.phase);
   const failed = request?.outcome === 'failed' || request?.outcome === 'tool-rejected';
 
   const [raw, setRaw] = useState(false);
@@ -123,7 +128,7 @@ function PlanView({
   }, [plan.status]);
 
   const planning = plan.status === 'planning';
-  const ready = plan.status === 'ready';
+  const ready = isPlanBlocking(plan.status);
   const badge = STATUS_BADGE[plan.status];
 
   // The outline is no longer rendered, but it still backs the JSON export and
@@ -180,7 +185,7 @@ function PlanView({
             leaves the panel with no control at all. */}
         {planning ? (
           <div className="flex shrink-0 items-center justify-end gap-0.5">
-            <IconButton size="sm" label="Regenerate plan" onClick={() => sessionId && regeneratePlan(sessionId)}>
+            <IconButton size="sm" label="Regenerate plan" onClick={() => sessionId && planDecision(sessionId, 'keep-planning')}>
               <RefreshCw size={13} />
             </IconButton>
           </div>
@@ -228,7 +233,7 @@ function PlanView({
             <IconButton size="sm" label="History" active={historyOpen} onClick={() => setHistoryOpen((v) => !v)}>
               <History size={13} />
             </IconButton>
-            <IconButton size="sm" label="Regenerate plan" onClick={() => sessionId && regeneratePlan(sessionId)}>
+            <IconButton size="sm" label="Regenerate plan" onClick={() => sessionId && planDecision(sessionId, 'keep-planning')}>
               <RefreshCw size={13} />
             </IconButton>
           </div>
@@ -287,9 +292,10 @@ function PlanView({
         <ApprovalControls
           settings={settings}
           busy={running}
-          onApprove={(mode) => sessionId && approvePlan(sessionId, mode)}
-          onRegenerate={() => sessionId && regeneratePlan(sessionId)}
-          onReject={() => sessionId && rejectPlan(sessionId)}
+          onApprove={(mode) => sessionId && planDecision(sessionId, 'approve', { execMode: mode })}
+          onRegenerate={() => sessionId && planDecision(sessionId, 'keep-planning')}
+          onReject={() => sessionId && planDecision(sessionId, 'reject')}
+          onArchive={() => sessionId && planDecision(sessionId, 'archive')}
         />
       )}
 

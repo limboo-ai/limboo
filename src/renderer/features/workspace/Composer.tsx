@@ -21,6 +21,8 @@ import { cn } from '@/renderer/lib/cn';
 import { HelixLoader } from '@/renderer/components/ui';
 import { useSessionStore } from '@/renderer/stores/useSessionStore';
 import { useAgentStore } from '@/renderer/stores/useAgentStore';
+import { isPlanBlocking } from '@shared/plan';
+import { useIsActivating } from './ActivationRibbon';
 import { useSettingsStore } from '@/renderer/stores/useSettingsStore';
 import { useWorkspaceStore } from '@/renderer/stores/useWorkspaceStore';
 import { useVoiceStore } from '@/renderer/stores/useVoiceStore';
@@ -122,6 +124,18 @@ export function Composer({ disabled = false }: { disabled?: boolean }) {
 
   const busy = !!phase && RUNNING_PHASES.has(phase);
   const restricted = lifecycle === 'rate-limited' || lifecycle === 'auth-required';
+  // The execution barrier, MIRRORED. Main refuses the send outright (see
+  // AgentManager.send) — this only keeps the user from typing into a composer
+  // whose Enter is going to be rejected, and from switching modes underneath a
+  // decision that is already pending.
+  const planStatus = useAgentStore((s) =>
+    sessionId ? s.bySession[sessionId]?.plan?.status : undefined,
+  );
+  const planBlocked = isPlanBlocking(planStatus);
+  // Main has not finished rebinding this session's services yet — a prompt sent
+  // now would run against a workspace the agent is not bound to. Read from the
+  // same hook the ribbon renders from, so the two can never disagree.
+  const activating = useIsActivating(sessionId);
   // Provider-aware connectivity: `install` is the Claude credential probe; a
   // Cursor-model session gates on the lifecycle instead (main reconciles it
   // from the Cursor auth classification — not-installed / auth-required).
@@ -129,12 +143,13 @@ export function Composer({ disabled = false }: { disabled?: boolean }) {
   const agentName = agentDisplayName(model);
   const connected =
     providerForModel(model) === 'cursor' ? lifecycle !== 'not-installed' : installed;
-  const blocked = disabled || !connected || busy || restricted;
+  const blocked = disabled || !connected || busy || restricted || planBlocked || activating;
 
   // Rotating typewriter placeholder — only in the normal "ready to type" state;
   // the special-state hints (not installed / restricted / disabled) stay static.
   // Pauses the moment the user starts typing (like the Global Search input).
-  const normalPlaceholderState = connected && !disabled && !restricted;
+  const normalPlaceholderState =
+    connected && !disabled && !restricted && !planBlocked && !activating;
   const typedPlaceholder = useTypewriter(
     mode === 'plan' ? PLAN_PLACEHOLDERS : mode === 'ask' ? ASK_PLACEHOLDERS : COMPOSER_PLACEHOLDERS,
     {
@@ -143,7 +158,11 @@ export function Composer({ disabled = false }: { disabled?: boolean }) {
   );
   const placeholder = normalPlaceholderState
     ? typedPlaceholder
-    : composerPlaceholder(disabled, connected, restricted, mode, agentName);
+    : planBlocked
+      ? 'A plan is waiting for your decision — approve, keep planning, reject or archive it first.'
+      : activating
+        ? 'Switching session…'
+        : composerPlaceholder(disabled, connected, restricted, mode, agentName);
 
   // Attachments — ChatGPT-style file chips above the input. Drafts belong to
   // the SESSION (main-process Attachment Manager), so they survive reloads and
@@ -389,7 +408,11 @@ export function Composer({ disabled = false }: { disabled?: boolean }) {
               purpose: the selects' popovers open upward, and any overflow-x would
               force overflow-y:auto and clip them. */}
           <div className="flex min-w-0 flex-nowrap items-center gap-x-2 px-1">
-            <ComposerModeSwitch mode={mode} onChange={setMode} disabled={disabled || !installed} />
+            <ComposerModeSwitch
+              mode={mode}
+              onChange={setMode}
+              disabled={disabled || !installed || planBlocked}
+            />
             <span className="hidden h-3.5 w-px shrink-0 bg-line sm:block" />
             <ComposerControls disabled={disabled || !installed} />
             <span className="ml-auto flex min-w-0 shrink items-center gap-2 text-[11px] text-faint">
