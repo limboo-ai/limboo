@@ -24,6 +24,131 @@ import type { ReleaseIndexEntry, ReleaseManifestEntry } from './release';
 /** Newest first. */
 export const RELEASE_MANIFESTS: ReleaseManifestEntry[] = [
   {
+    "version": "1.17.0",
+    "date": "2026-08-01",
+    "channel": "stable",
+    "codename": null,
+    "gitTag": "v1.17.0",
+    "commit": null,
+    "buildNumber": null,
+    "summary": "Plan Mode now stops. A plan waits for your decision instead of sliding into\nimplementation, and the plan you are shown is the plan the agent actually wrote —\nwhich, until this release, it very often was not. Git also becomes a platform\nservice in its own right, so repository work reads as part of the conversation\nrather than something that happened in a side panel.",
+    "sections": [
+      {
+        "category": "added",
+        "title": "Added",
+        "items": [
+          {
+            "lead": "Plan approval is a real stop, not a prompt",
+            "text": "When the agent presents a plan,\n  execution halts: no further model calls, no new prompts, no background work,\n  and every tool is refused until you decide. Approving continues the same turn\n  rather than starting a new one, so the agent keeps everything it had learned\n  while planning. Approve, Approve & accept edits, Keep planning, Reject and\n  Archive are the only things that move it forward."
+          },
+          {
+            "lead": "Keep planning now sends feedback",
+            "text": "Instead of discarding the plan and\n  starting over, it hands your notes to the agent, which revises and presents\n  again — same conversation, same context."
+          },
+          {
+            "lead": "Plans are versioned",
+            "text": "A session has one plan; refinements replace it and the\n  previous text moves into History. Two windows on the same session can no longer\n  approve different plans, and a plan that changed while you were reading it says\n  so rather than acting on the stale copy."
+          },
+          {
+            "lead": "A pending plan survives a restart",
+            "text": "Quit with a plan awaiting approval and it\n  is still there on relaunch, with its buttons live and implementation still\n  locked. Approving after a restart starts a fresh run carrying the plan text,\n  because the paused conversation cannot outlive the process."
+          },
+          {
+            "lead": "Git is a platform service",
+            "text": "Repository actions post structured entries into\n  the conversation carrying the paths, commit and checkpoint behind them, with\n  Open Diff, View Commit, Restore Checkpoint and Copy Command on each."
+          },
+          {
+            "lead": "Optional GitHub CLI integration",
+            "text": "If `gh` is installed and signed in, a\n  GitHub sub-tab lists pull requests and issues, and the agent can read them\n  through the tools it already has. Limboo stores no GitHub credential —\n  authentication stays the CLI's. Posting a comment is gated and shows the exact\n  body first."
+          },
+          {
+            "lead": "Contributor avatars in history",
+            "text": ", fetched in the main process and embedded so\n  no page ever requests a remote image. Behind `git.avatars.enabled`, which is\n  off-limits by default in the sense that turning it on is the thing that tells\n  GitHub which repository you are browsing — the setting says so."
+          }
+        ],
+        "markdown": "- **Plan approval is a real stop, not a prompt.** When the agent presents a plan,\n  execution halts: no further model calls, no new prompts, no background work,\n  and every tool is refused until you decide. Approving continues the same turn\n  rather than starting a new one, so the agent keeps everything it had learned\n  while planning. Approve, Approve & accept edits, Keep planning, Reject and\n  Archive are the only things that move it forward.\n- **Keep planning now sends feedback.** Instead of discarding the plan and\n  starting over, it hands your notes to the agent, which revises and presents\n  again — same conversation, same context.\n- **Plans are versioned.** A session has one plan; refinements replace it and the\n  previous text moves into History. Two windows on the same session can no longer\n  approve different plans, and a plan that changed while you were reading it says\n  so rather than acting on the stale copy.\n- **A pending plan survives a restart.** Quit with a plan awaiting approval and it\n  is still there on relaunch, with its buttons live and implementation still\n  locked. Approving after a restart starts a fresh run carrying the plan text,\n  because the paused conversation cannot outlive the process.\n- **Git is a platform service.** Repository actions post structured entries into\n  the conversation carrying the paths, commit and checkpoint behind them, with\n  Open Diff, View Commit, Restore Checkpoint and Copy Command on each.\n- **Optional GitHub CLI integration.** If `gh` is installed and signed in, a\n  GitHub sub-tab lists pull requests and issues, and the agent can read them\n  through the tools it already has. Limboo stores no GitHub credential —\n  authentication stays the CLI's. Posting a comment is gated and shows the exact\n  body first.\n- **Contributor avatars in history**, fetched in the main process and embedded so\n  no page ever requests a remote image. Behind `git.avatars.enabled`, which is\n  off-limits by default in the sense that turning it on is the thing that tells\n  GitHub which repository you are browsing — the setting says so."
+      },
+      {
+        "category": "changed",
+        "title": "Changed",
+        "items": [
+          {
+            "lead": "The integrated terminal is its own column",
+            "text": "between the conversation and the\n  drawer, instead of competing for the drawer with Files and Changes."
+          },
+          {
+            "lead": "The Activity and Hooks drawer panels are gone",
+            "text": "The Hook Engine, its audit\n  log and every hook setting are untouched — only the two panels and the IPC they\n  were the sole consumers of were removed."
+          },
+          {
+            "lead": "Switching sessions is now an ordered handover",
+            "text": "Worktree, file watcher, git\n  status, search index, memory scope, MCP and the agent are rebound in sequence,\n  and a thin ribbon says so while it happens. Switching quickly between sessions\n  cancels the stale work rather than letting it finish over the newer session."
+          }
+        ],
+        "markdown": "- **The integrated terminal is its own column** between the conversation and the\n  drawer, instead of competing for the drawer with Files and Changes.\n- **The Activity and Hooks drawer panels are gone.** The Hook Engine, its audit\n  log and every hook setting are untouched — only the two panels and the IPC they\n  were the sole consumers of were removed.\n- **Switching sessions is now an ordered handover.** Worktree, file watcher, git\n  status, search index, memory scope, MCP and the agent are rebound in sequence,\n  and a thin ribbon says so while it happens. Switching quickly between sessions\n  cancels the stale work rather than letting it finish over the newer session."
+      },
+      {
+        "category": "fixed",
+        "title": "Fixed",
+        "items": [
+          {
+            "lead": "The plan you approved was usually empty",
+            "text": "Current Claude releases write the\n  plan to a file and pass no plan text to the tool Limboo was reading, so almost\n  every captured plan was blank — and because the tool was blocked, no plan file\n  was produced either. Approving then sent an empty plan, the agent re-derived\n  the work from scratch, and the empty plan was filed as completed. Limboo now\n  tells the agent where to write its plan and reads it from there, with the\n  agent's own copy taking over once the plan is approved."
+          },
+          {
+            "lead": "Starting a new plan could silently destroy the one you were reviewing",
+            "text": "when\n  plan history was turned off. A pending plan is never discarded without being\n  filed first, and starting a second plan while one awaits approval is refused."
+          },
+          {
+            "lead": "A failed or cancelled planning run reported itself as \"rejected\"",
+            "text": ", which is\n  what the app says when a person declines a plan. Those now read as ended, with\n  the reason recorded, so declining and crashing no longer look identical."
+          },
+          {
+            "lead": "An unrelated prompt could mark a stalled plan complete",
+            "text": "Only the run that\n  was actually released to implement a plan can finish it."
+          },
+          {
+            "lead": "Live planning progress replayed the previous attempt's steps",
+            "text": "after asking\n  for a new plan, because it measured from when the plan first existed rather\n  than when the current attempt started."
+          },
+          {
+            "lead": "Deleting a session left its plan revisions behind",
+            "text": "in the database."
+          },
+          {
+            "lead": "A machine without git looked like a folder without a repository",
+            "text": ", and the app\n  offered to initialise one — an action that could never succeed. Limboo now\n  detects the missing binary and names the install command for your platform."
+          },
+          {
+            "lead": "Settings could be hand-edited into a dead drawer tab or an unbounded panel\n  width",
+            "text": "; both are now validated and clamped on load."
+          }
+        ],
+        "markdown": "- **The plan you approved was usually empty.** Current Claude releases write the\n  plan to a file and pass no plan text to the tool Limboo was reading, so almost\n  every captured plan was blank — and because the tool was blocked, no plan file\n  was produced either. Approving then sent an empty plan, the agent re-derived\n  the work from scratch, and the empty plan was filed as completed. Limboo now\n  tells the agent where to write its plan and reads it from there, with the\n  agent's own copy taking over once the plan is approved.\n- **Starting a new plan could silently destroy the one you were reviewing** when\n  plan history was turned off. A pending plan is never discarded without being\n  filed first, and starting a second plan while one awaits approval is refused.\n- **A failed or cancelled planning run reported itself as \"rejected\"**, which is\n  what the app says when a person declines a plan. Those now read as ended, with\n  the reason recorded, so declining and crashing no longer look identical.\n- **An unrelated prompt could mark a stalled plan complete.** Only the run that\n  was actually released to implement a plan can finish it.\n- **Live planning progress replayed the previous attempt's steps** after asking\n  for a new plan, because it measured from when the plan first existed rather\n  than when the current attempt started.\n- **Deleting a session left its plan revisions behind** in the database.\n- **A machine without git looked like a folder without a repository**, and the app\n  offered to initialise one — an action that could never succeed. Limboo now\n  detects the missing binary and names the install command for your platform.\n- **Settings could be hand-edited into a dead drawer tab or an unbounded panel\n  width**; both are now validated and clamped on load."
+      }
+    ],
+    "contributors": [],
+    "pullRequests": [],
+    "mergedBranches": [],
+    "assets": [],
+    "signing": [],
+    "stats": {
+      "commits": null,
+      "filesChanged": null,
+      "additions": null,
+      "deletions": null
+    },
+    "links": {
+      "release": "https://github.com/limboo-ai/limboo/releases/tag/v1.17.0",
+      "compare": null,
+      "tag": "https://github.com/limboo-ai/limboo/releases/tag/v1.17.0",
+      "milestone": null
+    },
+    "checksumManifest": "SHA256SUMS",
+    "provenanceRepo": "limboo-ai/limboo",
+    "markdown": "Plan Mode now stops. A plan waits for your decision instead of sliding into\nimplementation, and the plan you are shown is the plan the agent actually wrote —\nwhich, until this release, it very often was not. Git also becomes a platform\nservice in its own right, so repository work reads as part of the conversation\nrather than something that happened in a side panel.\n\n### Added\n\n- **Plan approval is a real stop, not a prompt.** When the agent presents a plan,\n  execution halts: no further model calls, no new prompts, no background work,\n  and every tool is refused until you decide. Approving continues the same turn\n  rather than starting a new one, so the agent keeps everything it had learned\n  while planning. Approve, Approve & accept edits, Keep planning, Reject and\n  Archive are the only things that move it forward.\n- **Keep planning now sends feedback.** Instead of discarding the plan and\n  starting over, it hands your notes to the agent, which revises and presents\n  again — same conversation, same context.\n- **Plans are versioned.** A session has one plan; refinements replace it and the\n  previous text moves into History. Two windows on the same session can no longer\n  approve different plans, and a plan that changed while you were reading it says\n  so rather than acting on the stale copy.\n- **A pending plan survives a restart.** Quit with a plan awaiting approval and it\n  is still there on relaunch, with its buttons live and implementation still\n  locked. Approving after a restart starts a fresh run carrying the plan text,\n  because the paused conversation cannot outlive the process.\n- **Git is a platform service.** Repository actions post structured entries into\n  the conversation carrying the paths, commit and checkpoint behind them, with\n  Open Diff, View Commit, Restore Checkpoint and Copy Command on each.\n- **Optional GitHub CLI integration.** If `gh` is installed and signed in, a\n  GitHub sub-tab lists pull requests and issues, and the agent can read them\n  through the tools it already has. Limboo stores no GitHub credential —\n  authentication stays the CLI's. Posting a comment is gated and shows the exact\n  body first.\n- **Contributor avatars in history**, fetched in the main process and embedded so\n  no page ever requests a remote image. Behind `git.avatars.enabled`, which is\n  off-limits by default in the sense that turning it on is the thing that tells\n  GitHub which repository you are browsing — the setting says so.\n\n### Changed\n\n- **The integrated terminal is its own column** between the conversation and the\n  drawer, instead of competing for the drawer with Files and Changes.\n- **The Activity and Hooks drawer panels are gone.** The Hook Engine, its audit\n  log and every hook setting are untouched — only the two panels and the IPC they\n  were the sole consumers of were removed.\n- **Switching sessions is now an ordered handover.** Worktree, file watcher, git\n  status, search index, memory scope, MCP and the agent are rebound in sequence,\n  and a thin ribbon says so while it happens. Switching quickly between sessions\n  cancels the stale work rather than letting it finish over the newer session.\n\n### Fixed\n\n- **The plan you approved was usually empty.** Current Claude releases write the\n  plan to a file and pass no plan text to the tool Limboo was reading, so almost\n  every captured plan was blank — and because the tool was blocked, no plan file\n  was produced either. Approving then sent an empty plan, the agent re-derived\n  the work from scratch, and the empty plan was filed as completed. Limboo now\n  tells the agent where to write its plan and reads it from there, with the\n  agent's own copy taking over once the plan is approved.\n- **Starting a new plan could silently destroy the one you were reviewing** when\n  plan history was turned off. A pending plan is never discarded without being\n  filed first, and starting a second plan while one awaits approval is refused.\n- **A failed or cancelled planning run reported itself as \"rejected\"**, which is\n  what the app says when a person declines a plan. Those now read as ended, with\n  the reason recorded, so declining and crashing no longer look identical.\n- **An unrelated prompt could mark a stalled plan complete.** Only the run that\n  was actually released to implement a plan can finish it.\n- **Live planning progress replayed the previous attempt's steps** after asking\n  for a new plan, because it measured from when the plan first existed rather\n  than when the current attempt started.\n- **Deleting a session left its plan revisions behind** in the database.\n- **A machine without git looked like a folder without a repository**, and the app\n  offered to initialise one — an action that could never succeed. Limboo now\n  detects the missing binary and names the install command for your platform.\n- **Settings could be hand-edited into a dead drawer tab or an unbounded panel\n  width**; both are now validated and clamped on load."
+  },
+  {
     "version": "1.16.0",
     "date": "2026-07-30",
     "channel": "stable",
@@ -420,70 +545,18 @@ export const RELEASE_MANIFESTS: ReleaseManifestEntry[] = [
     "checksumManifest": "SHA256SUMS",
     "provenanceRepo": "limboo-ai/limboo",
     "markdown": "A plan you left waiting can be approved again.\n\n### Fixed\n\n- **Approving a plan after reopening the app did nothing.** A plan waiting for\n  your approval was saved, but the conversation that produced it was not — a plan\n  run always ends by interrupting the agent, and an interrupted conversation is\n  cleared so your next message cannot fail on it. Approving afterwards therefore\n  started a fresh conversation and told it to implement a plan it had never seen:\n  the run finished having done nothing, and the plan was filed as complete. The\n  approved plan is now sent with the approval, so it no longer matters whether\n  the earlier conversation survived. This applies to both Claude and Cursor.\n- **Approve was greyed out while Reject still worked.** Approve, \"Approve &\n  accept edits\" and \"Keep planning\" are disabled while a run is finishing;\n  Reject is not. A run that ended without reporting back — after reloading the\n  window mid-run, or when a planning run did not fully unwind — left the session\n  looking permanently busy, so the only control that still responded was Reject.\n  A session that claims to be working with nothing running is now corrected on\n  the spot.\n- **Plans could get stuck with no way out.** Closing the app while a plan was\n  being written, or while one was being implemented, left it in that state\n  forever — and while a plan is being written the panel hides its whole toolbar,\n  so there was no approve, no reject and no regenerate. Interrupted plans are now\n  settled on startup: one that was never finished is cleared, and one that was\n  part-way through being implemented returns to awaiting approval so you can\n  start it again. Regenerate also stays available while a plan is being written.\n- **Approve could stop responding with no explanation.** Clicking Approve blocked\n  further clicks until the whole implementation run finished, so a run that hung\n  left the button silently dead for the rest of the session. It is now released\n  as soon as the run actually starts.\n- **Starting a new plan discarded the one waiting for approval.** It was replaced\n  without being recorded, so it was not even in the plan's own History. A pending\n  plan is now saved to History first. Reopening the app restores Plan mode by\n  default, which made this reachable by simply typing.\n- **A failed approval could leave the composer in the wrong mode.** After\n  reopening the app it stayed on \"Ask before edits\" even though the plan had been\n  put back and was waiting for approval again. It now returns to Plan.\n\n### Changed\n\n- **The plan approval controls are no longer boxed in.** The Approve, \"Approve &\n  accept edits\", \"Keep planning\" and Reject buttons sit directly on the panel\n  instead of inside a tinted card, matching how the same controls already read in\n  the conversation."
-  },
-  {
-    "version": "1.13.1",
-    "date": "2026-07-28",
-    "channel": "stable",
-    "codename": null,
-    "gitTag": "v1.13.1",
-    "commit": null,
-    "buildNumber": null,
-    "summary": "Stopping the agent mid-task no longer breaks your next message.",
-    "sections": [
-      {
-        "category": "fixed",
-        "title": "Fixed",
-        "items": [
-          {
-            "lead": "A run stopped while a tool was working would break the following message",
-            "text": "Pressing Stop while the agent was reading a file or running a command left the\n  provider's own conversation ending on a request it never got an answer to — a\n  shape it rejects every time it is replayed. The next thing you sent failed\n  before the agent ever saw it, with a line of internal diagnostic text\n  (`[ede_diagnostic] … stop_reason=tool_use`) shown as the error. Stopping now\n  clears that conversation as it happens, so the next message starts clean. Your\n  transcript, activity and checkpoints are untouched and still shown."
-          },
-          {
-            "lead": "The automatic recovery for it rarely ran",
-            "text": "The same failure reaches the app\n  in two different forms depending on how the underlying process ends, and only\n  one of them was recognised — which is why the error appeared to come and go at\n  random. Both forms are now read from the provider's structured result rather\n  than by matching English text, so recovery is consistent. Recovery also no\n  longer requires a stored conversation to exist, so the first message in a\n  session can recover too."
-          },
-          {
-            "lead": "Internal diagnostics are no longer shown as the error",
-            "text": "An interrupted turn\n  now reads \"The previous turn was interrupted before it finished — retrying.\"\n  The same applies to other run-ending conditions that previously surfaced raw\n  provider text: reaching the turn limit, an oversized prompt, an image that\n  could not be read, and a run stopped by a configured hook. Full diagnostics\n  remain in Settings › Agent › Diagnostics and the log file."
-          },
-          {
-            "lead": "Tool chips could spin forever",
-            "text": "A tool interrupted before it reported back\n  stayed marked as running for the rest of the session. Interrupted tools are now\n  settled when the run ends."
-          },
-          {
-            "lead": "Answering a clarification could hang after Stop",
-            "text": "Stopping a run released\n  pending permission prompts but not pending clarification questions.\n\nCursor sessions get the same handling: both providers share one classifier, so an\ninterrupted turn behaves and reads identically whichever agent is running."
-          }
-        ],
-        "markdown": "- **A run stopped while a tool was working would break the following message.**\n  Pressing Stop while the agent was reading a file or running a command left the\n  provider's own conversation ending on a request it never got an answer to — a\n  shape it rejects every time it is replayed. The next thing you sent failed\n  before the agent ever saw it, with a line of internal diagnostic text\n  (`[ede_diagnostic] … stop_reason=tool_use`) shown as the error. Stopping now\n  clears that conversation as it happens, so the next message starts clean. Your\n  transcript, activity and checkpoints are untouched and still shown.\n- **The automatic recovery for it rarely ran.** The same failure reaches the app\n  in two different forms depending on how the underlying process ends, and only\n  one of them was recognised — which is why the error appeared to come and go at\n  random. Both forms are now read from the provider's structured result rather\n  than by matching English text, so recovery is consistent. Recovery also no\n  longer requires a stored conversation to exist, so the first message in a\n  session can recover too.\n- **Internal diagnostics are no longer shown as the error.** An interrupted turn\n  now reads \"The previous turn was interrupted before it finished — retrying.\"\n  The same applies to other run-ending conditions that previously surfaced raw\n  provider text: reaching the turn limit, an oversized prompt, an image that\n  could not be read, and a run stopped by a configured hook. Full diagnostics\n  remain in Settings › Agent › Diagnostics and the log file.\n- **Tool chips could spin forever.** A tool interrupted before it reported back\n  stayed marked as running for the rest of the session. Interrupted tools are now\n  settled when the run ends.\n- **Answering a clarification could hang after Stop.** Stopping a run released\n  pending permission prompts but not pending clarification questions.\n\nCursor sessions get the same handling: both providers share one classifier, so an\ninterrupted turn behaves and reads identically whichever agent is running."
-      }
-    ],
-    "contributors": [],
-    "pullRequests": [],
-    "mergedBranches": [],
-    "assets": [],
-    "signing": [],
-    "stats": {
-      "commits": null,
-      "filesChanged": null,
-      "additions": null,
-      "deletions": null
-    },
-    "links": {
-      "release": "https://github.com/limboo-ai/limboo/releases/tag/v1.13.1",
-      "compare": "https://github.com/limboo-ai/limboo/compare/v1.13.0...v1.13.1",
-      "tag": "https://github.com/limboo-ai/limboo/releases/tag/v1.13.1",
-      "milestone": null
-    },
-    "checksumManifest": "SHA256SUMS",
-    "provenanceRepo": "limboo-ai/limboo",
-    "markdown": "Stopping the agent mid-task no longer breaks your next message.\n\n### Fixed\n\n- **A run stopped while a tool was working would break the following message.**\n  Pressing Stop while the agent was reading a file or running a command left the\n  provider's own conversation ending on a request it never got an answer to — a\n  shape it rejects every time it is replayed. The next thing you sent failed\n  before the agent ever saw it, with a line of internal diagnostic text\n  (`[ede_diagnostic] … stop_reason=tool_use`) shown as the error. Stopping now\n  clears that conversation as it happens, so the next message starts clean. Your\n  transcript, activity and checkpoints are untouched and still shown.\n- **The automatic recovery for it rarely ran.** The same failure reaches the app\n  in two different forms depending on how the underlying process ends, and only\n  one of them was recognised — which is why the error appeared to come and go at\n  random. Both forms are now read from the provider's structured result rather\n  than by matching English text, so recovery is consistent. Recovery also no\n  longer requires a stored conversation to exist, so the first message in a\n  session can recover too.\n- **Internal diagnostics are no longer shown as the error.** An interrupted turn\n  now reads \"The previous turn was interrupted before it finished — retrying.\"\n  The same applies to other run-ending conditions that previously surfaced raw\n  provider text: reaching the turn limit, an oversized prompt, an image that\n  could not be read, and a run stopped by a configured hook. Full diagnostics\n  remain in Settings › Agent › Diagnostics and the log file.\n- **Tool chips could spin forever.** A tool interrupted before it reported back\n  stayed marked as running for the rest of the session. Interrupted tools are now\n  settled when the run ends.\n- **Answering a clarification could hang after Stop.** Stopping a run released\n  pending permission prompts but not pending clarification questions.\n\nCursor sessions get the same handling: both providers share one classifier, so an\ninterrupted turn behaves and reads identically whichever agent is running."
   }
 ];
 
 /** Every released version, newest first. */
 export const RELEASE_INDEX: ReleaseIndexEntry[] = [
+  {
+    "version": "1.17.0",
+    "date": "2026-08-01",
+    "channel": "stable",
+    "summary": "Plan Mode now stops. A plan waits for your decision instead of sliding into\nimplementation, and the plan you are shown is the plan the agent actually wrote —\nwhich, until this release, it very often was not. Git also becomes a platform\nservice in its own right, so repository work reads as part of the conversation\nrather than something that happened in a side panel.",
+    "detailed": true
+  },
   {
     "version": "1.16.0",
     "date": "2026-07-30",
@@ -517,7 +590,7 @@ export const RELEASE_INDEX: ReleaseIndexEntry[] = [
     "date": "2026-07-28",
     "channel": "stable",
     "summary": "Stopping the agent mid-task no longer breaks your next message.",
-    "detailed": true
+    "detailed": false
   },
   {
     "version": "1.13.0",
