@@ -30,6 +30,7 @@ import { MemoryManager } from './managers/memory/MemoryManager';
 import { SearchManager } from './managers/search/SearchManager';
 import { ResumeManager } from './managers/resume/ResumeManager';
 import { HookEngine } from './managers/hooks/HookEngine';
+import { GhManager } from './managers/gh/GhManager';
 import { AutoUpdateManager, isQuittingForUpdate } from './managers/AutoUpdateManager';
 import { VoiceManager } from './managers/voice/VoiceManager';
 import { VoiceModelManager } from './managers/voice/VoiceModelManager';
@@ -100,6 +101,7 @@ function bootstrap(): void {
   let attachments: AttachmentManager;
   let search: SearchManager;
   let resume: ResumeManager;
+  let gh: GhManager;
   let hooks: HookEngine;
   let updates: AutoUpdateManager;
   let voiceModels: VoiceModelManager;
@@ -199,6 +201,11 @@ function bootstrap(): void {
     // onto it; it persists a redacted audit trail and broadcasts to the Hooks
     // panel. It holds no policy (enforcement stays in AgentManager's gate).
     hooks = new HookEngine(settings);
+    // The OPTIONAL GitHub CLI integration. `gh` is detected, never required:
+    // when it is absent or logged out the GitHub surface hides itself and
+    // nothing else changes. Limboo stores no GitHub credential — auth belongs
+    // entirely to the CLI (see managers/gh/exec.ts).
+    gh = new GhManager(workspace, settings);
     // In-app updater (electron-updater + GitHub releases). No-op in dev / non-AppImage.
     updates = new AutoUpdateManager(settings, notifications);
     // The MCP platform — a provider-independent Model Context Protocol registry
@@ -272,6 +279,8 @@ function bootstrap(): void {
     agent.setSessionManager(sessions);
     // The agent drives checkpoints + live git refresh through the Git Manager.
     agent.setGitManager(git);
+    // Optional: when `gh` is missing the PR/issue tools just do not appear.
+    agent.setGhManager(gh);
     // The agent retrieves + injects relevant memories; the git engine proposes
     // new memories from commits. Both treat memory as an optional collaborator.
     agent.setMemoryManager(memory);
@@ -378,7 +387,21 @@ function bootstrap(): void {
     });
     terminal.setSessionRootResolver((sessionId) => worktrees.resolveSessionRoot(sessionId));
     resume.setSessionRootResolver((sessionId) => worktrees.resolveSessionRoot(sessionId));
+    // Git operations become structured entries in the active session's
+    // conversation stream. GitManager is reached only from the renderer, so
+    // everything it records here is user-initiated; the agent's own git is
+    // `Bash("git …")`, which already renders as a tool row.
+    git.setActivityRecorder({
+      activeSessionFor: (workspaceId) => {
+        const active = sessions.getActive();
+        return active && active.workspaceId === workspaceId ? active.id : null;
+      },
+      recordGit: (sessionId, payload) => agent.recordGitActivity(sessionId, payload),
+    });
     git.setActiveRootResolver((workspaceId) => worktrees.resolveActiveRoot(workspaceId));
+    // `gh` infers the repository from its cwd, so a worktree-backed session must
+    // be read against its own checkout — the same seam GitManager uses.
+    gh.setActiveRootResolver((workspaceId) => worktrees.resolveActiveRoot(workspaceId));
     search.setActiveRootResolver((workspaceId) => worktrees.resolveActiveRoot(workspaceId));
     // The Voice subsystem — local speech (sherpa-onnx) as another input/output
     // modality of the SAME agent session. The model store owns downloads; the
@@ -404,7 +427,7 @@ function bootstrap(): void {
       attachments,
       search,
       resume,
-      hooks,
+      gh,
       updates,
       voice,
       voiceModels,
@@ -461,6 +484,7 @@ function bootstrap(): void {
       if (root !== lastEffectiveRoot) {
         lastEffectiveRoot = root;
         git.invalidate(ws.id);
+        gh.invalidate();
         void search.indexWorkspace(ws.id).catch((err) => logger.warn('search index failed', err));
         // Recovery/activation: start the session's autoStart services (only
         // when the workspace already acknowledged the repo's limboo.json).

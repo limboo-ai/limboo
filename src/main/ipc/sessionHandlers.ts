@@ -10,7 +10,6 @@ import type {
   Session,
   SessionDeleteOptions,
   SessionDependencies,
-  SessionTimelineEntry,
   SessionUpdate,
 } from '@shared/types';
 import { handle } from './registry';
@@ -246,18 +245,6 @@ export function registerSessionHandlers(
     assertValidId(id);
     return worktrees.getDependencies(id);
   });
-
-  handle<[string, number?], SessionTimelineEntry[]>(
-    IpcChannels.sessionTimeline,
-    (_e, id, limit) => {
-      assertValidId(id);
-      const capped =
-        typeof limit === 'number' && Number.isFinite(limit)
-          ? Math.max(1, Math.min(500, Math.floor(limit)))
-          : undefined;
-      return sessions.getTimeline(id, capped);
-    },
-  );
 
   handle<[string], Session>(IpcChannels.sessionSetActive, (_e, id) => {
     assertValidId(id);

@@ -31,6 +31,8 @@ import type {
   GitCommit,
   GitCommitContext,
   GitCommitDetail,
+  GitActivityPayload,
+  GitEnvironment,
   GitFileChange,
   GitFileDiff,
   GitPullResult,
@@ -45,6 +47,7 @@ import type { SettingsManager } from './SettingsManager';
 import type { MemoryManager } from './memory/MemoryManager';
 import type { GitOpDetail, GitOpKind } from './graph/builder';
 import { assertInsideRepo, gitText, runGit } from './git/exec';
+import { probeGitEnvironment } from './git/environment';
 import { sanitizeBranchName, sanitizeRef } from './git/refs';
 import {
   LOG_FORMAT,
@@ -137,9 +140,61 @@ export class GitManager {
     onGitOp(workspaceId: string, op: GitOpKind, detail: GitOpDetail): void;
   };
 
+  /**
+   * Records a git operation as a conversation-stream entry.
+   *
+   * Everything this manager records is `origin: 'user'` BY CONSTRUCTION: its
+   * methods are reachable only through `gitHandlers.ts`, and `handle()` has
+   * already proved the caller is our own renderer. The agent's git is
+   * `Bash("git …")` — it never enters this class, and it already renders as a
+   * tool row with its own output, so recording it here too would double the
+   * timeline (the mistake `MARKER_TYPES` documents by excluding `'tool'`). The
+   * one operation Limboo performs on the AGENT's behalf is the auto-checkpoint,
+   * which `AgentManager` records itself with `origin: 'agent'`.
+   */
+  private activityRecorder?: {
+    activeSessionFor(workspaceId: string): string | null;
+    recordGit(sessionId: string, payload: GitActivityPayload): void;
+  };
+
   /** Wire the Work Graph so repository work lands in the execution graph. */
   setWorkGraph(graph: NonNullable<GitManager['graph']>): void {
     this.graph = graph;
+  }
+
+  /** Wire the conversation-stream recorder (see {@link activityRecorder}). */
+  setActivityRecorder(recorder: NonNullable<GitManager['activityRecorder']>): void {
+    this.activityRecorder = recorder;
+  }
+
+  /**
+   * Record a user-initiated git operation into the active session's stream.
+   * Every failure is swallowed — observability must never break a git op.
+   */
+  private recordActivity(
+    workspaceId: string,
+    payload: Omit<GitActivityPayload, 'origin'>,
+  ): void {
+    const sessionId = this.activityRecorder?.activeSessionFor(workspaceId) ?? null;
+    if (sessionId) this.recordActivityFor(sessionId, payload, 'user');
+  }
+
+  /**
+   * Record against a KNOWN session rather than the active one. Checkpoints
+   * already carry their session id, and `createCheckpoint`'s `auto` flag is the
+   * honest origin signal: an auto-checkpoint is the one git operation Limboo
+   * performs on the agent's behalf.
+   */
+  private recordActivityFor(
+    sessionId: string,
+    payload: Omit<GitActivityPayload, 'origin'>,
+    origin: GitActivityPayload['origin'],
+  ): void {
+    try {
+      this.activityRecorder?.recordGit(sessionId, { ...payload, origin });
+    } catch {
+      /* never let the stream break the operation it is describing */
+    }
   }
 
   /** Inject the active-root resolver (worktree-backed sessions). */
@@ -298,8 +353,14 @@ export class GitManager {
   async stage(workspaceId: string, filePath: string): Promise<void> {
     const root = await this.requireRoot(workspaceId);
     const rel = assertInsideRepo(root, filePath);
-    await runGit(root, ['add', '--', rel]);
+    const res = await runGit(root, ['add', '--', rel]);
     this.notifyChanged(workspaceId);
+    this.recordActivity(workspaceId, {
+      kind: 'stage',
+      ok: res.ok,
+      paths: [rel],
+      command: `git add -- ${rel}`,
+    });
   }
 
   async unstage(workspaceId: string, filePath: string): Promise<void> {
@@ -307,22 +368,42 @@ export class GitManager {
     const rel = assertInsideRepo(root, filePath);
     // `restore --staged` works whether or not HEAD exists (reset fallback for the
     // unborn-branch case).
-    const res = await runGit(root, ['restore', '--staged', '--', rel]);
-    if (!res.ok) await runGit(root, ['reset', '-q', 'HEAD', '--', rel]);
+    let res = await runGit(root, ['restore', '--staged', '--', rel]);
+    if (!res.ok) res = await runGit(root, ['reset', '-q', 'HEAD', '--', rel]);
     this.notifyChanged(workspaceId);
+    this.recordActivity(workspaceId, {
+      kind: 'unstage',
+      ok: res.ok,
+      paths: [rel],
+      command: `git restore --staged -- ${rel}`,
+    });
   }
 
   async stageAll(workspaceId: string): Promise<void> {
     const root = await this.requireRoot(workspaceId);
-    await runGit(root, ['add', '-A']);
+    const before = await this.status(workspaceId);
+    const res = await runGit(root, ['add', '-A']);
     this.notifyChanged(workspaceId);
+    this.recordActivity(workspaceId, {
+      kind: 'stage',
+      ok: res.ok,
+      paths: before.files.filter((f) => !f.staged).map((f) => f.path),
+      command: 'git add -A',
+    });
   }
 
   async unstageAll(workspaceId: string): Promise<void> {
     const root = await this.requireRoot(workspaceId);
-    const res = await runGit(root, ['reset', '-q']);
-    if (!res.ok) await runGit(root, ['rm', '-r', '--cached', '-q', '.']);
+    const before = await this.status(workspaceId);
+    let res = await runGit(root, ['reset', '-q']);
+    if (!res.ok) res = await runGit(root, ['rm', '-r', '--cached', '-q', '.']);
     this.notifyChanged(workspaceId);
+    this.recordActivity(workspaceId, {
+      kind: 'unstage',
+      ok: res.ok,
+      paths: before.files.filter((f) => f.staged).map((f) => f.path),
+      command: 'git reset',
+    });
   }
 
   /** Discard unstaged changes to a tracked file (or delete an untracked one). */
@@ -330,24 +411,44 @@ export class GitManager {
     const root = await this.requireRoot(workspaceId);
     const rel = assertInsideRepo(root, filePath);
     const tracked = await runGit(root, ['ls-files', '--error-unmatch', '--', rel]);
+    let res;
     if (tracked.ok) {
-      const res = await runGit(root, ['restore', '--', rel]);
-      if (!res.ok) await runGit(root, ['checkout', '--', rel]);
+      res = await runGit(root, ['restore', '--', rel]);
+      if (!res.ok) res = await runGit(root, ['checkout', '--', rel]);
     } else {
-      await runGit(root, ['clean', '-f', '--', rel]);
+      res = await runGit(root, ['clean', '-f', '--', rel]);
     }
     this.notifyChanged(workspaceId);
+    this.recordActivity(workspaceId, {
+      kind: 'discard',
+      ok: res.ok,
+      paths: [rel],
+      command: tracked.ok ? `git restore -- ${rel}` : `git clean -f -- ${rel}`,
+    });
   }
 
   /* ---------------------------------------------------------------- commit */
 
   async commit(workspaceId: string, message: string): Promise<GitCommit | null> {
     const root = await this.requireRoot(workspaceId);
+    const staged = (await this.status(workspaceId)).files.filter((f) => f.staged);
     const res = await runGit(root, ['commit', '-m', message, ...this.identityArgs()], {});
-    if (!res.ok) throw new Error(res.stderr || 'git commit failed');
+    if (!res.ok) {
+      this.recordActivity(workspaceId, { kind: 'commit', ok: false, command: 'git commit' });
+      throw new Error(res.stderr || 'git commit failed');
+    }
     this.notifyChanged(workspaceId);
     const log = await this.log(workspaceId, { limit: 1 });
     const commit = log[0] ?? null;
+    this.recordActivity(workspaceId, {
+      kind: 'commit',
+      ok: true,
+      commit: commit?.hash.slice(0, 8),
+      paths: staged.map((f) => f.path),
+      adds: staged.reduce((n, f) => n + f.adds, 0),
+      dels: staged.reduce((n, f) => n + f.dels, 0),
+      command: 'git commit',
+    });
     // Offer the commit to the Local Memory System as a knowledge candidate
     // (fire-and-forget; respects the user's auto-capture policy).
     if (commit) {
@@ -519,6 +620,13 @@ export class GitManager {
     const res = await runGit(root, ['checkout', ref]);
     this.notifyChanged(workspaceId);
     if (res.ok) this.graph?.onGitOp(workspaceId, 'checkout', { branch: ref });
+    this.recordActivity(workspaceId, {
+      kind: 'checkout',
+      ok: res.ok,
+      ref,
+      branch: ref,
+      command: `git checkout ${ref}`,
+    });
     return res.ok ? { ok: true } : { ok: false, error: res.stderr };
   }
 
@@ -530,6 +638,12 @@ export class GitManager {
     const res = await runGit(root, checkout ? ['checkout', '-b', ref] : ['branch', ref]);
     this.notifyChanged(workspaceId);
     if (res.ok) this.graph?.onGitOp(workspaceId, 'branch', { branch: ref });
+    this.recordActivity(workspaceId, {
+      kind: 'branch',
+      ok: res.ok,
+      ref,
+      command: checkout ? `git checkout -b ${ref}` : `git branch ${ref}`,
+    });
     return res.ok ? { ok: true } : { ok: false, error: res.stderr };
   }
 
@@ -558,9 +672,13 @@ export class GitManager {
     const ref = sanitizeBranchName(name.trim(), 'Tag name');
     const args = message ? ['tag', '-a', ref, '-m', message] : ['tag', ref];
     const res = await runGit(root, args);
-    if (!res.ok) throw new Error(res.stderr || 'git tag failed');
+    if (!res.ok) {
+      this.recordActivity(workspaceId, { kind: 'tag', ok: false, ref });
+      throw new Error(res.stderr || 'git tag failed');
+    }
     this.notifyChanged(workspaceId);
     this.graph?.onGitOp(workspaceId, 'tag', { branch: ref, summary: message });
+    this.recordActivity(workspaceId, { kind: 'tag', ok: true, ref, command: `git tag ${ref}` });
   }
 
   /* ----------------------------------------------------------------- blame */
@@ -579,6 +697,11 @@ export class GitManager {
     const res = await runGit(root, ['fetch', '--all', '--prune'], { timeout: 60_000 });
     this.notifyChanged(workspaceId);
     if (res.ok) this.graph?.onGitOp(workspaceId, 'fetch', { remote: 'all' });
+    this.recordActivity(workspaceId, {
+      kind: 'fetch',
+      ok: res.ok,
+      command: 'git fetch --all --prune',
+    });
     return res.ok;
   }
 
@@ -626,8 +749,16 @@ export class GitManager {
         remote: 'origin',
         summary: ahead ? `${ahead} commit(s)` : undefined,
       });
+      this.recordActivity(workspaceId, {
+        kind: 'push',
+        ok: true,
+        branch,
+        // Remote NAME only — never the URL, which can carry credentials.
+        command: `git push${opts.force ? ' --force-with-lease' : ''}`,
+      });
       return { ok: true, setUpstream: wantUpstream || undefined, pushed: ahead || undefined };
     }
+    this.recordActivity(workspaceId, { kind: 'push', ok: false, branch });
     return { ok: false, ...classifyPushError(res.stderr) };
   }
 
@@ -659,18 +790,40 @@ export class GitManager {
       if (!upToDate) {
         this.graph?.onGitOp(workspaceId, 'pull', { branch: status.branch, remote: 'origin' });
       }
+      this.recordActivity(workspaceId, {
+        kind: 'pull',
+        ok: true,
+        branch: status.branch,
+        command: strategy === 'rebase' ? 'git pull --rebase' : 'git pull --ff-only',
+      });
       return { ok: true, upToDate: upToDate || undefined, updated: !upToDate || undefined };
     }
+    this.recordActivity(workspaceId, { kind: 'pull', ok: false, branch: status.branch });
     return { ok: false, ...classifyPullError(res.stderr || res.stdout) };
+  }
+
+  /**
+   * Whether a usable `git` binary exists on this machine. Process-global and
+   * memoised; pass `force` to re-probe after the user installs it.
+   */
+  environment(force = false): Promise<GitEnvironment> {
+    return probeGitEnvironment(force);
   }
 
   async init(workspaceId: string): Promise<boolean> {
     const ws = this.workspace.getById(workspaceId);
     if (!ws) throw new Error('Workspace not found');
+    // Without this, a missing binary surfaces as a bare "Could not initialize
+    // repository" toast that tells the user nothing actionable.
+    const env = await probeGitEnvironment();
+    if (!env.available) {
+      throw new Error(`Git is not installed. ${env.error ?? ''}`.trim());
+    }
     const res = await runGit(ws.path, ['init']);
     this.invalidate(workspaceId);
     this.notifyChanged(workspaceId);
     if (res.ok) this.graph?.onGitOp(workspaceId, 'init', {});
+    this.recordActivity(workspaceId, { kind: 'init', ok: res.ok, command: 'git init' });
     return res.ok;
   }
 
@@ -819,6 +972,18 @@ export class GitManager {
         summary: `${opts.auto ? 'Auto-checkpoint' : 'Checkpoint'}: ${label}`,
       });
       this.graph?.onCheckpoint(sessionId, checkpoint, 'create');
+      // `auto` is the honest origin signal: an auto-checkpoint is the one git
+      // operation Limboo performs on the AGENT's behalf.
+      this.recordActivityFor(
+        sessionId,
+        {
+          kind: 'checkpoint-create',
+          ok: true,
+          checkpointId: checkpoint.id,
+          paths: checkpoint.files,
+        },
+        opts.auto ? 'agent' : 'user',
+      );
       return checkpoint;
     } catch (err) {
       logger.warn('createCheckpoint failed', err);
@@ -1022,6 +1187,18 @@ export class GitManager {
     this.notifyChanged(workspaceId);
     this.notifyCheckpoints(cp.sessionId);
     this.graph?.onCheckpoint(cp.sessionId, cp, 'restore');
+    this.recordActivityFor(
+      cp.sessionId,
+      {
+        kind: 'checkpoint-restore',
+        ok: true,
+        checkpointId: cp.id,
+        // `entries` is the file list; `reverted`/`filesRemoved` are COUNTS.
+        paths: entries.map((f) => f.path),
+        branch: branch && branch !== 'HEAD' ? branch : undefined,
+      },
+      'user',
+    );
     return {
       ok: true,
       filesReverted: reverted,
@@ -1042,6 +1219,11 @@ export class GitManager {
     this.db.prepare('DELETE FROM git_checkpoints WHERE id = ?').run(checkpointId);
     this.notifyCheckpoints(cp.sessionId);
     this.graph?.onCheckpoint(cp.sessionId, cp, 'delete');
+    this.recordActivityFor(
+      cp.sessionId,
+      { kind: 'checkpoint-delete', ok: true, checkpointId: cp.id },
+      'user',
+    );
   }
 
   /**

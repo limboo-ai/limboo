@@ -21,7 +21,6 @@ import type {
   Session,
   SessionPermissionMode,
   SessionStatus,
-  SessionTimelineEntry,
   SessionUpdate,
   WorktreeStatus,
 } from '@shared/types';
@@ -475,62 +474,6 @@ export class SessionManager {
       )
       .run(branch, status.adds, status.dels, sessionId, branch, status.adds, status.dels);
     if (info.changes > 0) this.broadcast();
-  }
-
-  /**
-   * The session's unified engineering timeline — activity feed, diagnostics,
-   * and git checkpoints merged chronologically, plus synthetic lifecycle rows.
-   * Derived by query over the already-persisted tables (no duplicate storage,
-   * so it can never drift from its sources). Most recent first.
-   */
-  getTimeline(sessionId: string, limit = 200): SessionTimelineEntry[] {
-    const rows = this.db
-      .prepare(
-        `SELECT id, 'activity' AS kind, type AS label, payload AS detail, created_at
-           FROM agent_activity WHERE session_id = ?
-         UNION ALL
-         SELECT id, 'diagnostic' AS kind, label, detail, created_at
-           FROM agent_diagnostics WHERE session_id = ?
-         UNION ALL
-         SELECT id, 'checkpoint' AS kind, label, files AS detail, created_at
-           FROM git_checkpoints WHERE session_id = ?
-         ORDER BY created_at DESC LIMIT ?`,
-      )
-      .all(sessionId, sessionId, sessionId, limit) as Array<{
-      id: string;
-      kind: SessionTimelineEntry['kind'];
-      label: string;
-      detail: string | null;
-      created_at: number;
-    }>;
-
-    const entries: SessionTimelineEntry[] = rows.map((r) => ({
-      id: r.id,
-      kind: r.kind,
-      label: r.label,
-      detail: r.detail ?? undefined,
-      at: r.created_at,
-    }));
-
-    const session = this.byId(sessionId);
-    if (session) {
-      entries.push({
-        id: `${sessionId}:created`,
-        kind: 'lifecycle',
-        label: 'Session created',
-        at: session.createdAt,
-      });
-      if (session.archived) {
-        entries.push({
-          id: `${sessionId}:archived`,
-          kind: 'lifecycle',
-          label: 'Session archived',
-          at: session.updatedAt,
-        });
-      }
-    }
-    entries.sort((a, b) => b.at - a.at);
-    return entries.slice(0, limit);
   }
 
   /**

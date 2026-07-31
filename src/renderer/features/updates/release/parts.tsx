@@ -22,9 +22,9 @@
  * "Stable", "Running now", "Windows: self-signed" are sentences, and wrapping a
  * sentence in a coloured capsule adds emphasis without adding information.
  */
-import { useState, type ReactNode } from 'react';
-import { isEmbeddedAvatar, isForgeUrl, type ReleaseChannel } from '@shared/release';
-import { CopyButton } from '@/renderer/components/ui';
+import type { ReactNode } from 'react';
+import { isForgeUrl, type ReleaseChannel } from '@shared/release';
+import { Avatar, CopyButton, Monogram } from '@/renderer/components/ui';
 import { cn } from '@/renderer/lib/cn';
 
 /**
@@ -73,106 +73,12 @@ export function ExternalLink({
   );
 }
 
-/** Up to two initials from a display name. `null` for anything unusable. */
-function initialsOf(name: string): string {
-  const parts = name
-    .split(/[\s._-]+/)
-    .map((p) => p.replace(/[^\p{L}\p{N}]/gu, ''))
-    .filter(Boolean);
-  if (parts.length === 0) return '?';
-  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
-  return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
-}
-
-/** The ring that tells a maintainer apart from a contributor, shared by both avatars. */
-function avatarRing(emphasis: boolean): string {
-  return emphasis ? 'ring-1 ring-accent/40' : 'ring-1 ring-line';
-}
-
 /**
- * A locally drawn avatar. No network, by construction — see the module note.
- * Maintainers get an accent ring so the roster reads at a glance without adding
- * a colour outside the palette.
- *
- * Still reached often: it is {@link Avatar}'s fallback for a development
- * checkout (where the manifest carries no contributors at all), for a
- * contributor CI could not resolve to a forge account, and for anything that
- * fails {@link isEmbeddedAvatar}.
+ * Shared primitives re-exported so existing imports keep working while there is
+ * only one implementation of each. `Avatar`/`Monogram` moved to `components/ui`
+ * when git history started needing them too — the `CopyButton` precedent.
  */
-export function Monogram({
-  name,
-  emphasis = false,
-  size = 28,
-}: {
-  name: string;
-  emphasis?: boolean;
-  size?: number;
-}) {
-  return (
-    <span
-      aria-hidden
-      style={{ width: size, height: size, fontSize: Math.round(size * 0.36) }}
-      className={cn(
-        'flex shrink-0 items-center justify-center rounded-full bg-surface-2 font-semibold uppercase',
-        emphasis ? 'text-accent' : 'text-muted',
-        avatarRing(emphasis),
-      )}
-    >
-      {initialsOf(name)}
-    </span>
-  );
-}
-
-/**
- * A contributor's real profile picture, embedded in the manifest at build time
- * as a `data:` URI and screened before it reaches `src`.
- *
- * The screening is the point. A manifest is DATA — it is stamped in by CI from a
- * network response — so `data:text/html,…` or a remote `https://` avatar must
- * never become an `<img src>` on the strength of "we generated it ourselves".
- * Anything that fails {@link isEmbeddedAvatar} degrades to {@link Monogram}, and
- * so does a decode failure at runtime, so a corrupt image can never leave a
- * broken-image glyph in the roster.
- *
- * `aria-hidden` + empty `alt` are deliberate: the person's name is the adjacent
- * text, and announcing it twice is worse than not announcing the picture.
- */
-export function Avatar({
-  src,
-  name,
-  emphasis = false,
-  size = 28,
-}: {
-  src: string | null | undefined;
-  name: string;
-  emphasis?: boolean;
-  size?: number;
-}) {
-  const [failed, setFailed] = useState(false);
-  if (failed || !isEmbeddedAvatar(src)) {
-    return <Monogram name={name} emphasis={emphasis} size={size} />;
-  }
-  return (
-    <img
-      src={src as string}
-      alt=""
-      aria-hidden
-      draggable={false}
-      loading="lazy"
-      width={size}
-      height={size}
-      style={{ width: size, height: size }}
-      onError={() => setFailed(true)}
-      className={cn('shrink-0 rounded-full bg-surface-2 object-cover', avatarRing(emphasis))}
-    />
-  );
-}
-
-/**
- * The release document's copy affordance is the shared primitive — re-exported
- * here so existing imports keep working while there is only one implementation.
- */
-export { CopyButton };
+export { CopyButton, Avatar, Monogram };
 
 /** One label/value fact. Values that are absent render an em dash, never blank. */
 export function Field({

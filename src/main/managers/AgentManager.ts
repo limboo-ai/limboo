@@ -28,6 +28,7 @@ import type {
 } from '@anthropic-ai/claude-agent-sdk';
 import type {
   AgentActivityItem,
+  GitActivityPayload,
   AgentDiagnostic,
   AgentEvent,
   AgentInstall,
@@ -109,6 +110,7 @@ import {
   type EffectiveSandbox,
 } from './sandbox/policy';
 import { isReadOnlyShellCommand } from './agent/readOnlyCommands';
+import { clampGitPayload, gitActivityDetail, gitActivityLabel } from './agent/gitActivity';
 import {
   AgentRunError,
   classifyTerminalResult,
@@ -138,6 +140,7 @@ import type { NotificationManager } from './NotificationManager';
 import type { TerminalManager } from './TerminalManager';
 import type { SessionManager } from './SessionManager';
 import type { GitManager } from './GitManager';
+import type { GhManager } from './gh/GhManager';
 import type { MemoryManager } from './memory/MemoryManager';
 import type { ResumeManager } from './resume/ResumeManager';
 import { createMemoryMcpServer } from './memory/memoryTools';
@@ -208,6 +211,44 @@ const READ_TOOLS = new Set([
   'Read', 'Glob', 'Grep', 'LS', 'WebSearch', 'WebFetch', 'NotebookRead', 'TodoWrite',
 ]);
 const WRITE_TOOLS = new Set(['Write', 'Edit', 'MultiEdit', 'NotebookEdit', 'Delete']);
+
+/**
+ * Limboo's own MCP tools that may run without a permission prompt.
+ *
+ * An ALLOW-LIST, deliberately, and the only correct shape for this: the
+ * `limboo_search` server also carries `comment_on_pull_request` /
+ * `comment_on_issue`, which publish under the user's GitHub account. A prefix
+ * match with a deny-list would mean any tool added to that server later is
+ * allowed by default — the failure mode where a write ships pre-approved and
+ * nobody notices. Anything not named here falls through to the normal gate.
+ *
+ * Every entry must be genuinely read-only. Adding a name here is a security
+ * decision, not a convenience one.
+ */
+const AUTO_ALLOWED_INTERNAL_TOOLS = new Set([
+  // limboo_memory
+  'list_memories',
+  'search_memories',
+  'list_memory_proposals',
+  // limboo_search — retrieval
+  'search_project',
+  'find_files',
+  'find_symbols',
+  // limboo_search — release notes
+  'list_releases',
+  'release_notes',
+  // limboo_search — GitHub reads (the comment tools are POINTEDLY absent)
+  'list_pull_requests',
+  'view_pull_request',
+  'list_issues',
+  'view_issue',
+]);
+
+/** `mcp__limboo_search__find_files` → `find_files`. */
+function bareMcpToolName(toolName: string): string {
+  const parts = toolName.split('__');
+  return parts.length >= 3 ? parts.slice(2).join('__') : toolName;
+}
 const COMMAND_TOOLS = new Set(['Bash', 'BashOutput', 'KillBash', 'KillShell']);
 
 /** The SDK tool the agent calls to present its plan and exit planning mode. */
@@ -907,6 +948,17 @@ export class AgentManager {
     this.git = git;
   }
 
+  /**
+   * GitHub CLI, wired after construction. Optional by design: when `gh` is
+   * absent the PR/issue tools simply do not appear on the `limboo_search`
+   * server, which is the same thing the UI does.
+   */
+  private gh: GhManager | null = null;
+
+  setGhManager(gh: GhManager): void {
+    this.gh = gh;
+  }
+
   /** Local Memory System, wired after construction (prompt context injection). */
   private memory: MemoryManager | null = null;
 
@@ -1148,11 +1200,10 @@ export class AgentManager {
         auto: true,
         messageId: run.userMessageId,
       })
-      .then((cp) => {
-        if (cp) {
-          this.pushActivity(sessionId, 'status', 'Created checkpoint', cp.label, 'info');
-        }
-      })
+      // No activity push here: `GitManager.createCheckpoint` records the
+      // structured `git` entry itself (with `origin: 'agent'`, which its `auto`
+      // flag identifies), so pushing a plain status marker too would show the
+      // same checkpoint twice in the stream.
       .catch(() => {
         /* checkpointing is best-effort and never breaks a run */
       });
@@ -2535,7 +2586,7 @@ export class AgentManager {
       if (this.search && this.settings.getAll().search.enabled) {
         options.mcpServers = {
           ...(options.mcpServers ?? {}),
-          limboo_search: createSearchMcpServer(sdk, this.search, this.workspace),
+          limboo_search: createSearchMcpServer(sdk, this.search, this.workspace, this.gh),
         };
         ownMcpServers.push('limboo_search');
       }
@@ -3094,7 +3145,7 @@ export class AgentManager {
       // fire for one action (and hook retries happen) — identical concurrent
       // requests share one decision instead of prompting twice.
       const inFlight = new Map<string, Promise<HookDecision>>();
-      const dispatcher = createMcpDispatcher(this.memory, this.search, this.workspace);
+      const dispatcher = createMcpDispatcher(this.memory, this.search, this.workspace, this.gh);
       try {
         pipe = await startBridgeServer({
           onHook: (event, payload) => {
@@ -4808,13 +4859,23 @@ export class AgentManager {
         return this.promptForApproval(sessionId, input, request, signal, 'sensitive');
       }
 
-      // Limboo's own memory + search tools are internal and strictly read-only —
-      // always allow them (even during a plan run) so retrieval never prompts.
+      // Limboo's own internal tools. Most are strictly read-only and are always
+      // allowed (even during a plan run) so retrieval never prompts.
+      //
+      // This is an ALLOW-LIST keyed by the bare tool name, NOT a prefix match
+      // with exceptions. The `limboo_search` server also carries the two GitHub
+      // comment tools, which WRITE — publicly, under the user's own account —
+      // and a deny-list would mean the next tool anyone adds to that server
+      // ships silently pre-approved. Falling through to the normal gate is the
+      // correct default for anything unrecognised.
       if (
         toolName.startsWith('mcp__limboo_memory__') ||
         toolName.startsWith('mcp__limboo_search__')
       ) {
-        return { behavior: 'allow', updatedInput: input };
+        if (AUTO_ALLOWED_INTERNAL_TOOLS.has(bareMcpToolName(toolName))) {
+          return { behavior: 'allow', updatedInput: input };
+        }
+        // Not on the list — keep going and let the gate below prompt.
       }
 
       const mode = this.settings.getAll().agent;
@@ -5185,8 +5246,10 @@ export class AgentManager {
     label: string,
     detail?: string,
     tone?: AgentActivityItem['tone'],
+    git?: GitActivityPayload,
   ): void {
     const item = this.activity(sessionId, type, label, detail, tone);
+    if (git) item.git = git;
     getDb()
       .prepare(
         'INSERT INTO agent_activity (id, session_id, type, payload, created_at) VALUES (?, ?, ?, ?, ?)',
@@ -5209,6 +5272,32 @@ export class AgentManager {
       detail?.slice(0, ACTIVITY_LIMITS.detailMax),
       'info',
     );
+  }
+
+  /**
+   * Record a git operation as a structured conversation-stream entry.
+   *
+   * The label/detail are composed HERE, in main — the renderer never authors
+   * audit prose. The payload rides inside the existing `agent_activity.payload`
+   * JSON, so this needs no schema migration and inherits persistence, session
+   * fork, and rewind for free.
+   *
+   * Every failure is swallowed: observability must never break a git operation.
+   */
+  recordGitActivity(sessionId: string, payload: GitActivityPayload): void {
+    try {
+      const git = clampGitPayload(payload);
+      this.pushActivity(
+        sessionId,
+        'git',
+        gitActivityLabel(git),
+        gitActivityDetail(git),
+        git.ok ? 'success' : 'danger',
+        git,
+      );
+    } catch (err) {
+      logger.warn('git activity record failed', err);
+    }
   }
 
   /**

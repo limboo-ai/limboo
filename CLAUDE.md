@@ -24,8 +24,32 @@ repository, branch, chat history, agent, terminal history, checkpoints,
 permissions, context, memory, tasks, and generated files into one workspace.
 
 Guiding principles (from `project.md` §4): Fast, Local, Private, Modular, Secure,
-Responsive, Observable, Predictable, Recoverable. There is **no backend** — the
-only network traffic is the connected coding agent talking to its AI provider.
+Responsive, Observable, Predictable, Recoverable. There is **no backend**. Limboo
+itself makes exactly **two** kinds of outbound request, and no others may be added
+without amending this paragraph:
+
+1. The connected coding agent talking to its AI provider.
+2. **Contributor avatars** — so commit history can show a real face. Two steps,
+   both gated by the single `settings.git.avatars.enabled` switch:
+   - **Identity.** A GitHub *noreply* commit address already encodes the account
+     (`<id>+<login>@users.noreply.github.com`), so it needs no lookup. Every
+     other address — which is most real history — can only be resolved by
+     GitHub, so `GhManager.commitAuthors` calls **one** read-only endpoint,
+     `GET /repos/{owner}/{repo}/commits`, through the `gh` CLI. It returns
+     `commit.author.email` alongside the resolved `author.{login,avatar_url}`,
+     mapping a whole page of history per request. **This tells GitHub which
+     repository is being browsed** — the reason the setting exists and says so.
+   - **Image.** `main/managers/gh/avatars.ts` fetches the picture from GitHub's
+     avatar host: host-allowlisted, https-only, manual redirect screening, byte-
+     and time-capped, magic-byte sniffed (no SVG), and screened by
+     `isEmbeddedAvatar` before it can reach an `<img src>`.
+
+   `gh api` is reachable **only** from `commitAuthors`, with a fixed endpoint
+   built from a remote Limboo parsed itself. It has no IPC channel and no agent
+   tool — it can POST, which is also why it stays out of the agent's read-only
+   allowlist. Authentication remains the CLI's; Limboo still reads and stores no
+   token. `git`, `gh`, and the update checker are separate processes/subsystems
+   with their own rules.
 
 ---
 

@@ -38,6 +38,7 @@ import { PlanInline } from '@/renderer/features/plan/PlanInline';
 import { SubagentActivity } from './SubagentActivity';
 import { ProseCard } from './ProseCard';
 import { isSubagentTool } from '@shared/subagents';
+import { GitActivityBlock } from './GitActivityBlock';
 
 /** Human label for a file-edit tool's change status, shown inline in the stream. */
 const CHANGE_WORD: Record<string, string> = {
@@ -56,6 +57,11 @@ const MARKER_TYPES: ReadonlySet<AgentActivityItem['type']> = new Set([
   'status',
   'error',
   'clarification',
+  // A git operation the USER performed (staging, commit, push) or that Limboo
+  // performed on the agent's behalf (the auto-checkpoint). The agent's OWN git
+  // is `Bash("git …")`, which is a `tool` and is excluded above — recording it
+  // here as well would show the same operation twice.
+  'git',
 ]);
 
 /** A single chronological item inside an assistant block. */
@@ -657,7 +663,13 @@ const AssistantBlock = memo(function AssistantBlock({
           if (it.kind === 'text') {
             return <AssistantText key={it.message.id} message={it.message} />;
           }
-          if (it.kind === 'marker') return <InlineMarkerRow key={it.item.id} item={it.item} />;
+          if (it.kind === 'marker') {
+            return it.item.type === 'git' && it.item.git ? (
+              <GitActivityBlock key={it.item.id} item={it.item} />
+            ) : (
+              <InlineMarkerRow key={it.item.id} item={it.item} />
+            );
+          }
           if (it.kind === 'subagent') {
             return <SubagentActivity key={it.key} call={it.call} />;
           }
