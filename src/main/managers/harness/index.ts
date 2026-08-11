@@ -14,7 +14,7 @@
  * module SPECIFIERS and imports nothing.
  */
 import { harnessById } from '../agent/harnessRegistry';
-import type { HarnessAgentCtor, LoadedHarness } from './types';
+import type { HarnessAdapterSettings, HarnessAgentCtor, LoadedHarness } from './types';
 
 const importEsm = new Function('m', 'return import(m)') as (m: string) => Promise<unknown>;
 
@@ -51,12 +51,21 @@ export function loadHarness(harnessId: string): Promise<LoadedHarness> {
       importEsm(descriptor.module),
       importEsm('ai'),
     ]);
+    // Every adapter exports a ready-made default instance under a camelCase
+    // name derived from its id (`claude-code` → `claudeCode`), alongside a
+    // `createX` factory for configured instances. The factory is optional here
+    // only so an adapter that ships without one still loads.
+    const base = camelCase(descriptor.id);
+    const factory = (adapterMod as Record<string, unknown>)[
+      `create${base.charAt(0).toUpperCase()}${base.slice(1)}`
+    ];
     return {
       HarnessAgent: pick<HarnessAgentCtor>(agentMod, 'HarnessAgent', '@ai-sdk/harness/agent'),
-      // Every adapter exports a ready-made default instance under a camelCase
-      // name derived from its id (`claude-code` → `claudeCode`), alongside a
-      // `createX` factory for configured instances.
-      adapter: pick<unknown>(adapterMod, camelCase(descriptor.id), descriptor.module),
+      adapter: pick<unknown>(adapterMod, base, descriptor.module),
+      createAdapter:
+        typeof factory === 'function'
+          ? (factory as (s: HarnessAdapterSettings) => unknown)
+          : undefined,
       stepCountIs: pick<(n: number) => unknown>(aiMod, 'stepCountIs', 'ai'),
     };
   })();

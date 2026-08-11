@@ -36,6 +36,13 @@ export interface HarnessRunSpec {
   inactiveTools?: string[];
   /** Vision blocks, when the turn carries images. */
   messages?: unknown;
+  /**
+   * Native-format MCP server definitions. Limboo's own `limboo_memory` /
+   * `limboo_search` are served by the SAME plain tools and the SAME stdio
+   * bridge Cursor uses, so both agents query one index and better-sqlite3 stays
+   * in a single process.
+   */
+  mcpServers?: Record<string, unknown>;
   /** Layer 1 delegation — see `approval.ts`. */
   toolApproval?: HarnessToolApproval;
   sandbox: EffectiveSandbox;
@@ -64,12 +71,33 @@ export class HarnessRuntime {
   constructor(private readonly sandboxProvider: unknown) {}
 
   async start(spec: HarnessRunSpec, bridge: ProviderRunBridge): Promise<HarnessRunHandle> {
-    const { HarnessAgent, adapter, stepCountIs } = await loadHarness(spec.harnessId);
+    const { HarnessAgent, adapter, createAdapter, stepCountIs } = await loadHarness(spec.harnessId);
 
     bridge.onSandboxStatus?.('preparing', 'Preparing isolated execution environment…');
 
+    // `model` and `maxTurns` are ADAPTER-level settings: they configure the
+    // underlying CLI, not the agent loop, so they only take effect through the
+    // factory. Passing them to the HarnessAgent constructor instead would let
+    // the CLI quietly fall back to its own default model — a run on a model the
+    // user did not select. `stopWhen` still bounds the loop on top.
+    const harness = createAdapter
+      ? createAdapter({
+          model: spec.model,
+          maxTurns: spec.maxTurns,
+          ...(spec.mcpServers ? { mcpServers: spec.mcpServers } : {}),
+        })
+      : adapter;
+    if (!createAdapter) {
+      bridge.diag(
+        'lifecycle',
+        'warning',
+        'Harness adapter exposes no factory — the model could not be pinned',
+        `harness ${spec.harnessId}`,
+      );
+    }
+
     const agent = new HarnessAgent({
-      harness: adapter,
+      harness,
       sandbox: this.sandboxProvider,
       id: spec.sessionId,
       // The three context producers arrive pre-joined, exactly as they are for

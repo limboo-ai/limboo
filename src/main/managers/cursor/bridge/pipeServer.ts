@@ -29,8 +29,16 @@ export interface HookDecision {
 }
 
 export interface BridgeHandlers {
-  /** A hook fired inside the run (preToolUse / beforeShellExecution / …). */
-  onHook(event: string, payload: Record<string, unknown>): Promise<HookDecision>;
+  /**
+   * A hook fired inside the run (preToolUse / beforeShellExecution / …).
+   *
+   * OPTIONAL because not every adapter gates through hooks: the AI SDK harness
+   * path routes permissions through `toolApproval` instead, so it registers no
+   * hooks and has nothing to serve here. An unexpected hook on such a run is
+   * DENIED rather than allowed — a gate arriving at a server with no gate
+   * handler is a misconfiguration, and the safe reading of it is "no".
+   */
+  onHook?(event: string, payload: Record<string, unknown>): Promise<HookDecision>;
   /**
    * An MCP request from the stdio bridge. `server` is `memory` | `search`;
    * `method` is `tools/list` | `tools/call`. Returns the MCP-shaped result.
@@ -172,6 +180,15 @@ async function serve(
     if (req.kind === 'hook') {
       const event = typeof req.event === 'string' ? req.event.slice(0, 80) : '';
       const payload = req.payload && typeof req.payload === 'object' ? req.payload : {};
+      if (!handlers.onHook) {
+        // Fail closed: this run registered no hooks, so a hook reaching us is a
+        // misconfiguration, not an authorization.
+        reply({
+          ok: true,
+          result: { permission: 'deny', agentMessage: 'This run does not use hook approval.' },
+        });
+        return;
+      }
       const decision = await Promise.race([handlers.onHook(event, payload), timeout]);
       reply({ ok: true, result: decision });
       return;

@@ -132,11 +132,31 @@ export interface HarnessAgentLike {
 
 export type HarnessAgentCtor = new (options: HarnessAgentOptions) => HarnessAgentLike;
 
+/**
+ * Adapter-level settings — the options that belong to the RUNTIME rather than
+ * the agent loop, so they must go through the adapter factory and not the
+ * `HarnessAgent` constructor. `model` and `maxTurns` are the load-bearing ones:
+ * without them the CLI silently uses its own defaults, which is how a run ends
+ * up on a model the user did not select.
+ */
+export interface HarnessAdapterSettings {
+  model?: string;
+  maxTurns?: number;
+  env?: Record<string, string>;
+  /** Native (Claude Code stdio) MCP server definitions, keyed by name. */
+  mcpServers?: Record<string, unknown>;
+}
+
 /** What `loadHarness()` resolves to. */
 export interface LoadedHarness {
   HarnessAgent: HarnessAgentCtor;
-  /** The adapter instance passed as `harness`. */
+  /** The ready-made adapter instance (no adapter-level settings applied). */
   adapter: unknown;
+  /**
+   * The adapter FACTORY. Preferred over {@link adapter} whenever any
+   * adapter-level setting is needed — notably the model.
+   */
+  createAdapter?: (settings: HarnessAdapterSettings) => unknown;
   /** `stepCountIs(n)` from `ai`, used for `stopWhen`. */
   stepCountIs: (n: number) => unknown;
 }

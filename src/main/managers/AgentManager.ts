@@ -134,6 +134,7 @@ import type { CursorRunOutcome, ProviderRunBridge } from './cursor/types';
 import type { HarnessRuntime, HarnessRunHandle } from './harness/HarnessRuntime';
 import type { LocalWorktreeSandboxProvider } from './harness/sandbox/LocalWorktreeSandbox';
 import { makeHarnessToolApproval } from './harness/approval';
+import { loadHarness } from './harness';
 import { isSubagentTool } from '@shared/subagents';
 import { IpcEvents } from '@shared/ipc-channels';
 import { getDb } from '../db/database';
@@ -2651,10 +2652,55 @@ export class AgentManager {
         this.diag(category as DiagnosticCategory, severity, label, detail, sessionId),
     };
 
+    // MCP reuse: point limboo_memory / limboo_search at the SAME bundled stdio
+    // bridge Cursor uses, over the same token-authed local pipe, dispatching
+    // into the same transport-neutral plain tools. Both agents therefore query
+    // one memory and one index, and better-sqlite3 stays in a single process —
+    // which is only possible because the sandbox is local.
+    //
+    // Only `onMcp` is wired: permissions travel through `toolApproval`, not
+    // hooks, so there is no gate event to serve here.
+    let pipe: RunBridgeServer | null = null;
+    let mcpServers: Record<string, unknown> | undefined;
+    const mcpBridgePath = this.memory || this.search ? bridgeScriptPath('mcpBridge.cjs') : null;
+    if (mcpBridgePath) {
+      const dispatcher = createMcpDispatcher(this.memory, this.search, this.workspace, this.gh);
+      try {
+        pipe = await startBridgeServer({
+          onMcp: (server, method, params) =>
+            Promise.resolve(dispatcher.dispatch(server, method, params)),
+        });
+        const entry = (kind: 'memory' | 'search'): Record<string, unknown> => ({
+          command: bridgeNodeCommand(),
+          args: [mcpBridgePath],
+          env: {
+            ELECTRON_RUN_AS_NODE: '1',
+            ...(pipe as RunBridgeServer).env,
+            LIMBOO_BRIDGE_SERVER: kind,
+          },
+        });
+        mcpServers = {
+          ...(this.memory ? { limboo_memory: entry('memory') } : {}),
+          ...(this.search ? { limboo_search: entry('search') } : {}),
+        };
+      } catch (err) {
+        // Best-effort, exactly as on the Cursor path: losing the index is a
+        // degraded run, never a failed one.
+        this.diag(
+          'lifecycle',
+          'warning',
+          'Harness bridge pipe failed to start — running without Limboo MCP tools',
+          err instanceof Error ? err.message.slice(0, 300) : undefined,
+          sessionId,
+        );
+      }
+    }
+
     const canUseTool = this.makeCanUseTool(sessionId, cwd, permMode);
     // The approval callback needs the handle in order to interrupt the turn,
     // but the handle only exists once the run has started — hence the cell.
     const handleRef: { current: HarnessRunHandle | null } = { current: null };
+    try {
     const handle = await runtime.start(
       {
         sessionId,
@@ -2683,6 +2729,7 @@ export class AgentManager {
           permMode,
         }),
         sandbox,
+        mcpServers,
         resumeFrom: this.loadProviderSession(sessionId, 'anthropic') ?? undefined,
         workDir,
         debug: agent.harness.debug,
@@ -2695,6 +2742,16 @@ export class AgentManager {
     this.setLifecycle('streaming');
     this.setRequest(sessionId, { phase: 'streaming' });
     await handle.done;
+    } finally {
+      // The pipe is per-run: closing it is what stops a stale bridge from
+      // outliving the run that authorized it.
+      if (pipe) {
+        this.setState({
+          cursorBridge: { hooksActive: null, mcpActive: pipe.mcpConnected, at: Date.now() },
+        });
+        void pipe.close();
+      }
+    }
   }
 
   /** A single SDK run attempt. Streams events; re-throws on any failure. */
@@ -5896,7 +5953,18 @@ export class AgentManager {
     try {
       const install = this.probeHealth(true);
       if (!install.installed) throw new Error('Claude Code authentication is no longer available.');
-      await loadSdk();
+      // Probe the module the NEXT run will actually load. Checking the direct
+      // SDK while runs go through the harness would report a healthy capability
+      // whose real execution path is broken.
+      const agentCfg = this.settings.getAll().agent;
+      if (
+        providerForModel(agentCfg.model) === 'anthropic' &&
+        !agentCfg.harness.legacyClaudeSdk
+      ) {
+        await loadHarness(agentCfg.harness.id);
+      } else {
+        await loadSdk();
+      }
       this.markHeartbeatOk();
       if (this.state.lifecycle === 'reconnecting' || this.state.lifecycle === 'offline') {
         this.setLifecycle('ready', { error: undefined });
