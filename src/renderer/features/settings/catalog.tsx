@@ -13,6 +13,7 @@ import {
   Bot,
   Blocks,
   Brain,
+  Gauge,
   GitBranch,
   Keyboard,
   Info,
@@ -29,6 +30,7 @@ import { AppearancePanel } from './panels/AppearancePanel';
 import { WorkspacePanel } from './panels/WorkspacePanel';
 import { BehaviorPanel } from './panels/BehaviorPanel';
 import { AgentPanel } from './panels/AgentPanel';
+import { RuntimePanel } from './panels/RuntimePanel';
 import { McpPanel } from './panels/McpPanel';
 import { PlanTasksPanel } from './panels/PlanTasksPanel';
 import { TerminalPanel } from './panels/TerminalPanel';
@@ -139,12 +141,26 @@ export const SETTINGS_CATALOG: SettingsCategory[] = [
       { id: 'sessionPersistence', label: 'Persist sessions & diagnostics', keywords: ['persist', 'history', 'database'] },
       { id: 'connectivityNotifications', label: 'Connectivity notifications', keywords: ['notify', 'reconnect', 'rate limit'] },
       { id: 'logVerbosity', label: 'Log verbosity', keywords: ['diagnostics', 'console', 'debug', 'log'] },
+      { id: 'harnessLegacySdk', label: 'Use the direct Claude Agent SDK', keywords: ['harness', 'claude', 'sdk', 'legacy', 'rollback', 'ai sdk', 'vercel'] },
+      { id: 'harnessDebug', label: 'Adapter diagnostics', keywords: ['harness', 'debug', 'adapter', 'logs', 'diagnostics'] },
+      { id: 'subagentInline', label: 'Inline subagent activity', keywords: ['subagent', 'delegation', 'worker', 'inline', 'activity', 'task'] },
+      { id: 'subagentProgress', label: 'Subagent progress summaries', keywords: ['subagent', 'progress', 'summary', 'telemetry', 'worker'] },
+      { id: 'subagentForwardText', label: 'Forward subagent narration', keywords: ['subagent', 'text', 'narration', 'transcript', 'forward'] },
       { id: 'hookEngineEnabled', label: 'Governance audit', keywords: ['hooks', 'hook engine', 'audit', 'governance', 'lifecycle', 'events', 'security'] },
       { id: 'hookEngineAudit', label: 'Audit detail', keywords: ['hooks', 'hook engine', 'audit', 'verbose', 'lifecycle', 'governance'] },
       { id: 'troubleshootCursor', label: 'Cursor CLI detection', keywords: ['troubleshoot', 'cursor', 'not installed', 'detect', 'probe', 'refresh', 'path', 'localappdata', 'diagnostics'] },
       { id: 'troubleshootBridge', label: 'Cursor run bridge', keywords: ['troubleshoot', 'cursor', 'hooks', 'mcp', 'bridge', 'pipe', 'memory', 'search', 'diagnostics'] },
       { id: 'troubleshootClaude', label: 'Claude Code status', keywords: ['troubleshoot', 'claude', 'not connected', 'detect', 'diagnostics'] },
       { id: 'troubleshootTips', label: 'Common fixes', keywords: ['troubleshoot', 'fix', 'help', 'install cli', 'not found', 'sign in required', 'restart'] },
+    ],
+    Panel: AgentPanel,
+  },
+  {
+    id: 'runtime',
+    label: 'Runtime',
+    icon: Gauge,
+    keywords: ['runtime', 'telemetry', 'context window', 'tokens', 'usage', 'ring', 'indicator', 'inspector', 'metrics', 'monitor'],
+    fields: [
       { id: 'runtimeEnabled', label: 'Runtime telemetry', keywords: ['runtime', 'telemetry', 'metrics', 'context window', 'tokens', 'usage', 'monitor'] },
       { id: 'runtimeIndicator', label: 'Show the ring', keywords: ['runtime', 'ring', 'indicator', 'circle', 'progress', 'inspector'] },
       { id: 'runtimeAnchor', label: 'Indicator position', keywords: ['runtime', 'ring', 'position', 'composer', 'header', 'anchor'] },
@@ -169,7 +185,7 @@ export const SETTINGS_CATALOG: SettingsCategory[] = [
       { id: 'runtimeExport', label: 'Export telemetry', keywords: ['runtime', 'export', 'json', 'csv', 'debug', 'telemetry'] },
       { id: 'runtimeClear', label: 'Clear stored telemetry', keywords: ['runtime', 'clear', 'erase', 'privacy', 'history', 'delete'] },
     ],
-    Panel: AgentPanel,
+    Panel: RuntimePanel,
   },
   {
     id: 'mcp',

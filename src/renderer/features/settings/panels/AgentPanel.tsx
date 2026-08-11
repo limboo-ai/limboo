@@ -6,7 +6,7 @@
  * turn budget, and the connection-monitoring / reliability controls.
  */
 import { useEffect, useState } from 'react';
-import { AGENT_CONNECTION_LIMITS, AGENT_LIMITS } from '@shared/constants';
+import { AGENT_CONNECTION_LIMITS, AGENT_LIMITS, AGENT_MODELS, DEFAULT_SETTINGS } from '@shared/constants';
 import { cn } from '@/renderer/lib/cn';
 import { ProviderIcon } from '@/renderer/components/brand/ProviderIcon';
 import { useSettingsStore } from '@/renderer/stores/useSettingsStore';
@@ -14,10 +14,10 @@ import { useAgentStore } from '@/renderer/stores/useAgentStore';
 import { lifecycleMeta } from '@/renderer/features/agent/status';
 import { useAgentModels } from '@/renderer/features/agent/models';
 import { Field, Section, Select, SegmentedControl, Slider, StackedField, TextInput, Toggle } from '../controls';
-import { ProviderStatusRow } from './ProviderCard';
-import { CursorProviderCard } from './CursorProviderCard';
+import { HarnessCard } from './HarnessCard';
+import { CursorAuthControls, useCursorStatus } from './CursorProviderCard';
+import { ClaudeCodeControls } from './ClaudeCodeControls';
 import { AgentTroubleshooting } from './AgentTroubleshooting';
-import { RuntimeIndicatorsSection } from './RuntimeIndicatorsSection';
 
 export function AgentPanel() {
   const agent = useSettingsStore((s) => s.settings.agent);
@@ -25,6 +25,14 @@ export function AgentPanel() {
   const lifecycle = useAgentStore((s) => s.lifecycle);
   const install = useAgentStore((s) => s.install);
   const models = useAgentModels();
+  const cursorStatus = useCursorStatus();
+
+  // DERIVED, never retyped: the hint used to read "Default Sonnet 4.6" while
+  // the actual default had moved on to Opus 5. A hardcoded copy of a value
+  // that lives elsewhere goes stale silently.
+  const defaultModelLabel =
+    AGENT_MODELS.find((m) => m.value === DEFAULT_SETTINGS.agent.model)?.label ??
+    DEFAULT_SETTINGS.agent.model;
 
   const meta = lifecycleMeta(lifecycle, install.installed);
   const set = <K extends keyof typeof agent>(key: K, value: (typeof agent)[K]) =>
@@ -41,24 +49,31 @@ export function AgentPanel() {
   return (
     <div className="flex flex-col gap-5">
       <Section
-        title="Providers"
-        hint="The coding agents Limboo can orchestrate. Claude Code reuses its own local login; Cursor connects via CLI sign-in or an encrypted API key — Anthropic keys never pass through this app."
+        title="Harnesses"
+        hint="The coding agents Limboo can drive. A harness is HOW a model runs; picking a model in the composer selects its harness. Claude Code reuses its own local login; Cursor connects via CLI sign-in or an encrypted API key — no provider credentials are stored by this app."
       >
-        <ProviderStatusRow
-          provider="anthropic"
-          name="Claude Code"
+        <HarnessCard
+          harnessId="claude-code"
           statusLine={
             install.installed
               ? 'Connected — reusing your local Claude Code login.'
               : install.error ?? 'Not connected.'
           }
           meta={meta}
-        />
-        <CursorProviderCard />
+        >
+          <ClaudeCodeControls />
+        </HarnessCard>
+        <HarnessCard harnessId="cursor-cli" statusLine={cursorStatus.line} meta={cursorStatus.meta}>
+          <CursorAuthControls />
+        </HarnessCard>
       </Section>
 
       <Section title="Model & thinking">
-        <StackedField id="model" label="Model" hint="Which model the agent runs — the provider follows the model. Default Sonnet 4.6.">
+        <StackedField
+          id="model"
+          label="Model"
+          hint={`Which model the agent runs — the harness follows the model. Default ${defaultModelLabel}.`}
+        >
           <div className="flex flex-wrap gap-1.5">
             {models.map((m) => {
               const active = agent.model === m.value;
@@ -248,16 +263,6 @@ export function AgentPanel() {
       </Section>
 
       <Section
-        title="Plan Mode"
-        hint="Plan Mode is the review-first workflow — the agent analyzes read-only and proposes a plan you approve before any files change. Its settings now live in the dedicated Plan & Tasks category."
-      >
-        <p className="text-[12px] text-faint">
-          Configure Plan-mode defaults, the Task Panel, execution, and plan history under
-          <span className="text-muted"> Settings › Plan &amp; Tasks</span>.
-        </p>
-      </Section>
-
-      <Section
         title="Connection & reliability"
         hint="How Limboo supervises the connected coding agent — shared by every provider. A failed request never marks the agent dead; these knobs govern heartbeat checks and automatic recovery."
       >
@@ -364,10 +369,6 @@ export function AgentPanel() {
           />
         </Field>
       </Section>
-
-      {/* Runtime Indicators sits between reliability and delegation: it is the
-          surface that tells you how the running agent is doing right now. */}
-      <RuntimeIndicatorsSection />
 
       <Section
         title="Subagents"

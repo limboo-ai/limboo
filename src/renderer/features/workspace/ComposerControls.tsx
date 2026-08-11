@@ -6,7 +6,12 @@
  */
 import { useEffect, useRef, useState } from 'react';
 import { Brain, Check, ChevronDown, Search, type LucideIcon } from 'lucide-react';
-import { providerForModel, type AgentProvider } from '@shared/constants';
+import {
+  HARNESS_LABELS,
+  PROVIDER_HARNESS,
+  providerForModel,
+  type AgentProvider,
+} from '@shared/constants';
 import { cn } from '@/renderer/lib/cn';
 import { ProviderIcon } from '@/renderer/components/brand/ProviderIcon';
 import { useSettingsStore } from '@/renderer/stores/useSettingsStore';
@@ -141,10 +146,14 @@ export function MiniSelect<T extends string>({
   );
 }
 
-const PROVIDER_LABEL: Record<AgentProvider, string> = {
-  anthropic: 'Claude Code',
-  cursor: 'Cursor',
-};
+/**
+ * The agents the picker offers, labelled from the SHARED harness table rather
+ * than a second hardcoded map in this file. Two copies of the same names drift;
+ * this one already read "Claude Code" for a provider that could not run.
+ */
+const AGENT_CHOICES: { provider: AgentProvider; label: string }[] = (
+  Object.keys(PROVIDER_HARNESS) as AgentProvider[]
+).map((p) => ({ provider: p, label: HARNESS_LABELS[PROVIDER_HARNESS[p]] ?? p }));
 
 export function ComposerControls({ disabled = false }: { disabled?: boolean }) {
   const agent = useSettingsStore((s) => s.settings.agent);
@@ -163,10 +172,10 @@ export function ComposerControls({ disabled = false }: { disabled?: boolean }) {
         title="Agent"
         value={provider}
         triggerGlyph={<ProviderIcon provider={provider} size={12} className="text-faint" />}
-        options={(Object.keys(PROVIDER_LABEL) as AgentProvider[]).map((p) => ({
-          value: p,
-          label: PROVIDER_LABEL[p],
-          glyph: <ProviderIcon provider={p} size={13} className="text-muted" />,
+        options={AGENT_CHOICES.map((c) => ({
+          value: c.provider,
+          label: c.label,
+          glyph: <ProviderIcon provider={c.provider} size={13} className="text-muted" />,
         }))}
         onChange={(next) => {
           if (next === provider) return;
