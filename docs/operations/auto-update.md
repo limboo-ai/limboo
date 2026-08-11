@@ -21,6 +21,51 @@ Polling is suspended while an update is staged. Re-checking would re-emit
 off `downloaded`, which is what used to turn the install button into a silent
 no-op.
 
+## Channels: stable and beta
+
+`settings.updates.channel` is `stable` (default) or `beta`, and it maps to exactly
+one electron-updater knob: `allowPrerelease`. The GitHub provider skips
+prereleases entirely unless that is set, so **publishing a prerelease cannot
+affect a stable install** — there is no second feed file, no `beta.yml`, and no
+electron-builder change. A beta install reads the prerelease's own `latest*.yml`
+like any other release.
+
+A prerelease is any tag carrying a suffix (`v1.18.0-beta.1`). That is already how
+`channelForTag` derives the release document's channel, and how all three
+publishers decide `--prerelease` — the rule is "does the tag contain a hyphen",
+and nothing new was added for it.
+
+**A beta is never auto-downloaded.** `autoDownloadFor()` in `AutoUpdateManager`
+forces `autoDownload` off on this channel regardless of the user's preference,
+and the Settings toggle is disabled with that stated. Three reasons:
+
+- An unreleased build is a per-version decision. A preference set once should not
+  silently apply to every future prerelease.
+- The strip offers the release notes beside the download, because for a
+  prerelease those notes are load-bearing rather than informational.
+- A partial download is not silently resumed either (the `resuming` path checks
+  `prerelease`), since resuming would apply an earlier choice to a version the
+  user has not seen.
+
+Once a beta is **installed**, it updates normally — choosing the channel was the
+consent. Switching back to stable stops new beta offers; it does not downgrade the
+running build, and electron-updater will not offer an older version.
+
+`UpdateStatus` carries three fields so the renderer never reads settings or parses
+a version to phrase an offer: `channel`, `prerelease` (the OFFER) and
+`runningPrerelease` (the RUNNING build). Those are independent — a beta install
+can be offered a stable release, and the two cases read differently.
+
+`SettingsManager.normalize` accepts only the literal `'beta'`; anything else falls
+back to stable, so a hand-edited `settings.json` cannot widen what an install is
+offered.
+
+The release document shows a warning block above the summary for any non-stable
+channel: that the build is not released, that features may be reverted, and that
+settings/session data migrate forward but not back. It is prose in a bordered
+block rather than a coloured pill, per the no-badge rule in `release/parts.tsx` —
+the wording has to survive a screenshot and the Markdown export.
+
 ## Per-platform mechanics
 
 | Platform | Mechanism | Requires |
