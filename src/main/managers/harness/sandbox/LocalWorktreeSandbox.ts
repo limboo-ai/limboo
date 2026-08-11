@@ -58,6 +58,15 @@ export interface LocalSandboxDeps {
   resolveSandbox(sessionId: string, cwd: string): EffectiveSandbox;
   /** This session's attachment staging dir, mounted read-only when present. */
   attachmentsDirFor?(sessionId: string): string | undefined;
+  /**
+   * Credential env var NAMES the active harness needs (never values).
+   *
+   * Each is forwarded to the child only when already present in the host
+   * environment. Limboo stores no provider credential — this exists so a user
+   * whose shell has `ANTHROPIC_API_KEY` can authenticate, without the app ever
+   * holding, echoing or persisting the value.
+   */
+  envKeysFor?(): readonly string[];
   /** Structured diagnostics (already-redacted detail only). */
   diag?(severity: 'debug' | 'info' | 'warning' | 'error', label: string, detail?: string): void;
 }
@@ -87,9 +96,20 @@ const ENV_ALLOWLIST = [
   'HOMEDRIVE', 'HOMEPATH', 'NUMBER_OF_PROCESSORS', 'PROCESSOR_ARCHITECTURE',
 ];
 
-function baseEnv(): Record<string, string> {
+/**
+ * The child's environment: the platform allowlist, plus the specific credential
+ * variables this harness needs.
+ *
+ * `extraKeys` is a SECOND, explicitly-named list rather than a widening of
+ * `ENV_ALLOWLIST`, so a review diff reads "we now forward ANTHROPIC_API_KEY to
+ * the harness bridge" instead of "we splatted process.env". A key is forwarded
+ * only when it is already present on the host — Limboo stores no provider
+ * credential, accepts none over IPC, and puts none in argv; this is pure
+ * passthrough of what the user's own shell already has.
+ */
+function baseEnv(extraKeys: readonly string[] = []): Record<string, string> {
   const out: Record<string, string> = {};
-  for (const key of ENV_ALLOWLIST) {
+  for (const key of [...ENV_ALLOWLIST, ...extraKeys]) {
     const v = process.env[key];
     if (typeof v === 'string') out[key] = v;
   }
@@ -132,6 +152,8 @@ class LocalSandboxSession {
     private readonly worktree: string,
     private readonly eff: EffectiveSandbox,
     private readonly attachmentsDir: string | undefined,
+    /** Credential env vars this harness needs — forwarded only if already set. */
+    private readonly envKeys: readonly string[],
     private readonly diag: NonNullable<LocalSandboxDeps['diag']>,
   ) {}
 
@@ -294,7 +316,7 @@ class LocalSandboxSession {
     const argv = [...this.jail.argv, shellCmd, shellFlag, o.command];
     const child = spawn(argv[0], argv.slice(1), {
       cwd,
-      env: { ...baseEnv(), ...(o.env ?? {}) },
+      env: { ...baseEnv(this.envKeys), ...(o.env ?? {}) },
       shell: false,
       windowsHide: true,
     });
@@ -493,6 +515,7 @@ export class LocalWorktreeSandboxProvider {
       root,
       this.deps.resolveSandbox(sessionId, root),
       this.deps.attachmentsDirFor?.(sessionId),
+      this.deps.envKeysFor?.() ?? [],
       this.deps.diag ?? ((): void => undefined),
     );
     this.sessions.set(sessionId, session);

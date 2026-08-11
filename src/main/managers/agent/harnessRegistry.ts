@@ -58,6 +58,15 @@ export interface HarnessDescriptor {
   module: string | null;
   /** Needs a sandbox provider exposing a port for its bridge. */
   needsSandbox: boolean;
+  /**
+   * Credential env var NAMES this harness's runtime reads.
+   *
+   * Forwarded to the child only when already present in the host environment.
+   * Limboo stores no provider credential, so this is the entire auth story for
+   * a harness: whatever the user's own shell already has. Names only — a value
+   * never reaches settings, IPC, argv or a log line.
+   */
+  envKeys: readonly string[];
   capabilities: HarnessCapabilities;
 }
 
@@ -74,6 +83,16 @@ export const HARNESSES: readonly HarnessDescriptor[] = [
     kind: 'sandbox-bridge',
     module: '@ai-sdk/harness-claude-code',
     needsSandbox: true,
+    // HOME is already in the sandbox's platform allowlist, so a `~/.claude`
+    // subscription login works without any of these. They exist so an API-key
+    // user can authenticate too — previously impossible, since none of them
+    // reached the child.
+    envKeys: [
+      'ANTHROPIC_API_KEY',
+      'ANTHROPIC_AUTH_TOKEN',
+      'ANTHROPIC_BASE_URL',
+      'CLAUDE_CODE_OAUTH_TOKEN',
+    ],
     capabilities: {
       // Its permission modes gate `edit` and `bash` kinds only — a built-in
       // Read/Grep/Glob is never routed to Limboo's gate at any mode.
@@ -94,6 +113,9 @@ export const HARNESSES: readonly HarnessDescriptor[] = [
     kind: 'native',
     module: null,
     needsSandbox: false,
+    // Cursor's own auth layer owns this: a CLI login, or a key decrypted from
+    // SecretStore at spawn time. Nothing is forwarded from the host here.
+    envKeys: [],
     capabilities: {
       // Limboo owns the process and every tool call reaches decideToolUse, so
       // `autoApproveReads` is honoured here.

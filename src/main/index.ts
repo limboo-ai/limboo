@@ -38,6 +38,7 @@ import { AttachmentManager } from './managers/attachments/AttachmentManager';
 import { SecretStore } from './secrets/SecretStore';
 import { CursorAuthManager } from './managers/cursor/CursorAuthManager';
 import { CursorRuntime } from './managers/cursor/CursorRuntime';
+import { harnessById } from './managers/agent/harnessRegistry';
 import { HarnessRuntime } from './managers/harness/HarnessRuntime';
 import { LocalWorktreeSandboxProvider } from './managers/harness/sandbox/LocalWorktreeSandbox';
 import { resolveSandboxConfig } from './managers/sandbox/policy';
@@ -400,6 +401,9 @@ function bootstrap(): void {
           attachmentsDir: sessionAttachmentsDir(sessionId),
         }),
       attachmentsDirFor: (sessionId) => sessionAttachmentsDir(sessionId),
+      // Credential var NAMES the active harness reads. Forwarded only when the
+      // user's own environment already has them; Limboo stores none.
+      envKeysFor: () => harnessById(settings.getAll().agent.harness.id)?.envKeys ?? [],
       diag: (severity, label, detail) => {
         if (severity === 'error') logger.error(`[harness] ${label}`, detail ?? '');
         else logger.info(`[harness] ${label}`, detail ?? '');
