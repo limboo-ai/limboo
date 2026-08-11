@@ -147,6 +147,23 @@ export interface HarnessAdapterSettings {
   mcpServers?: Record<string, unknown>;
 }
 
+/**
+ * Capability flags an adapter instance carries as plain own properties.
+ *
+ * Read structurally off the object the factory returns — never imported — so
+ * the no-`@ai-sdk`-imports rule holds. `supportsBuiltinToolApprovals` is the
+ * load-bearing one: when it is not `true`, the adapter cannot ask Limboo for
+ * permission before a built-in tool edits a file or runs a command, and the run
+ * must be refused rather than run ungated.
+ */
+export interface HarnessAdapterFlags {
+  harnessId?: string;
+  supportsBuiltinToolApprovals?: boolean;
+  supportsBuiltinToolFiltering?: boolean;
+  /** The adapter's built-in tool set, keyed by the identity it emits. */
+  builtinTools?: Record<string, unknown>;
+}
+
 /** What `loadHarness()` resolves to. */
 export interface LoadedHarness {
   HarnessAgent: HarnessAgentCtor;

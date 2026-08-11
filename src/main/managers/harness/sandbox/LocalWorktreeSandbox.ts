@@ -62,6 +62,17 @@ export interface LocalSandboxDeps {
   diag?(severity: 'debug' | 'info' | 'warning' | 'error', label: string, detail?: string): void;
 }
 
+/**
+ * The adapter state directories permitted as SIBLINGS of the worktree.
+ *
+ * Third-party constants, verified in @ai-sdk/harness-claude-code@1.0.67:
+ * `BOOTSTRAP_DIR = ".harness-bootstrap/claude-code"` and the per-session
+ * `.agent-runs/<sessionId>/bridge`, both resolved against the sandbox's
+ * `defaultWorkingDirectory`. Kept as literals rather than a prefix rule so a
+ * rename in a future adapter version fails loudly at the first write.
+ */
+const HARNESS_STATE_DIRS = new Set(['.harness-bootstrap', '.agent-runs']);
+
 /** Grace period before a spawned process tree is SIGKILLed. */
 const KILL_GRACE_MS = 5_000;
 /** Cap on captured `run()` output, mirroring the Cursor stream reader. */
@@ -152,6 +163,30 @@ class LocalSandboxSession {
     }
 
     if (contains(realWorktree, real)) return real;
+
+    // The adapter's own state, which lives OUTSIDE the worktree by design.
+    //
+    // `@ai-sdk/harness-claude-code` resolves its bootstrap and per-run bridge
+    // state against `defaultWorkingDirectory` — which this provider reports as
+    // the worktree's PARENT — so they land as siblings of the worktree:
+    //   .harness-bootstrap/<harnessId>/   (installed CLI + marker)
+    //   .agent-runs/<sessionId>/bridge/   (per-run bridge state)
+    // That placement is exactly what keeps `git status` clean, and the guard
+    // above refused it, so the harness path could not start at all.
+    //
+    // The carve-out is deliberately narrow: only these two LITERAL first
+    // segments, both dot-prefixed, so it can never collide with a sibling
+    // worktree (slugs come from `sanitizeBranchName`, which cannot emit a
+    // leading dot). The crown-jewel loop above already ran unconditionally, so
+    // nothing here can reach a protected file. Both names are third-party
+    // constants verified in @ai-sdk/harness-claude-code@1.0.67 — an upgrade
+    // that renames them fails loudly at the first write rather than silently
+    // writing somewhere else.
+    const realState = realpathNearest(this.defaultWorkingDirectory);
+    if (contains(realState, real)) {
+      const [segment] = path.relative(realState, real).split(path.sep);
+      if (HARNESS_STATE_DIRS.has(segment)) return real;
+    }
 
     if (this.attachmentsDir) {
       const ra = realpathNearest(this.attachmentsDir);

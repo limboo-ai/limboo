@@ -17,7 +17,7 @@ import type { EffectiveSandbox } from '../sandbox/policy';
 import type { ProviderRunBridge } from '../agent/providerBridge';
 import { loadHarness } from './index';
 import { newTranslateContext, translatePart } from './translate';
-import type { HarnessSession, HarnessToolApproval } from './types';
+import type { HarnessAdapterFlags, HarnessSession, HarnessToolApproval } from './types';
 
 /** Everything one harness run needs, resolved up front. */
 export interface HarnessRunSpec {
@@ -96,6 +96,29 @@ export class HarnessRuntime {
       );
     }
 
+    // Built-in tool keys belong to the ADAPTER, and `validateToolNames` throws
+    // `NoSuchToolError` at construction on any it does not recognise — so an
+    // unrecognised name here crashes the run before its first turn instead of
+    // just failing to filter. Validate against the adapter's own key set and
+    // drop the rest, so a stale name degrades to "not filtered" and says so.
+    const flags = harness as HarnessAdapterFlags;
+    const builtinKeys = flags.builtinTools ? Object.keys(flags.builtinTools) : null;
+    let inactiveTools = spec.inactiveTools;
+    if (inactiveTools && builtinKeys) {
+      const known = new Set(builtinKeys);
+      const dropped = inactiveTools.filter((t) => !known.has(t));
+      if (dropped.length > 0) {
+        inactiveTools = inactiveTools.filter((t) => known.has(t));
+        bridge.diag(
+          'lifecycle',
+          'warning',
+          'Ignored unknown built-in tool names',
+          `${dropped.join(', ')} — not exposed by ${spec.harnessId}; those tools stay enabled.`,
+        );
+      }
+      if (inactiveTools.length === 0) inactiveTools = undefined;
+    }
+
     const agent = new HarnessAgent({
       harness,
       sandbox: this.sandboxProvider,
@@ -105,7 +128,7 @@ export class HarnessRuntime {
       // one-shot resume-delta semantics.
       instructions: spec.instructions,
       stopWhen: stepCountIs(spec.maxTurns),
-      inactiveTools: spec.inactiveTools,
+      inactiveTools,
       toolApproval: spec.toolApproval,
       sandboxConfig: {
         // Lands the session ON the worktree rather than in a subdirectory of

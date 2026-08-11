@@ -2638,7 +2638,13 @@ export class AgentManager {
       onToolUse: (id, name, input, parentCallId) =>
         this.onToolUse(sessionId, id, name, input, parentCallId),
       onToolResult: (id, status, output) => this.onToolResult(sessionId, id, status, output),
-      onInit: (token) => this.rememberProviderSession(sessionId, 'anthropic', token),
+      // Deliberately inert on this path. The harness's resume token is a
+      // structured `HarnessAgentResumeSessionState` object obtained from
+      // `session.detach()`/`stop()` — NOT anything the stream carries — and it
+      // must be stored under its own provider key so it can never collide with
+      // the legacy Claude SDK row. Until that lands, storing nothing is
+      // correct; storing the wrong thing corrupted the legacy path's resume.
+      onInit: () => undefined,
       onResult: (ok, text) =>
         this.recordRunResult(sessionId, {
           ok,
@@ -2712,7 +2718,13 @@ export class AgentManager {
         maxTurns: agent.maxTurns,
         instructions: injectedContext,
         // The web tools are the one capability a setting removes outright.
-        inactiveTools: agent.webSearch ? undefined : ['webSearch', 'webFetch'],
+        // Built-in tool keys are the adapter's OWN identifiers and are mostly
+        // native-cased (`WebFetch`, not `webFetch`); only seven are lowercase
+        // common names. `validateToolNames` THROWS on an unknown key, so a
+        // guessed literal here crashed every run with web search turned off
+        // before its first turn. HarnessRuntime validates these against the
+        // adapter's real key set and drops what it does not recognise.
+        inactiveTools: agent.webSearch ? undefined : ['webSearch', 'WebFetch'],
         toolApproval: makeHarnessToolApproval({
           canUseTool: (name, input, ctx) =>
             canUseTool(name, input, ctx) as Promise<{
@@ -2730,7 +2742,12 @@ export class AgentManager {
         }),
         sandbox,
         mcpServers,
-        resumeFrom: this.loadProviderSession(sessionId, 'anthropic') ?? undefined,
+        // No resume yet. `createSession({resumeFrom})` requires a structured
+        // `{type:'resume-session', specificationVersion, harnessId, data}` and
+        // THROWS on anything else, so passing the legacy row's opaque string
+        // failed every second prompt. A fresh conversation per run is a
+        // degradation; an error on every second prompt is a broken feature.
+        resumeFrom: undefined,
         workDir,
         debug: agent.harness.debug,
         abort,

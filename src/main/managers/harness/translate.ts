@@ -161,10 +161,12 @@ export function translatePart(
         ctx.usage = usage;
         bridge.onUsage?.({});
       }
-      if (!ctx.sessionId && part.response?.id) {
-        ctx.sessionId = part.response.id;
-        bridge.onInit(part.response.id);
-      }
+      // `response.id` is the per-REQUEST id, not a session token — persisting
+      // it as a resume handle stored garbage under the legacy provider key and
+      // corrupted the direct-SDK path's own resume row. The harness's real
+      // resume state is a structured object returned by
+      // `session.detach()`/`stop()`, which the runtime owns; nothing in the
+      // stream carries it. So this branch reports usage and nothing else.
       return;
     }
 
