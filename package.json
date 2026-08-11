@@ -16,7 +16,8 @@
     "gen:notes": "node scripts/gen-release-notes.mjs",
     "gen:installer": "node scripts/gen-installer-assets.mjs",
     "gen:appx": "node scripts/gen-appx-assets.mjs",
-    "lint": "eslint --ext .ts,.tsx ."
+    "lint": "eslint --ext .ts,.tsx .",
+    "check:unions": "node scripts/check-unions.mjs"
   },
   "repository": {
     "type": "git",
