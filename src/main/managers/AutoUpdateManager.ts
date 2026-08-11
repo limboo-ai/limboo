@@ -98,6 +98,18 @@ export function isQuittingForUpdate(): boolean {
   return quittingForUpdate;
 }
 
+/**
+ * True when a semver string carries a prerelease suffix (`1.4.0-beta.1`).
+ *
+ * The one place this is decided. It matches `channelForTag` in
+ * `shared/release.ts` in spirit — a suffix means "not a full release" — but works
+ * on a bare version rather than a tag, because that is what `app.getVersion()`
+ * and electron-updater's `UpdateInfo` both give us.
+ */
+function isPrereleaseVersion(version: string): boolean {
+  return /^\d+\.\d+\.\d+-/.test(version.trim());
+}
+
 /** Why the updater is inactive, in words the user can act on. */
 type DisabledReason = string;
 
@@ -156,7 +168,15 @@ export class AutoUpdateManager {
       // Drop verbose debug chatter (electron-updater calls this a lot).
       debug: (m: unknown) => void m,
     };
-    updater.autoDownload = this.settings.getAll().updates.autoDownload;
+    // Auto-download is the user's preference AND a channel decision. On the beta
+    // channel it is forced off: an unreleased build should be a per-version
+    // choice, not something a background preference decides. See
+    // `autoDownloadFor`.
+    updater.autoDownload = this.autoDownloadFor(this.settings.getAll());
+    // Prereleases are only ever offered on the beta channel. electron-updater's
+    // GitHub provider skips them entirely unless this is set, which is exactly
+    // the behaviour a stable install should have.
+    updater.allowPrerelease = this.settings.getAll().updates.channel === 'beta';
     // Install-on-quit is right for the formats electron-updater can apply
     // unattended (NSIS, Squirrel.Mac, AppImage) and catastrophic for the Linux
     // package formats: its quit handler runs the whole privileged install
@@ -174,10 +194,32 @@ export class AutoUpdateManager {
 
     this.wireEvents();
 
-    // Re-tune auto-download live as the user flips the preference.
+    // Re-tune live as the user flips either preference. Switching channel also
+    // re-checks, because the answer to "is there an update" genuinely changed.
+    let lastChannel = this.settings.getAll().updates.channel;
     this.settings.onChange((s: AppSettings) => {
-      updater.autoDownload = s.updates.autoDownload;
+      updater.autoDownload = this.autoDownloadFor(s);
+      updater.allowPrerelease = s.updates.channel === 'beta';
+      if (s.updates.channel !== lastChannel) {
+        lastChannel = s.updates.channel;
+        this.emit({ channel: s.updates.channel });
+        void this.check();
+      }
     });
+  }
+
+  /**
+   * Whether electron-updater may fetch an update without being asked.
+   *
+   * The beta channel forces this OFF regardless of the user's preference. A
+   * prerelease is not yet released and may be broken, so which one to install is
+   * a decision worth making per version — the strip offers a link and waits. A
+   * beta install still updates normally once running, because choosing the
+   * channel was already the consent.
+   */
+  private autoDownloadFor(s: AppSettings): boolean {
+    if (s.updates.channel === 'beta') return false;
+    return s.updates.autoDownload;
   }
 
   /** Begin the initial check + hourly poll, gated on the user's autoCheck pref. */
@@ -376,15 +418,29 @@ export class AutoUpdateManager {
       // A surviving marker for this same version means the previous download was
       // interrupted — resume it rather than treat it as a fresh start.
       const resuming = this.readMarker()?.version === info.version;
-      this.emit({ stage: 'available', version: info.version, notes: releaseNotes(info), resuming });
+      const prerelease = isPrereleaseVersion(info.version);
+      this.emit({
+        stage: 'available',
+        version: info.version,
+        notes: releaseNotes(info),
+        resuming,
+        prerelease,
+      });
       this.notifications.notify({
-        title: 'Update available',
-        body: `Limboo ${info.version} is available to download.`,
+        title: prerelease ? 'Beta update available' : 'Update available',
+        body: prerelease
+          ? `Limboo ${info.version} is available as a beta — open Limboo to review it.`
+          : `Limboo ${info.version} is available to download.`,
       });
       // Auto-resume a partial even when the user has NOT enabled auto-start of
       // fresh downloads ("resume, not start"). When autoDownload is on,
       // electron-updater resumes from its cache on its own.
-      if (resuming && !updater.autoDownload) void this.download();
+      //
+      // A PRERELEASE is never resumed automatically. The whole point of the beta
+      // channel's manual gate is that each unreleased build is a deliberate
+      // choice; silently continuing a partial download would make the previous
+      // choice apply to a version the user has not seen.
+      if (resuming && !updater.autoDownload && !prerelease) void this.download();
     });
     updater.on('update-not-available', () => {
       this.emit({ stage: 'not-available' });
@@ -453,10 +509,16 @@ export class AutoUpdateManager {
 
   /** Merge a transition into the status and push the full object to renderers. */
   private emit(patch: Partial<UpdateStatus>): void {
+    const currentVersion = app.getVersion();
     this.status = {
       ...this.status,
       ...patch,
-      currentVersion: app.getVersion(),
+      currentVersion,
+      // Stamped on EVERY transition rather than at the sites that happen to know
+      // them, so the renderer can phrase any stage correctly without reading
+      // settings or parsing a version itself.
+      channel: this.settings.getAll().updates.channel,
+      runningPrerelease: isPrereleaseVersion(currentVersion),
     };
     // A new check supersedes any stale error/version once it resolves.
     if (patch.stage === 'not-available' || patch.stage === 'checking') {

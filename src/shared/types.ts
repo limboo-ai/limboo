@@ -769,6 +769,20 @@ export interface AppSettings {
      * Any mismatch with the running version opens the tab exactly once.
      */
     lastSeenVersion: string;
+    /**
+     * Which releases this install is offered.
+     *
+     * `stable` sees only full releases. `beta` additionally sees prereleases —
+     * tags carrying a suffix (`v1.4.0-beta.1`), which every publisher already
+     * marks as a GitHub prerelease.
+     *
+     * A beta offer is NEVER auto-downloaded, whatever {@link autoDownload} says.
+     * An unreleased build is a decision the user should make per version, not one
+     * a background preference makes for them — so on this channel the update
+     * strip offers a link and waits. Once a beta IS installed it updates like any
+     * other build, because at that point the user has already chosen the channel.
+     */
+    channel: 'stable' | 'beta';
   };
   /**
    * Voice subsystem — speech is another input/output modality for the SAME
@@ -1143,6 +1157,25 @@ export interface UpdateStatus {
    * the app cannot replace, and so on. Written for the user, shown verbatim.
    */
   disabledReason?: string;
+  /**
+   * The channel this install is subscribed to, echoed so the renderer never has
+   * to read settings to know how to phrase an offer.
+   */
+  channel?: 'stable' | 'beta';
+  /**
+   * True when the OFFERED version is a prerelease (its tag carries a suffix).
+   *
+   * Drives two things the UI must not infer: the warning that the build is not
+   * yet released and may contain bugs, and the fact that it is offered as a
+   * link to click rather than fetched in the background.
+   */
+  prerelease?: boolean;
+  /**
+   * True when the RUNNING build is itself a prerelease. Independent of
+   * {@link prerelease}, which describes the offer — a beta install can be
+   * offered a stable release, and both facts are displayed differently.
+   */
+  runningPrerelease?: boolean;
 }
 
 /**

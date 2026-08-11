@@ -435,6 +435,7 @@ export const SETTINGS_CATALOG: SettingsCategory[] = [
       { id: 'updateCheck', label: 'Check for updates', keywords: ['check', 'now', 'refresh'] },
       { id: 'updateAutoCheck', label: 'Check automatically', keywords: ['auto', 'background', 'startup'] },
       { id: 'updateAutoDownload', label: 'Download automatically', keywords: ['auto', 'download', 'background'] },
+      { id: 'updateChannel', label: 'Update channel', keywords: ['channel', 'beta', 'stable', 'prerelease', 'pre-release', 'early', 'testing', 'insider'] },
     ],
     Panel: UpdatesPanel,
   },

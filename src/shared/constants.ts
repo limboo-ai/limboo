@@ -1323,6 +1323,9 @@ export const DEFAULT_SETTINGS: AppSettings = {
     // Empty on a fresh install: the very first launch shows the notes for the
     // version it shipped with, which is the correct introduction to the app.
     lastSeenVersion: '',
+    // Stable by default: a prerelease is opt-in, never the path of least
+    // resistance.
+    channel: 'stable',
   },
   voice: {
     enabled: true,

@@ -584,6 +584,9 @@ export class SettingsManager {
 
     merged.updates.autoCheck = !!merged.updates.autoCheck;
     merged.updates.autoDownload = !!merged.updates.autoDownload;
+    // Anything but the literal 'beta' falls back to stable. A malformed value
+    // must never widen what this install is offered.
+    merged.updates.channel = merged.updates.channel === 'beta' ? 'beta' : 'stable';
     // Persisted user data, so never trusted verbatim: it is compared against
     // `app.getVersion()` and rendered, and a hand-edited settings.json must not
     // be able to put an unbounded string into either path.

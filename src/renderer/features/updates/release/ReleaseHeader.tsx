@@ -44,6 +44,27 @@ export function ReleaseHeader({
         </span>
       </div>
 
+      {/* A prerelease says so before anything else on the page.
+          This is the one place a bordered block is warranted despite the
+          no-chrome rule: it separates a WARNING from the release's own prose,
+          which is exactly the "unrelated content earns a border" test. Still
+          words, not a coloured pill — the text carries the meaning, so it
+          survives a screenshot, a colour-blind reader and the Markdown export. */}
+      {manifest.channel !== 'stable' && (
+        <div className="rounded-md border border-warning/40 bg-warning/5 px-3 py-2">
+          <p className="text-[12px] font-medium text-warning">
+            {CHANNEL_LABEL[manifest.channel]} build — not yet released
+          </p>
+          <p className="mt-0.5 max-w-3xl text-[12px] leading-relaxed text-muted">
+            This version is published for testing ahead of a stable release. It may contain
+            bugs, unfinished features, and changes that are reverted before release. Settings
+            and session data are migrated forward but not back, so a build made after this one
+            may not read data this one wrote. Keep a stable install if you rely on Limboo for
+            work you cannot repeat.
+          </p>
+        </div>
+      )}
+
       {manifest.summary && (
         <p className="max-w-3xl text-[13px] leading-relaxed text-muted">
           {/* The summary is rendered as TEXT, not Markdown: it is one paragraph

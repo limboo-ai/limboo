@@ -7,7 +7,7 @@ import { RefreshCw } from 'lucide-react';
 import { useSettingsStore } from '@/renderer/stores/useSettingsStore';
 import { useUpdateStore } from '@/renderer/stores/useUpdateStore';
 import { UpdateAction } from '@/renderer/features/updates/UpdateAction';
-import { Section, Field, Toggle } from '../controls';
+import { Section, Field, SegmentedControl, Toggle } from '../controls';
 
 const STAGE_LABEL: Record<string, string> = {
   idle: 'Up to date',
@@ -30,6 +30,7 @@ export function UpdatesPanel() {
   const install = useUpdateStore((s) => s.install);
 
   const disabled = status.stage === 'disabled';
+  const beta = settings.updates.channel === 'beta';
 
   return (
     <Section
@@ -52,8 +53,16 @@ export function UpdatesPanel() {
               status.stage === 'disabled' && status.disabledReason
               ? status.disabledReason
               : status.version && (status.stage === 'available' || status.stage === 'downloaded')
-                ? `Limboo ${status.version} ${status.stage === 'downloaded' ? 'downloaded' : 'available'}`
-                : `Current version ${status.currentVersion || '—'}`
+                ? `Limboo ${status.version}${status.prerelease ? ' (beta)' : ''} ${
+                    status.stage === 'downloaded' ? 'downloaded' : 'available'
+                  }`
+                : // A prerelease build says so here, because "1.4.0-beta.1"
+                  // alone does not tell a user they are off the stable channel.
+                  status.runningPrerelease
+                  ? `Current version ${status.currentVersion || '—'} · beta — not a released build`
+                  : `Current version ${status.currentVersion || '—'}${
+                      status.channel === 'beta' ? ' · subscribed to beta updates' : ''
+                    }`
         }
       >
         <div className="flex items-center gap-2">
@@ -105,12 +114,32 @@ export function UpdatesPanel() {
       <Field
         id="updateAutoDownload"
         label="Download automatically"
-        hint="Download an available update in the background; otherwise wait for you."
+        hint={
+          beta
+            ? 'Download an available update in the background. Ignored on the beta channel — a beta is always offered as a link you choose to click, never fetched in advance.'
+            : 'Download an available update in the background; otherwise wait for you.'
+        }
       >
         <Toggle
           checked={settings.updates.autoDownload}
-          disabled={disabled}
+          disabled={disabled || beta}
           onChange={(autoDownload) => void update({ updates: { autoDownload } })}
+        />
+      </Field>
+
+      <Field
+        id="updateChannel"
+        label="Update channel"
+        hint="Stable receives released versions only. Beta additionally offers prereleases — builds that are not yet released, are still being tested, and may contain bugs or lose data. A beta is never downloaded automatically: you are shown its release notes and choose. Switching back to Stable stops new beta offers; it does not downgrade the build you are running."
+      >
+        <SegmentedControl
+          value={settings.updates.channel}
+          disabled={disabled}
+          options={[
+            { value: 'stable', label: 'Stable' },
+            { value: 'beta', label: 'Beta' },
+          ]}
+          onChange={(channel) => void update({ updates: { channel } })}
         />
       </Field>
     </Section>

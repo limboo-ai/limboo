@@ -22,6 +22,141 @@ export interface ReleaseNotesEntry {
 /** Newest first. */
 export const RELEASE_NOTES: ReleaseNotesEntry[] = [
   {
+    version: '1.18.0-beta.1',
+    date: '2026-08-12',
+    markdown: `The first beta. Two bugs that made Cursor sessions unusable are fixed, agents can
+now run through a swappable harness layer instead of one hardcoded integration,
+and Settings opens as a workspace tab. This build is published for testing ahead
+of a stable release — read the warning at the top of these notes before
+installing it over a working copy.
+
+### Fixed
+
+- **Cursor sessions denied every tool call.** The hook runner read the event name
+  from a single payload key that the CLI does not always send. With no event name
+  it could not identify what was being asked, so it failed closed — which is the
+  correct posture, but it meant every read, search, shell command and edit was
+  refused, and nothing on screen said why. The event name now travels in the
+  runner's own arguments, where Limboo writes it, with five payload spellings as
+  fallbacks, and a genuine failure now names the missing key in the timeline
+  instead of denying silently.
+- **Four more ways a Cursor run could stall.** The permission helper could boot as
+  a GUI process instead of a script and then hang for the full ten-minute hook
+  timeout on every single tool call; nothing timed out while it waited for input;
+  a successful approval could be truncated on its way out and be read as a
+  refusal; and the sandbox denied the helper access to its own communication
+  socket. Each is fixed, and each failure now reports what happened.
+- **"Prompt me for everything" meant "deny everything".** Tightening the approval
+  policy withdrew the rule that let Cursor read files at all. Because the only way
+  to ask for permission on that path is the hook bridge, a session with hooks
+  unavailable was left unable to read or to ask. Reads and inspection commands
+  now keep their floor regardless of the policy; the permission gate still runs
+  on top of it.
+- **A Cursor session could stream as Claude Code.** The model was checked for
+  character shape rather than for which provider serves it, and every Cursor
+  model id passes that check — so a mis-routed model was handed to the Claude
+  integration and ran there, with no error anywhere. Routing now has an explicit
+  "unknown" answer, dispatch is exhaustive, and a model nothing claims fails by
+  name instead of quietly running somewhere.
+- **Commit-message generation always used Claude.** A Cursor-only user pressing
+  the button started a Claude run and, with Claude not installed, was told to sign
+  in to a product they were not using. It now follows the agent you selected, and
+  the button is no longer disabled for Cursor users.
+- **Searching Settings missed several controls.** Some settings were never
+  registered in the search index, so typing their name found nothing. Fixed for
+  the Agent and Runtime categories, with a check that fails the build if it
+  happens again.
+- **Absolute paths inside your project were treated as escapes.** Cursor's CLI
+  writes full paths by default, and a full path to a file inside your own worktree
+  was classified as leaving it — so ordinary reads were refused during planning.
+
+### Added
+
+- **Agents can run through a harness layer.** Limboo now drives agents through
+  Vercel AI SDK 7's harness abstraction as well as its own integrations, so a new
+  agent runtime becomes an adapter rather than a new code path. Pi is available;
+  Claude Code runs through it behind an opt-in switch. Everything above the
+  adapter — the conversation, permissions, memory, search, the work graph, the
+  runtime panel — is unchanged, because they all sit on one seam.
+- **A sandbox that runs on your own worktree.** Every shipped sandbox for that
+  abstraction is either a cloud service or a private filesystem, and neither
+  fits: your repository must not leave the machine, and the agent has to edit the
+  actual files that git, the diff viewer and checkpoints are watching. Limboo has
+  its own, rooted at the session's worktree, with the same containment rules the
+  rest of the app enforces — nothing outside the worktree, and never the app's own
+  database, settings or secrets.
+- **Settings opens as a workspace tab.** An icon beside the close button promotes
+  the dialog into an editor tab, the way a diff opens. Both surfaces render the
+  same panels, so nothing drifts. The tab has no Cancel: settings apply as you
+  change them, exactly as they already did.
+- **An update channel you can choose.** Settings › Updates now offers Stable or
+  Beta. A beta is never downloaded in the background — you are shown its release
+  notes and decide.
+
+### Changed
+
+- **Settings panels are flat rows.** The Agent and MCP categories wrapped groups
+  of settings in bordered panels while every other category used plain labelled
+  rows, which made them look like a different application. The boxes are gone.
+  Every input, button and select now uses one corner radius.
+- **The Agent panel is reorganised.** Providers became Harnesses and now reads as
+  one list instead of two hand-built cards. Connection and reliability moved to
+  Runtime, where the rest of the supervision settings live. A section that
+  contained no settings at all was removed, and the remainder is ordered by the
+  decision you are making: which agent, which model, what it may do, what
+  contains it.
+- **The model hint stopped being wrong.** It named a default the app had not used
+  for several versions, because the text was typed by hand next to the value it
+  described. It is now derived from that value.
+
+### Security
+
+- **Built-in tools on the harness path are gated by Limboo.** The harness
+  abstraction has two separate approval surfaces, and the one Limboo had wired
+  covers only tools the host supplies — built-in file writes and shell commands
+  are governed by a different setting that defaults to allowing everything. On
+  that path an agent could have written files and run commands without Limboo's
+  permission gate. Every built-in tool call now suspends the turn and asks, using
+  the same authority, the same risk labels, the same dialogs and the same audit
+  trail as every other agent.
+- **A harness that cannot ask for permission is refused.** Rather than run it with
+  weaker enforcement, Limboo declines to start it and says so. This is not
+  theoretical: the Codex adapter reports that it cannot request approval for its
+  shell tool, so it is registered as unavailable with the reason shown rather than
+  offered and then failing.
+- **The harness setup step asks first.** Preparing a harness for its first run
+  downloads its agent CLI, which is the only time Limboo reaches the network
+  outside talking to your agent and fetching contributor avatars. The exact
+  commands are read from the adapter and shown to you for approval once, and the
+  approval is tied to those commands — if a later version changes them, you are
+  asked again. Without approval the run does not start.
+- **Credentials are passed through, never stored.** A harness receives an API key
+  only if your own environment already has one, from an explicitly named list.
+  Nothing is written to settings, accepted over the app's internal channels, put
+  on a command line, or logged. A gap in log redaction that could have printed
+  those variables is closed.
+- **Reads on the harness path cannot be gated, and the setting says so.** The
+  underlying runtime allows built-in file reads unconditionally, so
+  "auto-approve reads" has no effect there. Rather than leave a control that looks
+  like it works, the setting explains the limitation.
+
+### Known limitations
+
+- **Beta builds are not released builds.** Features may change or be removed
+  before release. Settings and session data move forward but not back, so a build
+  made after this one may not read data this one wrote. Keep a stable install for
+  work you cannot repeat.
+- **The harness path is off by default.** Claude Code and Cursor continue to run
+  through their own integrations. Turn the harness on in Settings › Agent ›
+  Harnesses if you want to try it; you will be asked to approve its setup step
+  first.
+- **A harness conversation does not resume.** Each message starts a fresh
+  conversation with the underlying runtime. The alternative failed on every second
+  message, so this is deliberate until the resume format is handled properly.
+- **Codex is unavailable.** Its adapter cannot ask for permission before running
+  shell commands. It is listed with that reason rather than hidden.`,
+  },
+  {
     version: '1.16.0',
     date: '2026-07-30',
     markdown: `A tighter follow-up to the runtime ring. The panel it opens now answers one
@@ -289,43 +424,6 @@ afterwards — without ever leaving the conversation.
   accept edits", "Keep planning" and Reject buttons sit directly on the panel
   instead of inside a tinted card, matching how the same controls already read in
   the conversation.`,
-  },
-  {
-    version: '1.13.1',
-    date: '2026-07-28',
-    markdown: `Stopping the agent mid-task no longer breaks your next message.
-
-### Fixed
-
-- **A run stopped while a tool was working would break the following message.**
-  Pressing Stop while the agent was reading a file or running a command left the
-  provider's own conversation ending on a request it never got an answer to — a
-  shape it rejects every time it is replayed. The next thing you sent failed
-  before the agent ever saw it, with a line of internal diagnostic text
-  (\`[ede_diagnostic] … stop_reason=tool_use\`) shown as the error. Stopping now
-  clears that conversation as it happens, so the next message starts clean. Your
-  transcript, activity and checkpoints are untouched and still shown.
-- **The automatic recovery for it rarely ran.** The same failure reaches the app
-  in two different forms depending on how the underlying process ends, and only
-  one of them was recognised — which is why the error appeared to come and go at
-  random. Both forms are now read from the provider's structured result rather
-  than by matching English text, so recovery is consistent. Recovery also no
-  longer requires a stored conversation to exist, so the first message in a
-  session can recover too.
-- **Internal diagnostics are no longer shown as the error.** An interrupted turn
-  now reads "The previous turn was interrupted before it finished — retrying."
-  The same applies to other run-ending conditions that previously surfaced raw
-  provider text: reaching the turn limit, an oversized prompt, an image that
-  could not be read, and a run stopped by a configured hook. Full diagnostics
-  remain in Settings › Agent › Diagnostics and the log file.
-- **Tool chips could spin forever.** A tool interrupted before it reported back
-  stayed marked as running for the rest of the session. Interrupted tools are now
-  settled when the run ends.
-- **Answering a clarification could hang after Stop.** Stopping a run released
-  pending permission prompts but not pending clarification questions.
-
-Cursor sessions get the same handling: both providers share one classifier, so an
-interrupted turn behaves and reads identically whichever agent is running.`,
   },
 ];
 

@@ -20,14 +20,30 @@
  *   output rendered as text and copied to the clipboard; it is never executed
  *   from here.
  */
-import { AlertCircle, ArrowUpCircle, Check, Copy, Download, RefreshCw, X } from 'lucide-react';
+import {
+  AlertCircle,
+  ArrowUpCircle,
+  Check,
+  Copy,
+  Download,
+  FileText,
+  RefreshCw,
+  X,
+} from 'lucide-react';
 import { useState } from 'react';
 import { CircularProgress } from '@/renderer/components/ui';
+import { useDocumentStore } from '@/renderer/stores/useDocumentStore';
+import { useSessionStore } from '@/renderer/stores/useSessionStore';
 import { useUpdateStore } from '@/renderer/stores/useUpdateStore';
 import { UpdateAction } from './UpdateAction';
+import { releaseNotesRef } from './useReleaseNotes';
 
 export function UpdateBanner() {
   const status = useUpdateStore((s) => s.status);
+  // Documents are session-scoped, so the notes can only be opened as a tab when
+  // a session exists. With none, the button is simply not offered — the strip's
+  // own subtitle already carries the warning.
+  const sessionId = useSessionStore((s) => s.selectedId);
   const dismissed = useUpdateStore((s) => s.dismissed);
   const busy = useUpdateStore((s) => s.busy);
   const check = useUpdateStore((s) => s.check);
@@ -55,6 +71,17 @@ export function UpdateBanner() {
   // retrying directly; anything else restarts from the check, since we cannot
   // assume the download itself is sound.
   const retryInstall = failed && Boolean(status.manualCommand);
+  // A prerelease offer is presented differently: it is not yet released, it was
+  // deliberately NOT downloaded in the background, and the release notes are the
+  // thing to read before deciding. `prerelease` describes the OFFER — a beta
+  // install can be offered a stable build, and that case reads as normal.
+  const betaOffer = status.stage === 'available' && status.prerelease === true;
+
+  /** Open the offered version's release notes as a workspace document. */
+  const openReleaseNotes = (version: string): void => {
+    if (!sessionId) return;
+    useDocumentStore.getState().promote(sessionId, releaseNotesRef(version));
+  };
 
   const copyCommand = (): void => {
     if (!status.manualCommand) return;
@@ -99,7 +126,9 @@ export function UpdateBanner() {
                     ? status.resuming
                       ? 'Resuming update…'
                       : 'Downloading update…'
-                    : 'Update available'}
+                    : betaOffer
+                      ? 'Beta update available'
+                      : 'Update available'}
           </span>
           <span className="truncate text-[11px] text-muted">
             {failed
@@ -110,7 +139,9 @@ export function UpdateBanner() {
                   ? `${versionLabel} — restart to finish`
                   : status.stage === 'downloading'
                     ? `${versionLabel} · ${percent}%`
-                    : `${versionLabel} is available to download`}
+                    : betaOffer
+                      ? `${versionLabel} is a beta — not yet released, and may contain bugs`
+                      : `${versionLabel} is available to download`}
           </span>
           {/* The escape hatch: when the app could not install the update itself,
               show the command that will. Read-only text — copying it is the only
@@ -131,9 +162,19 @@ export function UpdateBanner() {
               onClick={copyCommand}
             />
           )}
+          {/* Read before deciding. A prerelease is the one offer where the
+              notes are load-bearing, so they are one click away. */}
+          {betaOffer && status.version && sessionId && (
+            <UpdateAction
+              label="Release notes"
+              icon={FileText}
+              tone="secondary"
+              onClick={() => openReleaseNotes(status.version as string)}
+            />
+          )}
           {(status.stage === 'available' || failed) && (
             <UpdateAction
-              label={failed ? 'Try again' : 'Download'}
+              label={failed ? 'Try again' : betaOffer ? 'Download beta' : 'Download'}
               icon={failed ? RefreshCw : Download}
               busy={busy}
               onClick={() => void (retryInstall ? install() : failed ? check() : download())}
