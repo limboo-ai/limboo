@@ -49,7 +49,7 @@ export function SettingsNav({
               type="button"
               aria-label="Clear search"
               onClick={() => setQuery('')}
-              className="absolute right-1.5 top-1/2 flex h-5 w-5 -translate-y-1/2 items-center justify-center rounded text-faint transition-colors hover:text-fg"
+              className="absolute right-1.5 top-1/2 flex h-5 w-5 -translate-y-1/2 items-center justify-center rounded-md text-faint transition-colors hover:text-fg"
             >
               <X size={12} />
             </button>

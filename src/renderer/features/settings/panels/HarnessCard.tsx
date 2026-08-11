@@ -7,6 +7,11 @@
  * Claude row was an inline status row with a hardcoded string while Cursor was
  * a 321-line bespoke card, so the two could not look alike or stay in step.
  *
+ * Despite the name it is NOT a card: no border, no fill, no radius. Settings
+ * panels are flat lists of labelled rows, and a bordered well here was the one
+ * thing making this category look different from every other. Grouping is
+ * carried by a hairline between harnesses instead.
+ *
  * A harness with no adapter renders as "Not available" rather than being
  * hidden: this section is the DISCOVERY surface, and silently omitting a
  * harness makes "not installed" indistinguishable from "does not exist".
@@ -39,7 +44,10 @@ export function HarnessCard({
   const label = HARNESS_LABELS[harnessId] ?? harnessId;
   const provider = HARNESS_PROVIDER[harnessId] ?? 'anthropic';
   return (
-    <div className="flex flex-col gap-3 rounded-md border border-line bg-surface-2 p-3">
+    // A labelled group, not a card. Once ProviderStatusRow flattened, a border
+    // here was a card wrapping a card — and the surrounding panels are flat
+    // rows. Separation comes from the row's own spacing and the hairline below.
+    <div className="flex flex-col gap-1 border-b border-line pb-3 last:border-b-0 last:pb-0">
       <ProviderStatusRow provider={provider} name={label} statusLine={statusLine} meta={meta} />
       {children}
     </div>

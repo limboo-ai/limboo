@@ -258,7 +258,7 @@ export function CursorAuthControls() {
             />
           </Field>
           {login.phase === 'waiting-manual-url' && login.url && (
-            <div className="mx-2 flex flex-col gap-1.5 rounded-md border border-line bg-surface-2 px-2.5 py-2">
+            <div className="mx-2 flex flex-col gap-1.5 px-0.5 py-1">
               <span className="break-all font-mono text-[11px] text-muted">{login.url}</span>
               <div className="flex items-center gap-1.5">
                 <ActionButton

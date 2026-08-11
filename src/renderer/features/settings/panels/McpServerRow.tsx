@@ -124,7 +124,7 @@ export function McpServerRow({ server }: { server: McpServerInfo }) {
   const detail = server.transport === 'stdio' ? server.command : server.url;
 
   return (
-    <div className="rounded-md border border-line bg-surface-2">
+    <div className="border-b border-line last:border-b-0">
       <div className="flex items-center gap-3 px-3 py-2.5">
         <button
           type="button"
@@ -215,7 +215,7 @@ export function McpServerRow({ server }: { server: McpServerInfo }) {
                         key={t.name}
                         title={marked ? `${t.description ?? t.name} · declared read-only` : t.description}
                         className={cn(
-                          'rounded border bg-elevated px-1.5 py-0.5 font-mono text-[10px]',
+                          'rounded-md border bg-elevated px-1.5 py-0.5 font-mono text-[10px]',
                           marked ? 'border-line-strong text-fg' : 'border-line text-muted',
                         )}
                       >

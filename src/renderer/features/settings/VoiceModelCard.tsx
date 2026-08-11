@@ -136,11 +136,11 @@ export function VoiceModelCard({ model }: { model: VoiceModelState }) {
           {/* STT + VAD are what the mic needs to hear you; TTS only powers
               spoken replies. Tag them so it's obvious which to install. */}
           {model.kind === 'tts' ? (
-            <span className="shrink-0 rounded border border-line px-1.5 py-px text-[10px] text-faint">
+            <span className="shrink-0 rounded-md border border-line px-1.5 py-px text-[10px] text-faint">
               Optional
             </span>
           ) : (
-            <span className="shrink-0 rounded border border-line-strong px-1.5 py-px text-[10px] text-muted">
+            <span className="shrink-0 rounded-md border border-line-strong px-1.5 py-px text-[10px] text-muted">
               Required for voice input
             </span>
           )}

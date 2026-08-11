@@ -103,7 +103,7 @@ export function McpPanel() {
         </div>
 
         {adding && (
-          <div className="rounded-md border border-line-strong bg-surface-2 p-3">
+          <div className="border-y border-line py-3">
             <McpServerForm onCancel={() => setAdding(false)} onSubmit={onAdd} />
           </div>
         )}
