@@ -10,8 +10,15 @@ import type { ActivityTab, AppSettings, WorkspaceConfig } from './types';
  *
  * v28 — `git.avatars` added. The deep-merge supplies the default, so there is
  * no data migration; the bump exists so the new key's presence is dated.
+ *
+ * v30 — `agent.harness` added (harness id, the legacy-SDK rollback, the pinned
+ * sandbox provider, adapter debug). The deep-merge supplies the defaults, so
+ * again no data migration. **29 is deliberately skipped**: installs in the
+ * wild already carry a settings.json stamped 29 from a parallel build, and
+ * reusing the number would make "already migrated" and "written by something
+ * else" indistinguishable.
  */
-export const SETTINGS_VERSION = 28;
+export const SETTINGS_VERSION = 30;
 
 /**
  * Every valid right-drawer tab id, in display order. The renderer's
@@ -1030,6 +1037,15 @@ export const DEFAULT_SETTINGS: AppSettings = {
       readOnlyAttachments: true,
       failIfUnavailable: false,
       providerOverride: 'auto',
+    },
+    harness: {
+      id: 'claude-code',
+      // Ships OFF. The harness path lands behind this switch so it can be
+      // exercised without changing a single existing install's behaviour;
+      // flipping the default is its own deliberate step.
+      legacyClaudeSdk: true,
+      sandboxProvider: 'local-worktree',
+      debug: false,
     },
     hookEngine: {
       enabled: true,

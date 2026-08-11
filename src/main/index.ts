@@ -38,6 +38,9 @@ import { AttachmentManager } from './managers/attachments/AttachmentManager';
 import { SecretStore } from './secrets/SecretStore';
 import { CursorAuthManager } from './managers/cursor/CursorAuthManager';
 import { CursorRuntime } from './managers/cursor/CursorRuntime';
+import { HarnessRuntime } from './managers/harness/HarnessRuntime';
+import { LocalWorktreeSandboxProvider } from './managers/harness/sandbox/LocalWorktreeSandbox';
+import { resolveSandboxConfig } from './managers/sandbox/policy';
 import { McpManager } from './managers/mcp/McpManager';
 import { WorkGraphManager } from './managers/graph/WorkGraphManager';
 import { RuntimeTelemetryManager } from './managers/telemetry/RuntimeTelemetryManager';
@@ -108,6 +111,8 @@ function bootstrap(): void {
   let voice: VoiceManager;
   let cursorAuth: CursorAuthManager;
   let cursorRuntime: CursorRuntime;
+  let harnessRuntime: HarnessRuntime;
+  let harnessSandbox: LocalWorktreeSandboxProvider;
   let mcp: McpManager;
   let workGraph: WorkGraphManager;
   let runtime: RuntimeTelemetryManager;
@@ -375,6 +380,33 @@ function bootstrap(): void {
       const state = worktrees.getRepoConfigState(sessionId);
       return !state.config || state.acked;
     });
+    // AI SDK harness runs. The sandbox provider takes RESOLVERS, not managers
+    // (the setSessionRootResolver idiom above), so it stays a leaf that cannot
+    // reach back into the app — and it is rooted in the session's real
+    // worktree, which is what keeps the repository on this machine.
+    const sessionAttachmentsDir = (sessionId: string): string | undefined => {
+      try {
+        return attachments.hasAny(sessionId) ? attachments.sessionDir(sessionId) : undefined;
+      } catch {
+        return undefined;
+      }
+    };
+    harnessSandbox = new LocalWorktreeSandboxProvider({
+      resolveRoot: (sessionId) => worktrees.resolveSessionRoot(sessionId),
+      resolveSandbox: (sessionId, cwd) =>
+        resolveSandboxConfig(settings.getAll().agent.sandbox, {
+          cwd,
+          provider: 'anthropic',
+          attachmentsDir: sessionAttachmentsDir(sessionId),
+        }),
+      attachmentsDirFor: (sessionId) => sessionAttachmentsDir(sessionId),
+      diag: (severity, label, detail) => {
+        if (severity === 'error') logger.error(`[harness] ${label}`, detail ?? '');
+        else logger.info(`[harness] ${label}`, detail ?? '');
+      },
+    });
+    harnessRuntime = new HarnessRuntime(harnessSandbox);
+    agent.setHarnessRuntime(harnessRuntime, harnessSandbox);
     // Cursor executable override + persisted model routing, applied before
     // agent.start() so the first probe/send already sees them. The settings
     // listener re-probes when the user changes the override path.
@@ -641,6 +673,10 @@ function bootstrap(): void {
     safeDispose('agent', () => agent?.cleanup());
     safeDispose('cursorRuntime', () => cursorRuntime?.dispose());
     safeDispose('cursorAuth', () => cursorAuth?.dispose());
+    // Parks harness sessions and releases reserved ports. Deletes nothing —
+    // the "sandbox root" is the user's worktree (see LocalWorktreeSandbox).
+    safeDispose('harnessRuntime', () => void harnessRuntime?.dispose());
+    safeDispose('harnessSandbox', () => void harnessSandbox?.dispose());
     safeDispose('mcp', () => mcp?.dispose());
     safeDispose('fileSystem', () => void fileSystem?.dispose());
     safeDispose('proxy', () => proxy?.stop());

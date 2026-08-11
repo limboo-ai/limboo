@@ -334,6 +334,35 @@ export interface AppSettings {
        */
       providerOverride: 'auto' | 'claude-native' | 'cursor-native';
     };
+    /**
+     * Which agent HARNESS runs the selected model, and how.
+     *
+     * A harness is *how* a model runs; the provider is *who* serves it. They
+     * are not the same axis: Anthropic models can run through either the AI
+     * SDK's `claude-code` harness or Limboo's direct Claude Agent SDK path,
+     * while Cursor has no AI SDK adapter at all and stays a native runtime.
+     */
+    harness: {
+      /** Registry id (`main/managers/agent/harnessRegistry.ts`). */
+      id: string;
+      /**
+       * Run Anthropic models through the direct Claude Agent SDK instead of
+       * the harness. The documented rollback while the harness path settles —
+       * the harness packages are experimental and exact-pinned.
+       */
+      legacyClaudeSdk: boolean;
+      /**
+       * Sandbox provider for harness runs. `local-worktree` is the ONLY
+       * permitted value and `SettingsManager.normalize` re-asserts it: a
+       * remote sandbox would ship the user's repository off the machine,
+       * which CLAUDE.md §1 forbids. The field exists so that constraint is
+       * explicit and enforced rather than merely implied by there being no
+       * alternative wired up.
+       */
+      sandboxProvider: 'local-worktree';
+      /** Forward adapter log lines into the Agent Console. */
+      debug: boolean;
+    };
   };
   /**
    * Git integration preferences. Local-only — no network, no tokens. Commit

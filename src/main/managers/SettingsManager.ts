@@ -17,6 +17,7 @@ import {
   CURSOR_LIMITS,
   CURSOR_MODEL_ID_RE,
   DEFAULT_SETTINGS,
+  HARNESS_LABELS,
   DOCUMENT_LIMITS,
   FONT_SCALE_LIMITS,
   GIT_LIMITS,
@@ -297,6 +298,19 @@ export class SettingsManager {
       )
       .map((c) => c.trim())
       .slice(0, SANDBOX_LIMITS.maxExcludedCommands);
+
+    // Harness selection. `sandboxProvider` is pinned to the single local value
+    // and RE-ASSERTED here rather than merely defaulted: this is the
+    // enforcement point for "the repository never leaves the machine"
+    // (CLAUDE.md §1), so a hand-edited settings.json naming a remote sandbox
+    // must be corrected, not honoured.
+    const harness = merged.agent.harness;
+    if (typeof harness.id !== 'string' || !HARNESS_LABELS[harness.id]) {
+      harness.id = DEFAULT_SETTINGS.agent.harness.id;
+    }
+    harness.sandboxProvider = 'local-worktree';
+    harness.legacyClaudeSdk = !!harness.legacyClaudeSdk;
+    harness.debug = !!harness.debug;
 
     // Hook Engine — coerce the toggle and whitelist the audit-verbosity enum.
     // `enabled` only gates emission of observability; it can never weaken the

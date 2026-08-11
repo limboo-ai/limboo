@@ -1,0 +1,142 @@
+/**
+ * Hand-written STRUCTURAL declarations for the slice of Vercel AI SDK 7 this
+ * app touches.
+ *
+ * WHY NOT `import type { HarnessAgent } from '@ai-sdk/harness/agent'`:
+ * `import/no-unresolved` is an ESLint ERROR in this repo and there is no TS
+ * resolver plugin (CLAUDE.md §2), while TypeScript is pinned at ~4.5 with
+ * `moduleResolution: node`, which cannot read an `exports` map. The harness
+ * packages are exports-map-only ESM, so a direct type import fails
+ * `npm run lint` — the exact command CLAUDE.md names as the verifier. Declaring
+ * the surface here keeps the lint rule tight (rather than widening its ignore
+ * list, which is what makes the rule useless over time) and costs nothing at
+ * runtime, since the modules are reached through `loadHarness()`.
+ *
+ * The second reason is containment. These packages are documented as
+ * experimental with breaking changes expected between releases, and they are
+ * exact-pinned for that reason. When a bump changes a shape, it changes HERE
+ * and in `translate.ts`, and nowhere else in the app.
+ *
+ * Only what is actually used is modelled. Unknown members are deliberately
+ * absent rather than typed `any`, so reaching for something unverified is a
+ * compile error and not a runtime surprise.
+ */
+
+/** A single frame of `agent.stream()`. Structural and deliberately loose. */
+export interface HarnessStreamPart {
+  type: string;
+  /** text-delta / reasoning-delta payload. */
+  text?: string;
+  delta?: string;
+  /** Tool-call identity and payload. */
+  toolCallId?: string;
+  toolName?: string;
+  input?: unknown;
+  output?: unknown;
+  errorText?: string;
+  error?: unknown;
+  /** Step/finish accounting. */
+  finishReason?: string;
+  usage?: HarnessUsage;
+  totalUsage?: HarnessUsage;
+  response?: { id?: string; modelId?: string };
+  /** Where a parent-call id would ride, if the adapter forwards one. */
+  providerMetadata?: Record<string, Record<string, unknown>>;
+  [key: string]: unknown;
+}
+
+export interface HarnessUsage {
+  inputTokens?: number;
+  outputTokens?: number;
+  totalTokens?: number;
+  reasoningTokens?: number;
+  cachedInputTokens?: number;
+  [key: string]: unknown;
+}
+
+/** Resolution of `toolApproval` — the coarse map/callback surface. */
+export type HarnessApprovalDecision =
+  | { approved: true; input?: unknown }
+  | { approved: false; reason?: string };
+
+export interface HarnessApprovalRequest {
+  toolName: string;
+  input?: unknown;
+  toolCallId?: string;
+  abortSignal?: AbortSignal;
+}
+
+export type HarnessToolApproval = (
+  req: HarnessApprovalRequest,
+) => Promise<HarnessApprovalDecision>;
+
+/** A live session; the framework owns its lifecycle across turns. */
+export interface HarnessSession {
+  readonly sessionId?: string;
+  stop?(): PromiseLike<void>;
+  destroy?(): PromiseLike<void>;
+  detach?(): PromiseLike<unknown>;
+  suspendTurn?(): PromiseLike<unknown>;
+  hasUnfinishedTurn?(): boolean;
+}
+
+export interface HarnessStreamResult {
+  stream: AsyncIterable<HarnessStreamPart>;
+}
+
+export interface HarnessGenerateResult {
+  text?: string;
+  finishReason?: string;
+  usage?: HarnessUsage;
+}
+
+/** The subset of `new HarnessAgent({...})` options this app sets. */
+export interface HarnessAgentOptions {
+  harness: unknown;
+  sandbox: unknown;
+  id?: string;
+  instructions?: string;
+  stopWhen?: unknown;
+  tools?: Record<string, unknown>;
+  activeTools?: string[];
+  inactiveTools?: string[];
+  permissionMode?: string;
+  toolApproval?: HarnessToolApproval;
+  sandboxConfig?: {
+    workDir?: string;
+    bootstrapHash?: string;
+    onBootstrap?: (ctx: unknown) => Promise<void>;
+    onSession?: (ctx: unknown) => Promise<void>;
+  };
+  debug?: boolean;
+  onLog?: (line: unknown) => void;
+}
+
+export interface HarnessAgentLike {
+  createSession(config?: {
+    sessionId?: string;
+    resumeFrom?: unknown;
+    continueFrom?: unknown;
+  }): PromiseLike<HarnessSession>;
+  stream(opts: {
+    session: HarnessSession;
+    prompt?: unknown;
+    messages?: unknown;
+  }): PromiseLike<HarnessStreamResult>;
+  generate(opts: {
+    session: HarnessSession;
+    prompt?: unknown;
+    messages?: unknown;
+  }): PromiseLike<HarnessGenerateResult>;
+}
+
+export type HarnessAgentCtor = new (options: HarnessAgentOptions) => HarnessAgentLike;
+
+/** What `loadHarness()` resolves to. */
+export interface LoadedHarness {
+  HarnessAgent: HarnessAgentCtor;
+  /** The adapter instance passed as `harness`. */
+  adapter: unknown;
+  /** `stepCountIs(n)` from `ai`, used for `stopWhen`. */
+  stepCountIs: (n: number) => unknown;
+}

@@ -131,6 +131,9 @@ import {
 import type { ProviderTelemetrySignal, RuntimeSink } from './telemetry/types';
 import type { PermissionDecisionSignal } from './graph/builder';
 import type { CursorRunOutcome, ProviderRunBridge } from './cursor/types';
+import type { HarnessRuntime, HarnessRunHandle } from './harness/HarnessRuntime';
+import type { LocalWorktreeSandboxProvider } from './harness/sandbox/LocalWorktreeSandbox';
+import { makeHarnessToolApproval } from './harness/approval';
 import { isSubagentTool } from '@shared/subagents';
 import { IpcEvents } from '@shared/ipc-channels';
 import { getDb } from '../db/database';
@@ -914,6 +917,19 @@ export class AgentManager {
   /** Inject the Cursor runtime so cursor-model sessions can run. */
   setCursorRuntime(runtime: CursorRuntime): void {
     this.cursorRuntime = runtime;
+  }
+
+  /** AI SDK harness runtime + its local sandbox provider (setter-injected). */
+  private harnessRuntime: HarnessRuntime | null = null;
+  private harnessSandbox: LocalWorktreeSandboxProvider | null = null;
+
+  /**
+   * Inject the harness runtime. Both are supplied together because the runtime
+   * is useless without the provider that roots it in the session's worktree.
+   */
+  setHarnessRuntime(runtime: HarnessRuntime, sandbox: LocalWorktreeSandboxProvider): void {
+    this.harnessRuntime = runtime;
+    this.harnessSandbox = sandbox;
   }
 
   /**
@@ -2555,6 +2571,132 @@ export class AgentManager {
     }
   }
 
+  /**
+   * A single run through the AI SDK `HarnessAgent`.
+   *
+   * Deliberately the same shape as {@link runCursorOnce}: compose the context,
+   * build a {@link ProviderRunBridge} over the caller's streaming closures,
+   * hand both to a runtime, and let everything downstream stay unaware of
+   * which adapter produced the events.
+   *
+   * Layer 1 is preserved by construction — `toolApproval` routes into
+   * `makeCanUseTool`, the SAME callback the Claude SDK path installs, so risk
+   * classification, the crown-jewel and workspace guards, plan read-only,
+   * remembered scoping and the PermissionRequest dialog are literally the same
+   * code (see `harness/approval.ts`).
+   */
+  private async runHarnessOnce(
+    sessionId: string,
+    prompt: string,
+    cwd: string,
+    abort: AbortController,
+    permMode: SessionPermissionMode,
+    stream: {
+      ensureStreaming: () => ChatMessage;
+      queueDelta: (text: string) => void;
+      finishStreaming: (finalText?: string) => void;
+    },
+  ): Promise<void> {
+    const runtime = this.harnessRuntime;
+    const provider = this.harnessSandbox;
+    if (!runtime || !provider) throw new Error('The agent harness runtime is not available.');
+    const agent = this.settings.getAll().agent;
+    const run = this.runs.get(sessionId);
+
+    // Same three context producers, same order, same one-shot resume-delta
+    // semantics as both other paths. They ride `instructions` here, which is
+    // the harness's equivalent of Claude's single systemPrompt.append.
+    const memoryContext = this.memoryContextFor(sessionId, prompt);
+    const searchContext = this.searchContextFor(sessionId, prompt);
+    const resumeContext = this.resumeContextFor(sessionId);
+    const injectedContext =
+      [memoryContext, searchContext, resumeContext].filter(Boolean).join('\n\n') || undefined;
+
+    this.emitRunStart(sessionId, agent.model, permMode, {
+      memory: memoryContext?.length ?? 0,
+      search: searchContext?.length ?? 0,
+      resume: resumeContext?.length ?? 0,
+    });
+
+    const sandbox = this.resolveSandboxFor(sessionId, cwd, 'anthropic', agent);
+    if (sandbox.enabled) this.recordSandboxStatus(sessionId, sandbox);
+
+    // `workDir` must be the worktree's BASENAME: the framework always appends
+    // a path segment to the provider's defaultWorkingDirectory (it rejects
+    // '.'), so this is what lands the session ON the worktree instead of in a
+    // new subdirectory of it.
+    const workDir = provider.workDirFor(sessionId);
+    if (!workDir) throw new Error('No execution root resolved for this session.');
+
+    const bridge: ProviderRunBridge = {
+      ensureStreaming: () => {
+        stream.ensureStreaming();
+      },
+      queueDelta: stream.queueDelta,
+      finishStreaming: stream.finishStreaming,
+      onToolUse: (id, name, input, parentCallId) =>
+        this.onToolUse(sessionId, id, name, input, parentCallId),
+      onToolResult: (id, status, output) => this.onToolResult(sessionId, id, status, output),
+      onInit: (token) => this.rememberProviderSession(sessionId, 'anthropic', token),
+      onResult: (ok, text) =>
+        this.recordRunResult(sessionId, {
+          ok,
+          subtype: ok ? 'success' : 'error_during_execution',
+          errors: ok || !text ? [] : [text],
+          text,
+        }),
+      onSandboxStatus: (_phase, detail) =>
+        detail ? this.recordStatus(sessionId, detail) : undefined,
+      diag: (category, severity, label, detail) =>
+        this.diag(category as DiagnosticCategory, severity, label, detail, sessionId),
+    };
+
+    const canUseTool = this.makeCanUseTool(sessionId, cwd, permMode);
+    // The approval callback needs the handle in order to interrupt the turn,
+    // but the handle only exists once the run has started — hence the cell.
+    const handleRef: { current: HarnessRunHandle | null } = { current: null };
+    const handle = await runtime.start(
+      {
+        sessionId,
+        harnessId: agent.harness.id,
+        prompt,
+        cwd,
+        mode: permMode,
+        model: agent.model,
+        maxTurns: agent.maxTurns,
+        instructions: injectedContext,
+        // The web tools are the one capability a setting removes outright.
+        inactiveTools: agent.webSearch ? undefined : ['webSearch', 'webFetch'],
+        toolApproval: makeHarnessToolApproval({
+          canUseTool: (name, input, ctx) =>
+            canUseTool(name, input, ctx) as Promise<{
+              behavior: 'allow' | 'deny';
+              updatedInput?: Record<string, unknown>;
+              message?: string;
+              interrupt?: boolean;
+            }>,
+          // Plan capture denies with `interrupt: true`; the harness has no such
+          // field, so halt the turn here instead. close() prefers suspendTurn,
+          // which preserves the turn for the post-approval continuation.
+          interrupt: () => handleRef.current?.close(),
+          abort: abort.signal,
+          permMode,
+        }),
+        sandbox,
+        resumeFrom: this.loadProviderSession(sessionId, 'anthropic') ?? undefined,
+        workDir,
+        debug: agent.harness.debug,
+        abort,
+      },
+      bridge,
+    );
+    handleRef.current = handle;
+    if (run) run.query = { close: handle.close };
+    this.setLifecycle('streaming');
+    this.setRequest(sessionId, { phase: 'streaming' });
+    await handle.done;
+  }
+
   /** A single SDK run attempt. Streams events; re-throws on any failure. */
   private async runOnce(
     sessionId: string,
@@ -2656,6 +2798,21 @@ export class AgentManager {
         }
         return;
       case 'anthropic':
+        // Anthropic models run through the AI SDK harness, or through the
+        // direct Claude Agent SDK when the documented rollback is set. The
+        // rollback ships ON, so this phase changes nothing until it is flipped.
+        if (!agent.harness.legacyClaudeSdk) {
+          try {
+            await this.runHarnessOnce(sessionId, prompt, cwd, abort, permMode, {
+              ensureStreaming,
+              queueDelta,
+              finishStreaming,
+            });
+          } finally {
+            this.settleOrphanedToolCalls(sessionId);
+          }
+          return;
+        }
         break; // falls into the Claude Agent SDK path below
       case null:
         throw new Error(`${routing.reason}. Pick a model in the composer.`);
