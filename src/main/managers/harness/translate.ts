@@ -13,7 +13,26 @@
  * Telemetry all stay owned by AgentManager and provider-neutral.
  */
 import type { ProviderRunBridge } from '../agent/providerBridge';
+import { absolutizeToolInput, harnessToolName } from './identity';
 import type { HarnessStreamPart, HarnessUsage } from './types';
+
+/**
+ * A built-in or custom tool call the adapter is waiting on a decision for.
+ *
+ * Returned by {@link translatePart} rather than resolved inside it: answering
+ * requires `await`ing Limboo's permission gate, and this module is pure by
+ * contract (no DB, no IPC, no clock — the `graph/builder.ts` rule). The runtime
+ * collects these, drains them after the stream closes, and resumes.
+ */
+export interface HarnessApprovalRequest {
+  approvalId: string;
+  /** Limboo-shaped identity (native-cased), for the gate and the chip. */
+  toolName: string;
+  /** Re-absolutised input, for the guards and the dialog. */
+  input: Record<string, unknown>;
+  /** The framework's own tool-call object, passed back verbatim on resume. */
+  toolCall: Record<string, unknown>;
+}
 
 /** Per-run mutable state the translator threads across frames. */
 export interface TranslateContext {
@@ -78,6 +97,10 @@ function asRecord(value: unknown): Record<string, unknown> {
 /**
  * Fold one stream part into the bridge.
  *
+ * Returns a {@link HarnessApprovalRequest} when the adapter is waiting on a
+ * permission decision, and `undefined` otherwise. The caller must answer every
+ * returned request — an unanswered one leaves the turn suspended forever.
+ *
  * Throws ONLY for an `error` part, so the failure travels the same path a
  * Claude/Cursor failure does — `runWithRecovery` catches it and
  * `classifyAgentError` decides recoverability. Nothing else here throws.
@@ -86,11 +109,42 @@ export function translatePart(
   part: HarnessStreamPart,
   bridge: ProviderRunBridge,
   ctx: TranslateContext,
-): void {
+  cwd: string,
+): HarnessApprovalRequest | undefined {
   switch (part.type) {
     case 'text-start':
       bridge.ensureStreaming();
       return;
+
+    // The adapter is asking permission for a tool it is about to run. This is
+    // the ONLY gate on the harness path for built-in tools, and it only fires
+    // because `permissionMode` is not 'allow-all' (see permissions.ts).
+    case 'tool-approval-request': {
+      const call = asRecord(part.toolCall);
+      const approvalId = typeof part.approvalId === 'string' ? part.approvalId : '';
+      const rawName = typeof call.toolName === 'string' ? call.toolName : '';
+      if (!approvalId || !rawName) {
+        // Unanswerable: without an id there is nothing to resume with. Report
+        // it rather than silently hanging the turn.
+        bridge.diag(
+          'tool',
+          'error',
+          'Harness approval request was unusable',
+          `approvalId=${approvalId ? 'present' : 'missing'} toolName=${rawName || 'missing'}`,
+        );
+        return;
+      }
+      const native = typeof call.nativeName === 'string' ? call.nativeName : undefined;
+      return {
+        approvalId,
+        toolName: harnessToolName(rawName, native),
+        // `input` on the STREAM part is already parsed by the framework; the
+        // JSON-string form only appears on the session's pending-approval
+        // accessor, which is the runtime's fallback.
+        input: absolutizeToolInput(asRecord(call.input), cwd),
+        toolCall: call,
+      };
+    }
 
     case 'text-delta': {
       const text = part.text ?? part.delta;
@@ -121,7 +175,15 @@ export function translatePart(
       const name = part.toolName;
       if (!id || !name || ctx.openCalls.has(id)) return;
       ctx.openCalls.add(id);
-      bridge.onToolUse(id, name, asRecord(part.input), parentIdFrom(part));
+      // Same identity + path treatment as the approval path, so the chip in the
+      // stream and the dialog the user answers describe the same call.
+      const native = typeof part.nativeName === 'string' ? part.nativeName : undefined;
+      bridge.onToolUse(
+        id,
+        harnessToolName(name, native),
+        absolutizeToolInput(asRecord(part.input), cwd),
+        parentIdFrom(part),
+      );
       return;
     }
 

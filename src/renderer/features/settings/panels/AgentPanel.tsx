@@ -6,7 +6,16 @@
  * turn budget, and the connection-monitoring / reliability controls.
  */
 import { useEffect, useState } from 'react';
-import { AGENT_CONNECTION_LIMITS, AGENT_LIMITS, AGENT_MODELS, DEFAULT_SETTINGS } from '@shared/constants';
+import {
+  AGENT_CONNECTION_LIMITS,
+  AGENT_LIMITS,
+  AGENT_MODELS,
+  DEFAULT_SETTINGS,
+  HARNESSES_WITHOUT_READ_GATING,
+  HARNESS_LABELS,
+  PROVIDER_HARNESS,
+  providerForModel,
+} from '@shared/constants';
 import { cn } from '@/renderer/lib/cn';
 import { ProviderIcon } from '@/renderer/components/brand/ProviderIcon';
 import { useSettingsStore } from '@/renderer/stores/useSettingsStore';
@@ -33,6 +42,16 @@ export function AgentPanel() {
   const defaultModelLabel =
     AGENT_MODELS.find((m) => m.value === DEFAULT_SETTINGS.agent.model)?.label ??
     DEFAULT_SETTINGS.agent.model;
+
+  // The harness serving the SELECTED model, and whether it can honour
+  // `autoApproveReads` at all (the AI SDK harnesses cannot — see the shared
+  // constant). Only used to tell the truth in a hint; the toggle still writes.
+  const activeHarnessId = PROVIDER_HARNESS[providerForModel(agent.model)];
+  const activeHarnessLabel = HARNESS_LABELS[activeHarnessId] ?? activeHarnessId;
+  const readGatingUnavailable =
+    agent.harness.id === activeHarnessId &&
+    !agent.harness.legacyClaudeSdk &&
+    HARNESSES_WITHOUT_READ_GATING.includes(activeHarnessId);
 
   const meta = lifecycleMeta(lifecycle, install.installed);
   const set = <K extends keyof typeof agent>(key: K, value: (typeof agent)[K]) =>
@@ -128,7 +147,11 @@ export function AgentPanel() {
         <Field
           id="autoApproveReads"
           label="Auto-approve reads"
-          hint="Let the agent read, search, and look things up without prompting. Default on — reads can't modify your project."
+          hint={
+            readGatingUnavailable
+              ? `Let the agent read, search, and look things up without prompting. Default on — reads can't modify your project. Not enforced on ${activeHarnessLabel}: its runtime allows built-in file reads unconditionally, so turning this off will not make it ask.`
+              : "Let the agent read, search, and look things up without prompting. Default on — reads can't modify your project."
+          }
         >
           <Toggle checked={agent.autoApproveReads} onChange={(v) => set('autoApproveReads', v)} />
         </Field>

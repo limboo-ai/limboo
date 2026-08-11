@@ -12,12 +12,26 @@
  * wire translation lives in `translate.ts`, and the module loading lives in
  * `index.ts`. Nothing else in the app imports the AI SDK.
  */
+import { AGENT_LIMITS } from '@shared/constants';
 import type { SessionPermissionMode } from '@shared/types';
 import type { EffectiveSandbox } from '../sandbox/policy';
 import type { ProviderRunBridge } from '../agent/providerBridge';
 import { loadHarness } from './index';
-import { newTranslateContext, translatePart } from './translate';
+import {
+  resolveApproval,
+  type HarnessApprovalContinuation,
+  type HarnessApprovalDeps,
+} from './approval';
+import { HarnessUngatedError } from './errors';
+import { harnessPermissionMode } from './permissions';
+import { newTranslateContext, translatePart, type HarnessApprovalRequest } from './translate';
 import type { HarnessAdapterFlags, HarnessSession, HarnessToolApproval } from './types';
+
+/**
+ * Ceiling on suspend/continue rounds in one run. Not a policy — `stopWhen`
+ * bounds the real work — just a stop against an adapter that keeps asking.
+ */
+const MAX_APPROVAL_ROUNDS = AGENT_LIMITS.maxApprovalRounds;
 
 /** Everything one harness run needs, resolved up front. */
 export interface HarnessRunSpec {
@@ -43,8 +57,15 @@ export interface HarnessRunSpec {
    * in a single process.
    */
   mcpServers?: Record<string, unknown>;
-  /** Layer 1 delegation — see `approval.ts`. */
+  /** Human label, for the refusal message when the adapter cannot be gated. */
+  harnessLabel?: string;
+  /**
+   * The custom/host-tool router. Built-in tools are gated by `permissionMode`
+   * instead; this map is only consulted for tools Limboo supplies itself.
+   */
   toolApproval?: HarnessToolApproval;
+  /** How a permission request is answered — the delegation into Layer 1. */
+  approval: HarnessApprovalDeps;
   sandbox: EffectiveSandbox;
   /** Prior session token for a multi-turn conversation. */
   resumeFrom?: unknown;
@@ -119,10 +140,24 @@ export class HarnessRuntime {
       if (inactiveTools.length === 0) inactiveTools = undefined;
     }
 
+    // PREFLIGHT — refuse an adapter that cannot be gated.
+    //
+    // `permissionMode` only produces approval requests if the adapter declares
+    // it can emit them. Without that, built-in write/edit/bash would execute
+    // with Limboo's permission gate bypassed entirely — and there is no setting
+    // that recovers it. That is not a degraded mode worth offering, so the run
+    // is refused. The framework raises its own error here too, but its message
+    // recommends `allow-all`, which is precisely the unsafe remedy.
+    if (flags.supportsBuiltinToolApprovals !== true) {
+      throw new HarnessUngatedError(spec.harnessLabel ?? spec.harnessId);
+    }
+
     const agent = new HarnessAgent({
       harness,
       sandbox: this.sandboxProvider,
       id: spec.sessionId,
+      // THE gate for built-in tools. Never 'allow-all' — see permissions.ts.
+      permissionMode: harnessPermissionMode(spec.mode),
       // The three context producers arrive pre-joined, exactly as they are for
       // Claude's single systemPrompt.append — same content, same budget, same
       // one-shot resume-delta semantics.
@@ -162,24 +197,64 @@ export class HarnessRuntime {
 
     const done = (async (): Promise<HarnessRunOutcome> => {
       try {
-        const { stream } = await agent.stream({
+        // THE APPROVAL LOOP.
+        //
+        // When the adapter needs permission for a built-in tool it finishes the
+        // stream and suspends the turn — the stream CLOSES rather than waiting.
+        // So a single `for await` is structurally incapable of completing any
+        // run that touches a file: it would drain the frames up to the first
+        // write, see the stream end, and report success having done nothing.
+        //
+        // Each round therefore drains a stream, collects the approval requests
+        // it surfaced, answers them through Limboo's gate, and resumes. The
+        // requests are resolved AFTER the drain, never inside it: the stream is
+        // already closing, the gate can block on a user dialog for minutes, and
+        // batching is also correct if an adapter ever emits two at once.
+        let result = await agent.stream({
           session,
           ...(spec.messages != null ? { messages: spec.messages } : { prompt: spec.prompt }),
         });
-        for await (const part of stream) {
+
+        for (let round = 0; ; round += 1) {
+          const pending: HarnessApprovalRequest[] = [];
+          for await (const part of result.stream) {
+            if (spec.abort.signal.aborted) break;
+            const req = translatePart(part, bridge, ctx, spec.cwd);
+            if (req) pending.push(req);
+          }
+          if (spec.abort.signal.aborted || pending.length === 0) break;
+
+          if (round >= MAX_APPROVAL_ROUNDS) {
+            // A ceiling, not a policy: `stopWhen` bounds the real work. This
+            // exists so a misbehaving adapter cannot spin forever, and it is
+            // reported rather than silently ending the run.
+            bridge.diag(
+              'request',
+              'warning',
+              'Stopped after too many permission rounds',
+              `${MAX_APPROVAL_ROUNDS} rounds; the harness kept asking for approval.`,
+            );
+            break;
+          }
+
+          const continuations: HarnessApprovalContinuation[] = [];
+          for (const req of pending) {
+            continuations.push(await resolveApproval(req, spec.approval));
+          }
           if (spec.abort.signal.aborted) break;
-          translatePart(part, bridge, ctx);
+          result = await agent.continueStream({
+            session,
+            toolApprovalContinuations: continuations,
+          });
         }
+
         // A stream that ends without a `finish` frame still has to settle, or
         // the composer stays "streaming" for the session's lifetime.
         if (!ctx.finished) {
           bridge.finishStreaming();
           bridge.onResult(true, ctx.text);
         }
-        return {
-          sessionToken: ctx.sessionId,
-          result: { ok: ctx.ok, text: ctx.text },
-        };
+        return { result: { ok: ctx.ok, text: ctx.text } };
       } finally {
         this.live.delete(session);
         spec.abort.signal.removeEventListener('abort', close);

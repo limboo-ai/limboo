@@ -1,25 +1,37 @@
 /**
- * Route the harness's coarse `toolApproval` surface into Limboo's permission
- * gate.
+ * Answer the harness's permission requests using Limboo's own authority.
  *
- * THE RULE, and the reason this file is small: **the `toolApproval` map is a
- * ROUTER; `decideToolUse` is the AUTHORITY.** Nothing in the map may ever be
- * `'auto-approve'`. Every auto-approval Limboo grants — `autoApproveReads`,
- * `permissionMode: 'auto'`, trusted MCP servers, remembered per-risk choices,
- * the staged-attachment carve-out, `acceptEdits` writes — is a judgement
- * `decideToolUseCore` makes with the tool's inputs, the workspace root, the
- * crown-jewel floor and the session's remembered grants in hand. A static
- * name-keyed map cannot make any of those judgements and must not try; the
- * moment it does, the three layers can disagree about what was allowed.
+ * THE RULE: **`toolApproval` is a ROUTER; `decideToolUse` is the AUTHORITY.**
+ * That was already the intent; this file is what finally makes it true.
  *
- * So every tool routes to `'user-approval'` and the callback delegates. The
- * gate then decides silently in the common case (an auto-approved read never
- * shows a dialog) and prompts only when it would have prompted for Claude or
- * Cursor, from the same code, with the same risk chips and the same audit
- * trail.
+ * What was wrong before: `toolApproval` is a `Record<string, ToolApprovalStatus>`
+ * that the framework LOOKS UP by tool name (`toolApproval?.[toolName]`) — not a
+ * callback it invokes. Passing a function meant every lookup returned
+ * `undefined`, which normalises to `not-applicable`, which allows. So the gate
+ * was never consulted for anything. And built-in tools were never `toolApproval`'s
+ * business in the first place: they are governed by `permissionMode`, which was
+ * unset and therefore `'allow-all'`.
+ *
+ * How it works now:
+ *  - Built-in tools are gated because `permissionMode` is `'allow-reads'`
+ *    (see `permissions.ts`), which makes the adapter emit a
+ *    `tool-approval-request` and suspend the turn.
+ *  - Custom host tools are gated by listing every one as `'user-approval'` in
+ *    the map, which makes the framework emit the same request kind.
+ *  - Both kinds land in {@link resolveApproval}, which asks Limboo and returns
+ *    the continuation that resumes the turn.
+ *
+ * Nothing in the map is ever `'approved'` or `'auto-approve'`. Every
+ * auto-approval Limboo grants — `autoApproveReads`, `permissionMode: 'auto'`,
+ * trusted MCP servers, remembered per-risk choices, the staged-attachment
+ * carve-out, `acceptEdits` writes — is a judgement `decideToolUseCore` makes
+ * with the tool's inputs, the workspace root, the crown-jewel floor and the
+ * session's remembered grants in hand. A static name-keyed map cannot make any
+ * of those judgements, and the moment it pretends to, the layers disagree about
+ * what was allowed.
  */
 import type { SessionPermissionMode } from '@shared/types';
-import type { HarnessApprovalRequest, HarnessApprovalDecision, HarnessToolApproval } from './types';
+import type { HarnessApprovalRequest } from './translate';
 
 /** The permission result shape `makeCanUseTool` returns. */
 interface GateResult {
@@ -29,12 +41,23 @@ interface GateResult {
   interrupt?: boolean;
 }
 
+/** A continuation that resumes a suspended turn with one decision. */
+export interface HarnessApprovalContinuation {
+  approvalResponse: {
+    type: 'tool-approval-response';
+    approvalId: string;
+    approved: boolean;
+    reason?: string;
+  };
+  toolCall: Record<string, unknown>;
+}
+
 export interface HarnessApprovalDeps {
   /**
    * `AgentManager.makeCanUseTool(sessionId, cwd, permMode)` — used UNCHANGED.
    *
    * Deliberately this and not `decideToolUse` directly: `makeCanUseTool` wraps
-   * the gate with the ExitPlanMode plan capture and the AskUserQuestion
+   * the gate with the `ExitPlanMode` plan capture and the `AskUserQuestion`
    * clarification round-trip, both of which must run AHEAD of risk
    * classification. Calling the core would silently drop plan mode.
    */
@@ -46,23 +69,20 @@ export interface HarnessApprovalDeps {
   /**
    * Halt the turn. `canUseTool` signals plan capture with
    * `{ behavior: 'deny', interrupt: true }`; the harness has no such field, so
-   * the caller supplies the equivalent (`session.suspendTurn()`, which
-   * preserves the turn for `continueStream()` after the user approves, with
-   * abort as the fallback).
+   * the caller supplies the equivalent.
    */
   interrupt(): void;
-  /** Run-level abort, used when a request carries no signal of its own. */
   abort: AbortSignal;
   permMode: SessionPermissionMode;
 }
 
 /**
- * Every tool the harness can execute routes to the gate.
+ * Every custom/host tool routes to the gate.
  *
- * `'user-approval'` here does NOT mean "always show a dialog" — it means "ask
+ * `'user-approval'` does NOT mean "always show a dialog" — it means "ask
  * Limboo", and Limboo answers without prompting whenever its own policy says
- * so. Naming any tool as pre-approved would move an authorization decision out
- * of the one place that can make it correctly.
+ * so. With no host tools this is `{}`, which is honest: there is nothing to
+ * route. Built-ins are covered by `permissionMode`, not by this map.
  */
 export function buildToolApprovalMap(
   toolNames: readonly string[],
@@ -73,31 +93,44 @@ export function buildToolApprovalMap(
 }
 
 /** The single delegation point from the harness into Layer 1. */
-export function makeHarnessToolApproval(deps: HarnessApprovalDeps): HarnessToolApproval {
-  return async (req: HarnessApprovalRequest): Promise<HarnessApprovalDecision> => {
-    const input =
-      req.input && typeof req.input === 'object' && !Array.isArray(req.input)
-        ? (req.input as Record<string, unknown>)
-        : {};
-    const signal = req.abortSignal ?? deps.abort;
-    try {
-      const result = await deps.canUseTool(req.toolName, input, { signal });
-      if (result.behavior === 'allow') {
-        // Honour a rewritten input: the gate may narrow a tool's arguments
-        // (the attachment carve-out does), and dropping that would run the
-        // ORIGINAL request while the audit trail records the narrowed one.
-        return { approved: true, input: result.updatedInput ?? input };
-      }
-      if (result.interrupt) deps.interrupt();
-      return { approved: false, reason: result.message };
-    } catch (err) {
-      // FAIL CLOSED. A gate that threw did not authorize anything, and the
-      // harness treats a rejected promise as an error rather than a denial —
-      // which would surface as a crashed run instead of a refused tool.
+export async function resolveApproval(
+  req: HarnessApprovalRequest,
+  deps: HarnessApprovalDeps,
+): Promise<HarnessApprovalContinuation> {
+  const deny = (reason: string): HarnessApprovalContinuation => ({
+    approvalResponse: {
+      type: 'tool-approval-response',
+      approvalId: req.approvalId,
+      approved: false,
+      reason,
+    },
+    toolCall: req.toolCall,
+  });
+
+  try {
+    const result = await deps.canUseTool(req.toolName, req.input, { signal: deps.abort });
+    if (result.behavior === 'allow') {
+      // Honour a rewritten input: the gate may narrow a tool's arguments, and
+      // dropping that would execute the ORIGINAL request while the audit trail
+      // records the narrowed one.
+      const input = result.updatedInput ?? req.input;
       return {
-        approved: false,
-        reason: err instanceof Error ? err.message : 'Limboo could not evaluate this tool call.',
+        approvalResponse: {
+          type: 'tool-approval-response',
+          approvalId: req.approvalId,
+          approved: true,
+        },
+        // Rebuild from the framework's own object so every field it set (ids,
+        // providerExecuted, dynamic flags) survives; only the input is ours.
+        toolCall: { ...req.toolCall, input },
       };
     }
-  };
+    if (result.interrupt) deps.interrupt();
+    return deny(result.message || 'Denied.');
+  } catch (err) {
+    // FAIL CLOSED. A gate that threw authorized nothing, and letting the
+    // rejection escape would surface as a crashed run rather than a refused
+    // tool — which reads to the user as a bug instead of a decision.
+    return deny(err instanceof Error ? err.message : 'Limboo could not evaluate this tool call.');
+  }
 }

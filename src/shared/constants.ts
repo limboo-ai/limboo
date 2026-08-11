@@ -86,6 +86,19 @@ export const PROVIDER_HARNESS: Record<AgentProvider, string> = {
 };
 
 /**
+ * Harness ids whose built-in READ tools cannot be routed through Limboo's
+ * permission gate — the renderer-safe half of `HarnessCapabilities.gatesReads`.
+ *
+ * The AI SDK harnesses gate edits and shell commands but never reads: their
+ * permission modes have no "ask about reads" setting, and the only lever over a
+ * built-in read denies it outright instead of asking. So `autoApproveReads` is
+ * inert on those paths, and the settings UI must say that plainly rather than
+ * render a control that looks like it works. Same posture as Cursor's "not
+ * reported by this provider" — state the limit, never fake the capability.
+ */
+export const HARNESSES_WITHOUT_READ_GATING: readonly string[] = ['claude-code'];
+
+/**
  * Charset guard for an Anthropic model id before it reaches the Agent SDK.
  * Settings normally only ever hold picker values, but the model string is
  * persisted user data — never trust it verbatim (CLAUDE.md §6 input
@@ -182,6 +195,15 @@ export const AGENT_LIMITS = {
    * document, this one rides in a conversation turn.
    */
   planPromptMax: 24_000,
+  /**
+   * Ceiling on suspend/continue rounds in one harness run.
+   *
+   * A harness gates built-in tools by suspending the turn and asking, so one
+   * round is spent per gated tool call — `maxTurns` is what actually bounds the
+   * work. This exists only so an adapter that keeps asking cannot spin forever;
+   * exceeding it is reported, never a silent stop.
+   */
+  maxApprovalRounds: 400,
 } as const;
 
 /**

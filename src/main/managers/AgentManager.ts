@@ -133,8 +133,9 @@ import type { PermissionDecisionSignal } from './graph/builder';
 import type { CursorRunOutcome, ProviderRunBridge } from './cursor/types';
 import type { HarnessRuntime, HarnessRunHandle } from './harness/HarnessRuntime';
 import type { LocalWorktreeSandboxProvider } from './harness/sandbox/LocalWorktreeSandbox';
-import { makeHarnessToolApproval } from './harness/approval';
+import { buildToolApprovalMap } from './harness/approval';
 import { loadHarness } from './harness';
+import { harnessById } from './agent/harnessRegistry';
 import { isSubagentTool } from '@shared/subagents';
 import { IpcEvents } from '@shared/ipc-channels';
 import { getDb } from '../db/database';
@@ -2725,7 +2726,18 @@ export class AgentManager {
         // before its first turn. HarnessRuntime validates these against the
         // adapter's real key set and drops what it does not recognise.
         inactiveTools: agent.webSearch ? undefined : ['webSearch', 'WebFetch'],
-        toolApproval: makeHarnessToolApproval({
+        harnessLabel: harnessById(agent.harness.id)?.label,
+        // Built-in tools are gated by `permissionMode` (set inside the runtime),
+        // NOT by this map — the framework looks the map up by tool name and only
+        // consults it for tools Limboo supplies itself. With no host tools it is
+        // empty, which is honest: there is nothing to route.
+        toolApproval: buildToolApprovalMap([]),
+        // How a permission request is answered. This is the delegation into
+        // Layer 1 — the same `makeCanUseTool` the Claude SDK path installs, so
+        // risk classification, the crown-jewel and workspace guards, plan
+        // read-only, remembered scoping, the Work Graph approval node and the
+        // governance-bus emission are all literally the same code.
+        approval: {
           canUseTool: (name, input, ctx) =>
             canUseTool(name, input, ctx) as Promise<{
               behavior: 'allow' | 'deny';
@@ -2739,7 +2751,7 @@ export class AgentManager {
           interrupt: () => handleRef.current?.close(),
           abort: abort.signal,
           permMode,
-        }),
+        },
         sandbox,
         mcpServers,
         // No resume yet. `createSession({resumeFrom})` requires a structured

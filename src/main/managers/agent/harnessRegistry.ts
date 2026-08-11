@@ -29,6 +29,16 @@ export type HarnessKind =
 
 /** What a harness can be observed to do — drives honest UI degradation. */
 export interface HarnessCapabilities {
+  /**
+   * Whether built-in READ tools can be routed through Limboo's permission gate.
+   *
+   * `false` for every AI SDK harness: the adapter's permission modes gate edits
+   * and shell commands but never reads, and the only way to affect a built-in
+   * read is `inactiveTools`, which DENIES it outright rather than asking. So
+   * `settings.agent.autoApproveReads: false` cannot be honoured on those paths,
+   * and the UI must say so in words rather than appear to work.
+   */
+  gatesReads: boolean;
   /** Reports `parent_tool_use_id`-style nesting for delegations. */
   subagents: boolean | 'unknown';
   /** How a plan document arrives: a tool call, scraped result text, or never. */
@@ -65,6 +75,9 @@ export const HARNESSES: readonly HarnessDescriptor[] = [
     module: '@ai-sdk/harness-claude-code',
     needsSandbox: true,
     capabilities: {
+      // Its permission modes gate `edit` and `bash` kinds only — a built-in
+      // Read/Grep/Glob is never routed to Limboo's gate at any mode.
+      gatesReads: false,
       // The AI SDK StreamPart vocabulary has no first-class parent-call field;
       // whether the adapter forwards one in providerMetadata is unverified, so
       // this stays 'unknown' rather than claiming nesting we may not get.
@@ -82,6 +95,9 @@ export const HARNESSES: readonly HarnessDescriptor[] = [
     module: null,
     needsSandbox: false,
     capabilities: {
+      // Limboo owns the process and every tool call reaches decideToolUse, so
+      // `autoApproveReads` is honoured here.
+      gatesReads: true,
       // Cursor's stream carries no parent linkage — a Cursor run renders flat,
       // deliberately, rather than having nesting inferred for it.
       subagents: false,

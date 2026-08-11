@@ -42,6 +42,11 @@ export interface HarnessStreamPart {
   response?: { id?: string; modelId?: string };
   /** Where a parent-call id would ride, if the adapter forwards one. */
   providerMetadata?: Record<string, Record<string, unknown>>;
+  /** Approval-request fields (`tool-approval-request`). */
+  approvalId?: string;
+  toolCall?: unknown;
+  /** The adapter's own tool name, when it differs from the common one. */
+  nativeName?: string;
   [key: string]: unknown;
 }
 
@@ -122,6 +127,15 @@ export interface HarnessAgentLike {
     session: HarnessSession;
     prompt?: unknown;
     messages?: unknown;
+  }): PromiseLike<HarnessStreamResult>;
+  /**
+   * Resume a turn suspended on a permission request. The stream from
+   * `stream()` CLOSES when the adapter suspends, so this is what actually
+   * completes any run that touches a file.
+   */
+  continueStream(opts: {
+    session: HarnessSession;
+    toolApprovalContinuations?: readonly unknown[];
   }): PromiseLike<HarnessStreamResult>;
   generate(opts: {
     session: HarnessSession;
