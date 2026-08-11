@@ -38,6 +38,7 @@ import { ReleaseNotesDocument } from '@/renderer/features/updates/ReleaseNotesDo
 import { useReleaseNotes, useReleaseNotesTab } from '@/renderer/features/updates/useReleaseNotes';
 import { DocumentTabs } from './DocumentTabs';
 import { SubagentWorkspace } from './SubagentWorkspace';
+import { SettingsDocument } from '@/renderer/features/settings/SettingsDocument';
 
 export function CenterWorkspace() {
   const session = useSessionStore((s) =>
@@ -104,6 +105,8 @@ export function CenterWorkspace() {
             sessionId={session.id}
             callId={activeDoc.ref.callId}
           />
+        ) : activeDoc.ref.kind === 'settings' ? (
+          <SettingsDocument key={activeDoc.id} initialCategory={activeDoc.ref.category} />
         ) : (
           <div className="flex min-h-0 flex-1 items-center justify-center text-[12px] text-faint">
             {activeDoc.ref.path}

@@ -36,7 +36,15 @@ export type DocumentRef =
    * like `release-notes` — identity is the spawning `Agent` tool call's id, which
    * is also the key everything else about a worker hangs off.
    */
-  | { kind: 'subagent'; callId: string; title: string };
+  | { kind: 'subagent'; callId: string; title: string }
+  /**
+   * The app's settings, opened as an editor tab instead of the modal. Pathless
+   * like the two above, and additionally GLOBAL — settings are not scoped to a
+   * session, so `category` is only the panel it opens on, not part of its
+   * identity. One Settings document per session, whose category is internal
+   * state; keying the id by category would make changing category open a tab.
+   */
+  | { kind: 'settings'; category?: string };
 
 export type DocumentId = string;
 
@@ -173,6 +181,10 @@ export function documentId(ref: DocumentRef): DocumentId {
   // Must precede the diff fallthrough: without a case of its own a subagent ref
   // silently produces a diff-shaped id built from undefined fields.
   if (ref.kind === 'subagent') return `subagent:${ref.callId}`;
+  // Same rule, and additionally a FIXED id: `category` is the panel it opens
+  // on, not part of its identity, so promoting twice focuses the one tab rather
+  // than opening a second. Settings are global; there is only ever one.
+  if (ref.kind === 'settings') return 'settings';
   return `diff:${ref.staged ? 's' : 'w'}:${ref.baseRef ?? ''}:${ref.path}`;
 }
 
@@ -197,6 +209,8 @@ function titleFor(ref: DocumentRef): string {
   // Must precede the basename call for the same reason release-notes does: this
   // ref has no path, and reading one would throw while opening the tab.
   if (ref.kind === 'subagent') return ref.title;
+  // Pathless, same reason as the two above.
+  if (ref.kind === 'settings') return 'Settings';
   return basename(ref.path);
 }
 
@@ -239,6 +253,11 @@ const persist = debounce((bySession: Record<string, SessionDocuments>) => {
       // notes, so the intent is in the code rather than an accident of the
       // pathless-ref guard downstream.
       if (entry.ref.kind === 'subagent') continue;
+      // Settings are global and write through immediately, so the tab is a VIEW
+      // of them, not a document with state worth restoring — and reopening a
+      // preferences screen the user closed is the same mistake as reopening
+      // What's New. Skipped explicitly for the same reason as the two above.
+      if (entry.ref.kind === 'settings') continue;
       if (documents.length >= DOCUMENT_LIMITS.maxPersisted) break;
       documents.push({
         sessionId,
