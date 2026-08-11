@@ -95,6 +95,13 @@ export const IpcChannels = {
   agentCursorRemoveApiKey: 'agent:cursorRemoveApiKey',
   agentCursorUpdateCli: 'agent:cursorUpdateCli',
 
+  /**
+   * The harness's one-time setup plan — its verbatim commands, so the consent
+   * dialog shows what will actually run rather than a hardcoded copy.
+   * Read-only; approving is an ordinary settings write of the fingerprint.
+   */
+  agentHarnessBootstrapPlan: 'agent:harnessBootstrapPlan',
+
   // Plan Mode — review-first workflow over the coding agent.
   agentGetPlan: 'agent:getPlan',
   agentApprovePlan: 'agent:approvePlan',

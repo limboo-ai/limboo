@@ -22,6 +22,11 @@ import {
   type HarnessApprovalContinuation,
   type HarnessApprovalDeps,
 } from './approval';
+import {
+  assertBootstrapConsent,
+  assertBootstrapPossible,
+  readBootstrapPlan,
+} from './bootstrap';
 import { HarnessUngatedError } from './errors';
 import { harnessPermissionMode } from './permissions';
 import { newTranslateContext, translatePart, type HarnessApprovalRequest } from './translate';
@@ -59,6 +64,11 @@ export interface HarnessRunSpec {
   mcpServers?: Record<string, unknown>;
   /** Human label, for the refusal message when the adapter cannot be gated. */
   harnessLabel?: string;
+  /**
+   * Fingerprint of the bootstrap commands the user has approved. Must match the
+   * adapter's current plan or the run is refused — see `bootstrap.ts`.
+   */
+  bootstrapAck?: string;
   /**
    * The custom/host-tool router. Built-in tools are gated by `permissionMode`
    * instead; this map is only consulted for tools Limboo supplies itself.
@@ -150,6 +160,22 @@ export class HarnessRuntime {
     // recommends `allow-all`, which is precisely the unsafe remedy.
     if (flags.supportsBuiltinToolApprovals !== true) {
       throw new HarnessUngatedError(spec.harnessLabel ?? spec.harnessId);
+    }
+
+    // PREFLIGHT — the one-time setup step, if this adapter has one.
+    //
+    // It installs the agent CLI, which reaches the npm registry from the user's
+    // machine (CLAUDE.md §1, third item). Three things must hold before a run
+    // may proceed, in this order: the user has approved these exact commands,
+    // the sandbox network policy permits the download, and the tools the
+    // commands invoke exist. Each failure is named — the alternative is a
+    // bootstrap that times out inside the sandbox with nothing to act on.
+    const bootstrap = await readBootstrapPlan(harness);
+    if (bootstrap) {
+      const label = spec.harnessLabel ?? spec.harnessId;
+      assertBootstrapConsent(bootstrap, spec.bootstrapAck ?? '', label);
+      assertBootstrapPossible(bootstrap, spec.sandbox);
+      bridge.onSandboxStatus?.('preparing', 'Preparing the agent runtime…');
     }
 
     const agent = new HarnessAgent({

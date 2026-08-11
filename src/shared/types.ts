@@ -47,6 +47,23 @@ export type ActivityTab =
   | 'graph';
 
 /** Kinds of center-column workspace document that survive a restart. */
+/**
+ * The active harness's one-time setup plan, as shown for approval.
+ *
+ * Secret-free by construction: command strings and file names the adapter
+ * declares about itself, nothing derived from the environment.
+ */
+export interface HarnessBootstrapInfo {
+  /** False when the adapter could not be loaded at all. */
+  available: boolean;
+  harnessId: string;
+  /** `null` when this harness installs nothing — there is nothing to approve. */
+  plan: { commands: string[]; files: string[]; fingerprint: string } | null;
+  /** True when the current plan's fingerprint matches the stored approval. */
+  acked: boolean;
+  error?: string;
+}
+
 export type PersistedDocumentKind = 'diff' | 'file';
 
 /**
@@ -362,6 +379,21 @@ export interface AppSettings {
       sandboxProvider: 'local-worktree';
       /** Forward adapter log lines into the Agent Console. */
       debug: boolean;
+      /**
+       * Fingerprint of the harness bootstrap commands the user approved.
+       *
+       * A bridge-backed harness installs its agent CLI before the first
+       * session, which reaches the npm registry from this machine (CLAUDE.md
+       * §1, third item). That is gated like repo-authored `limboo.json`
+       * commands: the verbatim commands are shown and approved once, and the
+       * ack is keyed to a hash of those exact commands — so an adapter upgrade
+       * that changes what runs re-prompts, because what was approved is no
+       * longer what would execute. Empty = not approved; runs are refused.
+       *
+       * Deliberately NOT a boolean "allow network": the user approves specific
+       * commands, not a standing permission.
+       */
+      bootstrapAck: string;
     };
   };
   /**

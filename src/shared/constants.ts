@@ -1068,6 +1068,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
       legacyClaudeSdk: true,
       sandboxProvider: 'local-worktree',
       debug: false,
+      // Nothing approved yet — the first harness run asks.
+      bootstrapAck: '',
     },
     hookEngine: {
       enabled: true,

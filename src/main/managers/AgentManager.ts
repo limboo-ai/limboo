@@ -53,6 +53,7 @@ import type {
   FileChange,
   FileChangeStatus,
   GenerateCommitMessageResult,
+  HarnessBootstrapInfo,
   GitCommitContext,
   GitCommitMessageStreamEvent,
   PermissionDecision,
@@ -134,6 +135,7 @@ import type { CursorRunOutcome, ProviderRunBridge } from './cursor/types';
 import type { HarnessRuntime, HarnessRunHandle } from './harness/HarnessRuntime';
 import type { LocalWorktreeSandboxProvider } from './harness/sandbox/LocalWorktreeSandbox';
 import { buildToolApprovalMap } from './harness/approval';
+import { readBootstrapPlan } from './harness/bootstrap';
 import { loadHarness } from './harness';
 import { harnessById } from './agent/harnessRegistry';
 import { isSubagentTool } from '@shared/subagents';
@@ -2200,6 +2202,40 @@ export class AgentManager {
     return { ok, text };
   }
 
+  /**
+   * The active harness's one-time setup plan, for the consent surface.
+   *
+   * Loads the adapter to ask it — which is also a useful availability probe —
+   * and reports `available: false` with the reason when it cannot be loaded, so
+   * the UI can distinguish "nothing to approve" from "this harness is broken".
+   */
+  async harnessBootstrapPlan(): Promise<HarnessBootstrapInfo> {
+    const agent = this.settings.getAll().agent;
+    const descriptor = harnessById(agent.harness.id);
+    if (!descriptor || !descriptor.module) {
+      return { available: true, harnessId: agent.harness.id, plan: null, acked: true };
+    }
+    try {
+      const { adapter, createAdapter } = await loadHarness(agent.harness.id);
+      const built = createAdapter ? createAdapter({}) : adapter;
+      const plan = await readBootstrapPlan(built);
+      return {
+        available: true,
+        harnessId: agent.harness.id,
+        plan,
+        acked: plan == null || plan.fingerprint === agent.harness.bootstrapAck,
+      };
+    } catch (err) {
+      return {
+        available: false,
+        harnessId: agent.harness.id,
+        plan: null,
+        acked: false,
+        error: redact(err instanceof Error ? err.message : String(err)).slice(0, 300),
+      };
+    }
+  }
+
   /** Abort an in-flight commit-message generation for a workspace. */
   cancelCommitMessage(workspaceId: string): void {
     const run = this.commitGenRuns.get(workspaceId);
@@ -2727,6 +2763,7 @@ export class AgentManager {
         // adapter's real key set and drops what it does not recognise.
         inactiveTools: agent.webSearch ? undefined : ['webSearch', 'WebFetch'],
         harnessLabel: harnessById(agent.harness.id)?.label,
+        bootstrapAck: agent.harness.bootstrapAck,
         // Built-in tools are gated by `permissionMode` (set inside the runtime),
         // NOT by this map — the framework looks the map up by tool name and only
         // consults it for tools Limboo supplies itself. With no host tools it is

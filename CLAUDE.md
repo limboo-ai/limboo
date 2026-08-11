@@ -25,8 +25,8 @@ permissions, context, memory, tasks, and generated files into one workspace.
 
 Guiding principles (from `project.md` §4): Fast, Local, Private, Modular, Secure,
 Responsive, Observable, Predictable, Recoverable. There is **no backend**. Limboo
-itself makes exactly **two** kinds of outbound request, and no others may be added
-without amending this paragraph:
+itself makes exactly **three** kinds of outbound request, and no others may be
+added without amending this paragraph:
 
 1. The connected coding agent talking to its AI provider.
 2. **Contributor avatars** — so commit history can show a real face. Two steps,
@@ -50,6 +50,37 @@ without amending this paragraph:
    allowlist. Authentication remains the CLI's; Limboo still reads and stores no
    token. `git`, `gh`, and the update checker are separate processes/subsystems
    with their own rules.
+3. **Agent-harness setup** — the npm registry, once per harness, to install the
+   agent CLI the AI SDK harness path runs. **Consent-gated and off by default.**
+
+   The harness path (`settings.agent.harness`, off behind `legacyClaudeSdk`)
+   drives a third-party adapter whose first session bootstraps its own runtime:
+   `@ai-sdk/harness-claude-code` writes a `package.json` + lockfile into
+   `.harness-bootstrap/` — a **sibling of the worktree, never inside the
+   repository** — and runs `pnpm install --frozen-lockfile` plus the CLI's own
+   installer there. The adapter hardcodes this; there is no offline mode.
+
+   Four things keep it inside this paragraph's spirit rather than merely
+   permitted by it:
+   - **The user approves the verbatim commands, once.** They are read from the
+     adapter itself (`getBootstrap()`), never hardcoded in the consent surface,
+     and the approval is keyed to a **hash of those exact commands**
+     (`agent.harness.bootstrapAck`), so an adapter upgrade that changes what
+     runs asks again. Same posture as the `limboo.json` ack-hash gate. No ack,
+     no run — `assertBootstrapConsent` refuses.
+   - **It is refused, with a reason, when it cannot succeed.** A sandbox network
+     policy of `off` (or an allowlist without the registry), or a missing
+     `pnpm`, is detected before the run instead of surfacing as a bootstrap that
+     times out inside the sandbox (`assertBootstrapPossible`).
+   - **It reaches nothing but the registry**, and it installs into the sandbox
+     state dir, which is the ONLY path outside the worktree the local sandbox
+     provider permits (two literal dot-prefixed segments; see
+     `LocalWorktreeSandbox.resolvePath`).
+   - **It is not the agent's network.** The agent's own provider traffic is item
+     1; this is a package install, and no agent tool can trigger it.
+
+   If a future harness needs a different network reach, it does **not** inherit
+   this item — amend this paragraph again.
 
 ---
 

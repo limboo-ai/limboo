@@ -311,6 +311,12 @@ export class SettingsManager {
     harness.sandboxProvider = 'local-worktree';
     harness.legacyClaudeSdk = !!harness.legacyClaudeSdk;
     harness.debug = !!harness.debug;
+    // A consent fingerprint is a short lowercase hex digest. Anything else is
+    // not something this app wrote, and must not be honoured as an approval —
+    // the run refuses instead, which re-asks rather than assuming.
+    harness.bootstrapAck = /^[0-9a-f]{8,64}$/.test(String(harness.bootstrapAck ?? ''))
+      ? String(harness.bootstrapAck)
+      : '';
 
     // Hook Engine — coerce the toggle and whitelist the audit-verbosity enum.
     // `enabled` only gates emission of observability; it can never weaken the
