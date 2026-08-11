@@ -22,6 +22,7 @@ import {
   type HarnessApprovalContinuation,
   type HarnessApprovalDeps,
 } from './approval';
+import { buildAdapterSettings, type HarnessSettingsShape } from './adapterSettings';
 import {
   assertBootstrapConsent,
   assertBootstrapPossible,
@@ -49,6 +50,12 @@ export interface HarnessRunSpec {
   mode: SessionPermissionMode;
   model: string;
   maxTurns: number;
+  /** Which adapter argument shape to build (from the registry descriptor). */
+  settingsShape?: HarnessSettingsShape;
+  /** `settings.agent.thinking` — maps to each adapter's own reasoning dial. */
+  thinking: 'off' | 'on' | 'adaptive';
+  /** `settings.agent.webSearch` — an adapter-level flag on Codex. */
+  webSearch: boolean;
   /** Memory + Search + Resume blocks, joined — the `systemPrompt.append` twin. */
   instructions?: string;
   /** Omit web tools when `settings.agent.webSearch` is off. */
@@ -111,12 +118,20 @@ export class HarnessRuntime {
     // factory. Passing them to the HarnessAgent constructor instead would let
     // the CLI quietly fall back to its own default model — a run on a model the
     // user did not select. `stopWhen` still bounds the loop on top.
+    // Each adapter accepts a DIFFERENT argument set — only claude-code has
+    // `maxTurns`, only Codex has `reasoningEffort`, only Pi has `thinkingLevel`
+    // — so the mapping is a per-adapter switch rather than one shared object.
     const harness = createAdapter
-      ? createAdapter({
-          model: spec.model,
-          maxTurns: spec.maxTurns,
-          ...(spec.mcpServers ? { mcpServers: spec.mcpServers } : {}),
-        })
+      ? createAdapter(
+          buildAdapterSettings(spec.settingsShape ?? 'claude-code', {
+            model: spec.model,
+            maxTurns: spec.maxTurns,
+            mcpServers: spec.mcpServers,
+            mode: spec.mode,
+            thinking: spec.thinking,
+            webSearch: spec.webSearch,
+          }),
+        )
       : adapter;
     if (!createAdapter) {
       bridge.diag(

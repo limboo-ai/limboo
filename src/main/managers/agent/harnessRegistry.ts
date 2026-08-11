@@ -17,6 +17,7 @@
  * migrated or dropped.
  */
 import type { AgentProvider } from '@shared/constants';
+import type { HarnessSettingsShape } from '../harness/adapterSettings';
 
 /** How a harness executes, which decides what infrastructure it needs. */
 export type HarnessKind =
@@ -39,6 +40,18 @@ export interface HarnessCapabilities {
    * and the UI must say so in words rather than appear to work.
    */
   gatesReads: boolean;
+  /**
+   * Whether the adapter can be gated AT ALL — i.e. whether it declares
+   * `supportsBuiltinToolApprovals`.
+   *
+   * `false` means its built-in write/shell tools would execute with Limboo's
+   * permission gate bypassed entirely, and no setting recovers that. Such a
+   * harness is REFUSED at preflight (`HarnessUngatedError`) rather than run,
+   * so it also gets no selectable model — a picker entry that can only ever
+   * fail is worse than an absent one. Recorded here so the Harnesses surface
+   * can say why instead of the harness merely being missing.
+   */
+  gatesBuiltins: boolean;
   /** Reports `parent_tool_use_id`-style nesting for delegations. */
   subagents: boolean | 'unknown';
   /** How a plan document arrives: a tool call, scraped result text, or never. */
@@ -56,6 +69,13 @@ export interface HarnessDescriptor {
   kind: HarnessKind;
   /** npm specifier of the AI SDK adapter; null for Limboo-owned runtimes. */
   module: string | null;
+  /**
+   * Which argument shape its factory takes (see `harness/adapterSettings.ts`).
+   *
+   * A TAG, not a function: this module must stay import-free so a broken adapter
+   * degrades to "not available" instead of taking the main process down at boot.
+   */
+  settingsShape?: HarnessSettingsShape;
   /** Needs a sandbox provider exposing a port for its bridge. */
   needsSandbox: boolean;
   /**
@@ -82,6 +102,7 @@ export const HARNESSES: readonly HarnessDescriptor[] = [
     provider: 'anthropic',
     kind: 'sandbox-bridge',
     module: '@ai-sdk/harness-claude-code',
+    settingsShape: 'claude-code',
     needsSandbox: true,
     // HOME is already in the sandbox's platform allowlist, so a `~/.claude`
     // subscription login works without any of these. They exist so an API-key
@@ -94,6 +115,8 @@ export const HARNESSES: readonly HarnessDescriptor[] = [
       'CLAUDE_CODE_OAUTH_TOKEN',
     ],
     capabilities: {
+      // Verified `supportsBuiltinToolApprovals: true` in the package.
+      gatesBuiltins: true,
       // Its permission modes gate `edit` and `bash` kinds only — a built-in
       // Read/Grep/Glob is never routed to Limboo's gate at any mode.
       gatesReads: false,
@@ -103,6 +126,61 @@ export const HARNESSES: readonly HarnessDescriptor[] = [
       subagents: 'unknown',
       plan: 'tool',
       vision: true,
+      tokenUsage: 'unknown',
+    },
+  },
+  {
+    id: 'codex',
+    label: 'Codex',
+    provider: 'openai',
+    kind: 'sandbox-bridge',
+    module: '@ai-sdk/harness-codex',
+    settingsShape: 'codex',
+    needsSandbox: true,
+    envKeys: [
+      'OPENAI_API_KEY',
+      'CODEX_API_KEY',
+      'OPENAI_BASE_URL',
+      'OPENAI_ORGANIZATION',
+      'OPENAI_PROJECT',
+      'AI_GATEWAY_API_KEY',
+      'AI_GATEWAY_BASE_URL',
+    ],
+    capabilities: {
+      // VERIFIED FALSE in @ai-sdk/harness-codex@1.0.67: the adapter declares
+      // `supportsBuiltinToolApprovals: false`, so its `bash` tool would run with
+      // Limboo's permission gate bypassed. It is therefore refused at preflight
+      // and given no selectable model. Flip this — and add a model — only after
+      // re-verifying the published flag, never on the strength of the docs.
+      gatesBuiltins: false,
+      gatesReads: false,
+      subagents: 'unknown',
+      // No ExitPlanMode equivalent in its two built-ins (bash, webSearch).
+      plan: 'none',
+      vision: false,
+      tokenUsage: 'unknown',
+    },
+  },
+  {
+    id: 'pi',
+    label: 'Pi',
+    provider: 'pi',
+    kind: 'host-process',
+    module: '@ai-sdk/harness-pi',
+    settingsShape: 'pi',
+    // Verified: it uses neither getPortUrl nor getBootstrap, so it needs no
+    // exposed port and has no setup step to consent to. It still receives a
+    // sandbox provider — the framework always creates a session — it simply
+    // never asks for a URL.
+    needsSandbox: false,
+    envKeys: ['AI_GATEWAY_API_KEY', 'AI_GATEWAY_BASE_URL'],
+    capabilities: {
+      // Verified `supportsBuiltinToolApprovals: true` in the package.
+      gatesBuiltins: true,
+      gatesReads: false,
+      subagents: 'unknown',
+      plan: 'none',
+      vision: false,
       tokenUsage: 'unknown',
     },
   },
@@ -118,7 +196,8 @@ export const HARNESSES: readonly HarnessDescriptor[] = [
     envKeys: [],
     capabilities: {
       // Limboo owns the process and every tool call reaches decideToolUse, so
-      // `autoApproveReads` is honoured here.
+      // both are honoured here.
+      gatesBuiltins: true,
       gatesReads: true,
       // Cursor's stream carries no parent linkage — a Cursor run renders flat,
       // deliberately, rather than having nesting inferred for it.

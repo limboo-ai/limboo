@@ -86,6 +86,7 @@ import {
   RESUME_LIMITS,
   SEARCH_LIMITS,
   cursorModelSet,
+  PROVIDER_HARNESS,
   providerForModel,
   resolveModelRouting,
 } from '@shared/constants';
@@ -2308,7 +2309,11 @@ export class AgentManager {
     const provider = providerForModel(this.settings.getAll().agent.model);
     if (provider === 'cursor') {
       await this.assertCursorReady();
-    } else {
+    } else if (provider === 'anthropic' && this.settings.getAll().agent.harness.legacyClaudeSdk) {
+      // Only the DIRECT Claude Agent SDK path depends on a local Claude Code
+      // install. A harness brings its own runtime, so gating it on that probe
+      // would refuse a perfectly runnable harness because a different tool is
+      // missing; its own preflight reports what it actually needs.
       const install = this.getInstall();
       if (!install.installed) {
         this.setLifecycle('auth-required');
@@ -2644,6 +2649,16 @@ export class AgentManager {
     const agent = this.settings.getAll().agent;
     const run = this.runs.get(sessionId);
 
+    // The harness follows the MODEL, not the settings field. `agent.harness.id`
+    // is the choice for Anthropic models — where a harness and the direct SDK
+    // both exist — but a Codex or Pi model can only run on its own harness, and
+    // reading the stored id there would try to run it on Claude Code.
+    const modelProvider = providerForModel(agent.model);
+    const harnessId =
+      modelProvider === 'anthropic' ? agent.harness.id : PROVIDER_HARNESS[modelProvider];
+    const descriptor = harnessById(harnessId);
+    if (!descriptor) throw new Error(`Unknown harness "${harnessId}".`);
+
     // Same three context producers, same order, same one-shot resume-delta
     // semantics as both other paths. They ride `instructions` here, which is
     // the harness's equivalent of Claude's single systemPrompt.append.
@@ -2750,7 +2765,7 @@ export class AgentManager {
     const handle = await runtime.start(
       {
         sessionId,
-        harnessId: agent.harness.id,
+        harnessId,
         prompt,
         cwd,
         mode: permMode,
@@ -2765,7 +2780,10 @@ export class AgentManager {
         // before its first turn. HarnessRuntime validates these against the
         // adapter's real key set and drops what it does not recognise.
         inactiveTools: agent.webSearch ? undefined : ['webSearch', 'WebFetch'],
-        harnessLabel: harnessById(agent.harness.id)?.label,
+        harnessLabel: descriptor.label,
+        settingsShape: descriptor.settingsShape,
+        thinking: agent.thinking,
+        webSearch: agent.webSearch,
         bootstrapAck: agent.harness.bootstrapAck,
         // Built-in tools are gated by `permissionMode` (set inside the runtime),
         // NOT by this map — the framework looks the map up by tool name and only
@@ -2940,6 +2958,20 @@ export class AgentManager {
           return;
         }
         break; // falls into the Claude Agent SDK path below
+      // Harness-only providers: there is no Limboo-owned runtime for these, so
+      // there is nothing to fall back to and no legacy switch to consult.
+      case 'openai':
+      case 'pi':
+        try {
+          await this.runHarnessOnce(sessionId, prompt, cwd, abort, permMode, {
+            ensureStreaming,
+            queueDelta,
+            finishStreaming,
+          });
+        } finally {
+          this.settleOrphanedToolCalls(sessionId);
+        }
+        return;
       case null:
         throw new Error(`${routing.reason}. Pick a model in the composer.`);
       default: {

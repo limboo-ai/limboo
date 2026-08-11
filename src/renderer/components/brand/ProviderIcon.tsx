@@ -4,6 +4,7 @@
  * gradient) per the product's visual rules. Keyed by the `AgentProvider` union
  * from constants.
  */
+import { Boxes } from 'lucide-react';
 import type { AgentProvider } from '@shared/constants';
 
 /**
@@ -60,6 +61,11 @@ export function ProviderIcon({
   switch (provider) {
     case 'cursor':
       return <CursorMark size={size} className={className} />;
+    // No official marks are vendored for these, and inventing one would be
+    // worse than a neutral glyph — the label beside it already names them.
+    case 'openai':
+    case 'pi':
+      return <Boxes size={size} className={className} />;
     case 'anthropic':
     default:
       return <AnthropicMark size={size} className={className} />;

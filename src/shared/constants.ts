@@ -42,7 +42,7 @@ export const ACTIVITY_TAB_IDS: readonly ActivityTab[] = [
  * selected model — picking a Composer model routes runs through the Cursor
  * runtime adapter.
  */
-export type AgentProvider = 'anthropic' | 'cursor';
+export type AgentProvider = 'anthropic' | 'cursor' | 'openai' | 'pi';
 
 /**
  * Selectable agent models (id + short label + provider). The Anthropic ids are
@@ -63,7 +63,32 @@ export const AGENT_MODELS = [
   { value: 'claude-haiku-4-5-20251001', label: 'Haiku 4.5', provider: 'anthropic' },
   { value: 'composer-2', label: 'Composer 2', provider: 'cursor' },
   { value: 'composer-2.5', label: 'Composer 2.5', provider: 'cursor' },
+  // Pi publishes no discoverable default model id, so rather than invent one
+  // this selects "whatever the adapter picks" — see HARNESS_DEFAULT_MODEL_SUFFIX.
+  { value: 'pi:default', label: 'Pi (default model)', provider: 'pi' },
+  // NO CODEX MODEL, deliberately. `@ai-sdk/harness-codex@1.0.67` declares
+  // `supportsBuiltinToolApprovals: false`, so its `bash` tool cannot be routed
+  // through Limboo's permission gate and the harness is refused at preflight.
+  // A picker entry that can only ever fail is worse than an absent one. The
+  // harness stays registered (see harnessRegistry.ts) so the Harnesses surface
+  // can say WHY it is unavailable; add a model here only after the published
+  // flag changes.
 ] as const;
+
+/**
+ * A model value ending in this means "let the adapter choose its own model".
+ *
+ * Needed because routing requires SOME id to resolve a provider from, but not
+ * every harness publishes one — and inventing a plausible-looking id would send
+ * a wrong string to a real API. `buildAdapterSettings` omits `model` entirely
+ * for these, which is what the adapters document as selecting their default.
+ */
+export const HARNESS_DEFAULT_MODEL_SUFFIX = ':default';
+
+/** True when a model id defers the choice to the adapter. */
+export function isAdapterDefaultModel(model: string): boolean {
+  return model.endsWith(HARNESS_DEFAULT_MODEL_SUFFIX);
+}
 
 /**
  * Harness id → display label, for both processes.
@@ -77,12 +102,38 @@ export const AGENT_MODELS = [
 export const HARNESS_LABELS: Record<string, string> = {
   'claude-code': 'Claude Code',
   'cursor-cli': 'Cursor',
+  codex: 'Codex',
+  pi: 'Pi',
 };
 
-/** The harness ids that serve a provider, renderer-safe. */
+/**
+ * Harness id → the provider that serves its models. Renderer-safe.
+ *
+ * This direction, not the reverse: MANY harnesses can serve one provider (the
+ * `claude-code` harness and Limboo's direct Claude Agent SDK path are both
+ * `anthropic`), while a harness always has exactly one provider. A
+ * `Record<AgentProvider, string>` could not express the first case and had to be
+ * duplicated by hand wherever a harness needed its provider.
+ */
+export const HARNESS_PROVIDER: Record<string, AgentProvider> = {
+  'claude-code': 'anthropic',
+  'cursor-cli': 'cursor',
+  codex: 'openai',
+  pi: 'pi',
+};
+
+/**
+ * The harness a provider's models run on by default, renderer-safe.
+ *
+ * Retained for the UI paths that start from a model's provider (the composer's
+ * agent picker, the read-gating hint). Dispatch does NOT use this — it resolves
+ * the harness from settings, because a provider can have more than one.
+ */
 export const PROVIDER_HARNESS: Record<AgentProvider, string> = {
   anthropic: 'claude-code',
   cursor: 'cursor-cli',
+  openai: 'codex',
+  pi: 'pi',
 };
 
 /**
