@@ -102,6 +102,20 @@ export interface HarnessAgentOptions {
   id?: string;
   instructions?: string;
   stopWhen?: unknown;
+  /**
+   * Host-executed AI SDK tools. Declared because the option is real and
+   * supported — the framework runs them in Limboo's process and submits the
+   * result back — but deliberately NOT used.
+   *
+   * Limboo's own memory/search tools reach every agent through the existing
+   * stdio MCP bridge, which Cursor and the direct SDK path share. Re-exposing
+   * them as host tools would fork one tool surface into two definitions, and
+   * would change their identity: host tools arrive under a different `mcp__*`
+   * prefix that the `AUTO_ALLOWED_INTERNAL_TOOLS` allow-list does not match, so
+   * the two GitHub WRITE tools riding that server would silently inherit a
+   * blanket approval. If host tools are ever adopted they must also be listed in
+   * `toolApproval` so they route through the gate.
+   */
   tools?: Record<string, unknown>;
   activeTools?: string[];
   inactiveTools?: string[];
