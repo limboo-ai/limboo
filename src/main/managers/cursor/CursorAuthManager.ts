@@ -22,6 +22,7 @@ import {
   CURSOR_LIMITS,
   CURSOR_MODEL_ID_RE,
   DEFAULT_SETTINGS,
+  clearCursorModels,
   registerCursorModels,
 } from '@shared/constants';
 import type { AppSettings, CursorAuthState, CursorLoginPhase, CursorUpdateResult } from '@shared/types';
@@ -59,7 +60,14 @@ export class CursorAuthManager {
   constructor(
     private readonly secrets: SecretStore,
     private readonly settings: SettingsManager,
-  ) {}
+  ) {
+    // Seed the cached model list from the persisted set. `getCachedState()` is
+    // the synchronous view AgentManager's send-gating reads, and it used to
+    // report `models: undefined` until the first successful probe — so a
+    // persisted Cursor model looked unknown at boot and routed to Claude.
+    const persisted = this.prefs().discoveredModels ?? [];
+    if (persisted.length > 0) this.state = { ...this.state, models: [...persisted] };
+  }
 
   /** The user's Cursor auth preference (`settings.agent.cursor`). */
   private prefs(): AppSettings['agent']['cursor'] {
@@ -196,6 +204,11 @@ export class CursorAuthManager {
       this.modelsFetchedAt = Date.now();
       const models = parseModels(r.stdout);
       if (!models.length) return;
+      // REPLACE, don't append: the registry was append-only, so ids from a
+      // previous account survived a switch and kept routing to Cursor. Clearing
+      // and re-registering in the same tick leaves no window where a live model
+      // is unroutable.
+      clearCursorModels();
       registerCursorModels(models);
       this.setState({ models });
       // Persist so routing (and the pickers) work at next boot pre-probe.
@@ -332,6 +345,15 @@ export class CursorAuthManager {
   async logout(): Promise<void> {
     const r = await runCursorAgent(['logout']);
     if (!r.ok) logger.warn('CursorAuthManager: logout failed', redactCursor(r.stderr).slice(0, 300));
+    // The account's models are no longer ours to route to. Forget them
+    // everywhere — the process registry, the cached state, and the persisted
+    // list — or a signed-out id keeps resolving to Cursor until a restart.
+    clearCursorModels();
+    this.modelsFetchedAt = 0;
+    this.setState({ models: [] });
+    if ((this.prefs().discoveredModels ?? []).length > 0) {
+      this.settings.update({ agent: { cursor: { discoveredModels: [] } } });
+    }
     this.setLogin({ phase: 'idle', url: undefined, error: undefined });
     await this.probe(true);
   }

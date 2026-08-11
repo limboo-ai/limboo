@@ -18,8 +18,10 @@ import type {
   GitTag,
 } from '@shared/types';
 import { guardIpc } from '@/renderer/lib/ipcError';
+import { agentDisplayName } from '@/renderer/features/agent/status';
 import { useWorkspaceStore } from './useWorkspaceStore';
 import { useSessionStore } from './useSessionStore';
+import { useSettingsStore } from './useSettingsStore';
 import { useUIStore } from './useUIStore';
 import { diffKey } from './useDocumentStore';
 
@@ -210,9 +212,15 @@ export const useGitStore = create<GitState>((set, get) => ({
         if (r.reason === 'no-staged') {
           toast({ title: 'Nothing staged', description: 'Stage changes first.', tone: 'warning' });
         } else if (r.reason === 'agent-unavailable') {
+          // Name whichever agent is actually selected — the generator follows
+          // the composer's provider, so hardcoding "Claude Code" told a Cursor
+          // user to sign into a product they are not using.
+          const agentName = agentDisplayName(
+            useSettingsStore.getState().settings.agent.model,
+          );
           toast({
-            title: 'Claude Code unavailable',
-            description: r.error ?? 'Sign in to Claude Code to generate commit messages.',
+            title: `${agentName} unavailable`,
+            description: r.error ?? `Sign in to ${agentName} to generate commit messages.`,
             tone: 'danger',
           });
         } else if (r.reason === 'busy') {

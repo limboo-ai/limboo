@@ -279,8 +279,12 @@ function resultText(value: unknown, outputMax: number): string | undefined {
  * counting it would mint a bogus "Cursor proposed N changes" artifact from a
  * purely investigative run.
  */
-export function isProposedMutation(name: string, input?: Record<string, unknown>): boolean {
-  if (name === 'Bash') return !isReadOnlyShellCommand(input?.command);
+export function isProposedMutation(
+  name: string,
+  input?: Record<string, unknown>,
+  cwd?: string,
+): boolean {
+  if (name === 'Bash') return !isReadOnlyShellCommand(input?.command, { cwd });
   return name === 'Write' || name === 'Edit' || name === 'MultiEdit' || name === 'Delete';
 }
 
@@ -310,15 +314,70 @@ const HOOK_TOOL_NAME_MAP: Record<string, string> = {
   grep: 'Grep',
   ripgrep: 'Grep',
   codebase_search: 'Grep',
+  grep_search: 'Grep',
+  semantic_search: 'Grep',
+  search_files: 'Grep',
   apply_patch: 'Edit',
   glob: 'Glob',
   glob_file_search: 'Glob',
+  file_search: 'Glob',
   ls: 'LS',
   list_dir: 'LS',
+  list_directory: 'LS',
+  read_lints: 'Read',
+  todo_write: 'TodoWrite',
+  update_todos: 'TodoWrite',
   fetch: 'WebFetch',
   web_fetch: 'WebFetch',
   web_search: 'WebSearch',
 };
+
+/**
+ * A read-shaped name we have no mapping for. `classifyTool` cannot recognise
+ * `Some_unmapped_search` and falls back to command-risk, which plan/ask mode
+ * HARD-DENIES — so a missing map entry silently became "the agent cannot
+ * search". Naming the shape keeps an unmapped inspection tool usable; the
+ * caller still emits a diagnostic so the gap is visible rather than silent.
+ */
+const READ_SHAPED_TOOL_RE = /^(grep|search|find|list|read|glob|todo|lint|diagnos)/i;
+
+/** True when an unmapped raw tool name reads as an inspection tool. */
+export function isReadShapedToolName(rawName: string): boolean {
+  return READ_SHAPED_TOOL_RE.test(rawName.trim());
+}
+
+/**
+ * Canonical hook event name. The CLI's spelling is undocumented for print
+ * mode, so compare case- and separator-insensitively: `pre_tool_use`,
+ * `PreToolUse` and `preToolUse` are one event, not three unknowns.
+ */
+function canonicalHookEvent(event: string): string {
+  const key = event.trim().toLowerCase().replace(/[_\-\s.]/g, '');
+  switch (key) {
+    case 'pretooluse':
+      return 'preToolUse';
+    case 'beforeshellexecution':
+    case 'beforeshell':
+      return 'beforeShellExecution';
+    case 'beforereadfile':
+    case 'beforeread':
+      return 'beforeReadFile';
+    case 'afterfileedit':
+    case 'afteredit':
+      return 'afterFileEdit';
+    case 'subagentstart':
+      return 'subagentStart';
+    case 'subagentstop':
+      return 'subagentStop';
+    default:
+      return '';
+  }
+}
+
+/** Key names only (never values) — safe to surface in a deny message. */
+function keyNames(payload: Record<string, unknown>): string {
+  return Object.keys(payload).slice(0, 12).join(', ') || '(none)';
+}
 
 export interface MappedHookEvent {
   /** Limboo tool identity (feeds classifyTool / summarizeTool unchanged). */
@@ -327,35 +386,65 @@ export interface MappedHookEvent {
   input: Record<string, unknown>;
   /** True for observe-only events (afterFileEdit) — never gated. */
   observeOnly: boolean;
+  /** The raw CLI tool name when it had no map entry (for diagnostics). */
+  unmapped?: string;
+  /** True when an `unmapped` name reads as an inspection tool (see B5). */
+  readShaped?: boolean;
+}
+
+/** Either a usable mapping, or the named reason it could not be produced. */
+export type HookMapResult =
+  | { ok: true; value: MappedHookEvent }
+  | { ok: false; reason: string };
+
+/** Any of the aliases Cursor might use for a file-path field. */
+function hookFilePath(payload: Record<string, unknown>): string | undefined {
+  return (
+    strField(payload, 'file_path') ??
+    strField(payload, 'path') ??
+    strField(payload, 'filePath') ??
+    strField(payload, 'absolute_path') ??
+    strField(payload, 'absolutePath') ??
+    strField(payload, 'uri') ??
+    strField(payload, 'file')
+  );
 }
 
 /**
  * Translate a Cursor hook payload into the Limboo tool identity the existing
- * permission machinery understands. Unknown events return null (the caller
- * decides the fail posture — for gate events that is DENY).
+ * permission machinery understands. Failure carries a NAMED reason so the
+ * caller's deny message says which key was missing instead of "unknown"; the
+ * fail posture itself is the caller's (for gate events, DENY).
  */
-export function mapHookEvent(
-  event: string,
-  payload: Record<string, unknown>,
-): MappedHookEvent | null {
-  switch (event) {
+export function mapHookEvent(event: string, payload: Record<string, unknown>): HookMapResult {
+  const ok = (value: MappedHookEvent): HookMapResult => ({ ok: true, value });
+  switch (canonicalHookEvent(event)) {
     case 'beforeShellExecution': {
       const command = strField(payload, 'command') ?? strField(payload, 'cmd') ?? '';
-      return { name: 'Bash', input: { command }, observeOnly: false };
+      return ok({ name: 'Bash', input: { command }, observeOnly: false });
     }
     case 'beforeReadFile': {
-      const filePath =
-        strField(payload, 'file_path') ?? strField(payload, 'path') ?? strField(payload, 'filePath');
-      return { name: 'Read', input: filePath ? { file_path: filePath } : {}, observeOnly: false };
+      // An empty input would skip the workspace path guard entirely and raise a
+      // content-free approval dialog, so an unrecognised path key is a failure,
+      // not a permissive default.
+      const filePath = hookFilePath(payload);
+      if (!filePath) {
+        return { ok: false, reason: `beforeReadFile carried no file path (keys: ${keyNames(payload)})` };
+      }
+      return ok({ name: 'Read', input: { file_path: filePath }, observeOnly: false });
     }
     case 'afterFileEdit': {
-      const filePath =
-        strField(payload, 'file_path') ?? strField(payload, 'path') ?? strField(payload, 'filePath');
-      return { name: 'Edit', input: filePath ? { file_path: filePath } : {}, observeOnly: true };
+      const filePath = hookFilePath(payload);
+      if (!filePath) {
+        return { ok: false, reason: `afterFileEdit carried no file path (keys: ${keyNames(payload)})` };
+      }
+      return ok({ name: 'Edit', input: { file_path: filePath }, observeOnly: true });
     }
     case 'preToolUse': {
       const rawName = (strField(payload, 'tool_name') ?? strField(payload, 'toolName') ?? '').trim();
-      if (!rawName) return null;
+      if (!rawName) {
+        return { ok: false, reason: `preToolUse carried no tool name (keys: ${keyNames(payload)})` };
+      }
       const rawInput = payload.tool_input ?? payload.toolInput;
       const args =
         rawInput && typeof rawInput === 'object' && !Array.isArray(rawInput)
@@ -366,12 +455,19 @@ export function mapHookEvent(
       // over MCP args would be a no-op at best and could drop the `path` key the
       // workspace guard reads.
       const mcpName = mcpHookToolName(rawName, payload);
-      if (mcpName) return { name: mcpName, input: args, observeOnly: false };
-      const name =
-        HOOK_TOOL_NAME_MAP[rawName.toLowerCase()] ??
-        TOOL_NAME_MAP[rawName] ??
-        genericToolName(rawName);
-      return { name, input: reshapeArgs(name, args), observeOnly: false };
+      if (mcpName) return ok({ name: mcpName, input: args, observeOnly: false });
+      const mapped = HOOK_TOOL_NAME_MAP[rawName.toLowerCase()] ?? TOOL_NAME_MAP[rawName];
+      const name = mapped ?? genericToolName(rawName);
+      return ok({
+        name,
+        input: reshapeArgs(name, args),
+        observeOnly: false,
+        // An unmapped inspection tool would classify as command-risk and be
+        // hard-denied in plan/ask. Flag it so the gate can treat it as a read
+        // and the caller can report the gap instead of silently blocking.
+        unmapped: mapped ? undefined : rawName,
+        readShaped: mapped ? undefined : isReadShapedToolName(rawName),
+      });
     }
     case 'subagentStart':
     case 'subagentStop': {
@@ -383,17 +479,17 @@ export function mapHookEvent(
       // carry the session id), so nothing here tries to nest anything.
       const task = strField(payload, 'task') ?? strField(payload, 'description') ?? '';
       const model = strField(payload, 'subagent_model') ?? strField(payload, 'subagentModel');
-      return {
+      return ok({
         name: 'Agent',
         input: {
           description: task,
           ...(model ? { model } : {}),
         },
         observeOnly: true,
-      };
+      });
     }
     default:
-      return null;
+      return { ok: false, reason: `unhandled hook event "${event.slice(0, 40) || '(empty)'}"` };
   }
 }
 

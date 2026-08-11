@@ -76,7 +76,6 @@ import {
   ACTIVITY_LIMITS,
   AGENT_LIMITS,
   SUBAGENT_LIMITS,
-  AGENT_MODELS,
   ANTHROPIC_MODEL_ID_RE,
   CURSOR_MODEL_ID_RE,
   CURSOR_RESUME_ID_RE,
@@ -85,7 +84,9 @@ import {
   MEMORY_LIMITS,
   RESUME_LIMITS,
   SEARCH_LIMITS,
+  cursorModelSet,
   providerForModel,
+  resolveModelRouting,
 } from '@shared/constants';
 import type { AgentProvider } from '@shared/constants';
 import type { CursorAuthManager } from './cursor/CursorAuthManager';
@@ -522,6 +523,18 @@ function redact(text: string): string {
     .replace(/crsr_[A-Za-z0-9_-]{8,}/g, 'crsr_***')
     .replace(/(ANTHROPIC_API_KEY|ANTHROPIC_AUTH_TOKEN|CLAUDE_CODE_OAUTH_TOKEN|CURSOR_API_KEY)=\S+/gi, '$1=***')
     .replace(/(authorization|bearer)\s*[:=]?\s*[A-Za-z0-9._-]{10,}/gi, '$1 ***');
+}
+
+/**
+ * Caller-supplied context for the permission gate. These are HINTS from the
+ * adapter that translated the call — never authorization. They may only relax
+ * risk classification for a tool identity Limboo could not recognise; every
+ * guard in {@link AgentManager.decideToolUseCore} (crown jewels, workspace
+ * containment, plan read-only, remembered scoping) runs regardless.
+ */
+interface ToolGateHints {
+  /** The adapter's raw tool name reads as an inspection tool (see B5). */
+  readShaped?: boolean;
 }
 
 /* ------------------------------------------------------------------ */
@@ -1922,9 +1935,29 @@ export class AgentManager {
     workspaceId: string,
     ctx: GitCommitContext,
   ): Promise<GenerateCommitMessageResult> {
-    const install = this.getInstall();
-    if (!install.installed) {
-      return { ok: false, reason: 'agent-unavailable', error: install.error };
+    // Gate on the ACTIVE provider, not unconditionally on Claude. This ran the
+    // Claude SDK regardless of what the user had selected, so a Cursor-only user
+    // clicking "generate commit message" launched a Claude Code run — and, with
+    // Claude not installed, was told "Claude Code unavailable" by a feature they
+    // never asked Claude for.
+    const commitProvider = providerForModel(this.settings.getAll().agent.model);
+    if (commitProvider === 'cursor') {
+      const cursorState = this.cursorAuth?.getCachedState();
+      const ready =
+        cursorState?.status === 'authenticated-cli' ||
+        cursorState?.status === 'authenticated-api-key';
+      if (!ready) {
+        return {
+          ok: false,
+          reason: 'agent-unavailable',
+          error: cursorState?.error ?? 'Sign in to Cursor to generate commit messages.',
+        };
+      }
+    } else {
+      const install = this.getInstall();
+      if (!install.installed) {
+        return { ok: false, reason: 'agent-unavailable', error: install.error };
+      }
     }
     if (this.state.lifecycle === 'rate-limited') {
       return {
@@ -1984,6 +2017,16 @@ export class AgentManager {
         // Belt + braces: GitManager's commitGen caps keep us far below this.
         throw new Error('Commit context too large.');
       }
+      let finalText = '';
+      let resultOk: boolean | null = null;
+      let resultText = '';
+
+      if (commitProvider === 'cursor') {
+        const out = await this.runCursorUtility(prompt, ctx.root, abort, queueDelta, run);
+        finalText = out.text;
+        resultOk = out.ok;
+        resultText = out.text;
+      } else {
       const sdk = await loadSdk();
       const options = this.buildUtilityOptions(ctx.root, abort);
       const q = sdk.query({ prompt, options }) as unknown as AsyncIterable<SDKMessage> & {
@@ -1991,9 +2034,6 @@ export class AgentManager {
       };
       run.query = q;
 
-      let finalText = '';
-      let resultOk: boolean | null = null;
-      let resultText = '';
       for await (const msg of q) {
         if (abort.signal.aborted) break;
         switch (msg.type) {
@@ -2025,6 +2065,7 @@ export class AgentManager {
           default:
             break;
         }
+      }
       }
       flushDelta();
 
@@ -2063,6 +2104,82 @@ export class AgentManager {
         this.emitHook(subagentSession, 'subagent-stop', { summary: 'Commit-message sub-agent' });
       }
     }
+  }
+
+  /**
+   * The Cursor analogue of {@link buildUtilityOptions}: a tool-less, one-shot,
+   * non-resuming print-mode run used for utility generations (commit messages).
+   *
+   * `--mode ask` is the closest thing Cursor has to Claude's `allowedTools: []`
+   * — it is provider-enforced read-only — and `force: false` means nothing can
+   * be applied even if the model tried. No bridge pipe, no hooks, no MCP, no
+   * generated session files, and the bridge's `onToolUse` is inert, so this can
+   * never mutate the repository. Nothing is persisted: no resume id is stored
+   * and none is replayed, so a utility run never disturbs the user's chat.
+   */
+  private async runCursorUtility(
+    prompt: string,
+    cwd: string,
+    abort: AbortController,
+    queueDelta: (text: string) => void,
+    run: { query: { close?: () => void } | null },
+  ): Promise<{ ok: boolean; text: string }> {
+    const runtime = this.cursorRuntime;
+    if (!runtime) throw new Error('The Cursor runtime is not available.');
+    const agent = this.settings.getAll().agent;
+    const model = agent.model;
+    if (!CURSOR_MODEL_ID_RE.test(model) || !cursorModelSet().has(model)) {
+      throw new Error(`"${model.slice(0, 80)}" is not an available Cursor model.`);
+    }
+
+    let text = '';
+    let ok = true;
+    const bridge: ProviderRunBridge = {
+      ensureStreaming: () => undefined,
+      queueDelta: (t) => {
+        text += t;
+        queueDelta(t);
+      },
+      finishStreaming: (final) => {
+        if (final && final.trim().length > 0) text = final;
+      },
+      // A utility run has no tools. Record nothing and, critically, grant
+      // nothing — there is no permission gate wired up here to ask.
+      onToolUse: () => undefined,
+      onToolResult: () => undefined,
+      onInit: () => undefined,
+      onResult: (good, t) => {
+        ok = good;
+        if (t && t.trim().length > 0) text = t;
+      },
+      diag: (category, severity, label, detail) =>
+        this.diag(
+          category === 'stream' ? 'stream' : 'request',
+          severity,
+          label,
+          detail,
+          this.state.activeSessionId,
+        ),
+    };
+
+    const handle = await runtime.start(
+      {
+        sessionId: `commit-msg:${newId()}`,
+        prompt,
+        cwd,
+        mode: 'ask',
+        force: false,
+        trusted: false,
+        model,
+        // No attachmentsDir: a utility run has no session and no attachments.
+        sandbox: resolveSandboxConfig(agent.sandbox, { cwd, provider: 'cursor' }),
+        abort,
+      },
+      bridge,
+    );
+    run.query = { close: handle.close };
+    await handle.done;
+    return { ok, text };
   }
 
   /** Abort an in-flight commit-message generation for a workspace. */
@@ -2515,22 +2632,37 @@ export class AgentManager {
     if (run) run.result = undefined;
     this.setRequest(sessionId, { phase: 'connecting' });
 
-    // Provider dispatch: a Cursor model routes into the print-mode runtime,
-    // reusing the exact streaming closures above so everything downstream
-    // (events, persistence, plan artifacts, UI) behaves identically.
-    if (providerForModel(agent.model) === 'cursor') {
-      try {
-        await this.runCursorOnce(sessionId, prompt, cwd, abort, permMode, {
-          ensureStreaming,
-          queueDelta,
-          finishStreaming,
-        });
-      } finally {
-        // Same reconciliation the Claude branch does — a Cursor run cut mid-tool
-        // would otherwise leave its chip spinning for the session's lifetime.
-        this.settleOrphanedToolCalls(sessionId);
+    // Provider dispatch. EXHAUSTIVE by construction: an unroutable model is a
+    // named failure, never a fall-through. This was an `if (cursor) … return;`
+    // with the Claude path underneath, so anything not proven to be Cursor ran
+    // as Claude — which is how a Cursor session ended up streaming Claude Code.
+    // Adding a provider must be a compile-visible change here, not a silent
+    // inheritance of the Anthropic branch.
+    const routing = resolveModelRouting(agent.model);
+    switch (routing.provider) {
+      case 'cursor':
+        try {
+          // Reuses the exact streaming closures above so everything downstream
+          // (events, persistence, plan artifacts, UI) behaves identically.
+          await this.runCursorOnce(sessionId, prompt, cwd, abort, permMode, {
+            ensureStreaming,
+            queueDelta,
+            finishStreaming,
+          });
+        } finally {
+          // Same reconciliation the Claude branch does — a Cursor run cut
+          // mid-tool would otherwise leave its chip spinning forever.
+          this.settleOrphanedToolCalls(sessionId);
+        }
+        return;
+      case 'anthropic':
+        break; // falls into the Claude Agent SDK path below
+      case null:
+        throw new Error(`${routing.reason}. Pick a model in the composer.`);
+      default: {
+        const never: never = routing.provider;
+        throw new Error(`Unhandled agent provider: ${String(never)}`);
       }
-      return;
     }
 
     try {
@@ -3025,14 +3157,13 @@ export class AgentManager {
 
     // The model id is a settings string — never let it reach argv unless it
     // both passes the strict charset AND names a model we know serves the
-    // Cursor provider (static catalog ∪ account-discovered ∪ persisted).
+    // Cursor provider. `cursorModelSet()` is the SAME set `resolveModelRouting`
+    // consults, so routing and validation cannot disagree: this used to build
+    // its own union (adding the auth cache), which made it strictly larger than
+    // the routing set — an id in the cache but not the registry routed to
+    // Claude and never reached this check. Both feed the registry now.
     const model = agent.model;
-    const knownCursorModels = new Set<string>([
-      ...AGENT_MODELS.filter((m) => m.provider === 'cursor').map((m) => m.value),
-      ...(this.cursorAuth?.getCachedState().models ?? []),
-      ...(agent.cursor?.discoveredModels ?? []),
-    ]);
-    if (!CURSOR_MODEL_ID_RE.test(model) || !knownCursorModels.has(model)) {
+    if (!CURSOR_MODEL_ID_RE.test(model) || !cursorModelSet().has(model)) {
       throw new Error(
         `"${model.slice(0, 80)}" is not an available Cursor model. ` +
           'Pick a Composer model in the model picker (Settings › Agent), then retry.',
@@ -3149,13 +3280,36 @@ export class AgentManager {
       try {
         pipe = await startBridgeServer({
           onHook: (event, payload) => {
-            const mapped = mapHookEvent(event, payload);
-            if (!mapped) {
-              // Unknown GATE events fail closed; Cursor also has failClosed set.
+            const result = mapHookEvent(event, payload);
+            if (!result.ok) {
+              // Unmappable GATE events fail closed; Cursor also has failClosed
+              // set. The reason is NAMED (which key was missing, which event was
+              // unrecognised) and surfaced as a diagnostic — a silent universal
+              // deny here reads to the user as "the agent cannot do anything",
+              // with nothing anywhere saying why.
+              this.diag(
+                'tool',
+                'error',
+                'Hook event could not be mapped',
+                result.reason,
+                sessionId,
+              );
               return Promise.resolve<HookDecision>({
                 permission: 'deny',
-                agentMessage: `Limboo does not handle the ${event || 'unknown'} hook event.`,
+                agentMessage: `Limboo could not interpret this hook: ${result.reason}.`,
               });
+            }
+            const mapped = result.value;
+            if (mapped.unmapped) {
+              this.diag(
+                'tool',
+                mapped.readShaped ? 'debug' : 'warning',
+                `Unmapped Cursor tool "${mapped.unmapped.slice(0, 60)}"`,
+                mapped.readShaped
+                  ? `Treated as a read (the name reads as an inspection tool). Mapped identity: ${mapped.name}.`
+                  : `Treated as command-risk. Mapped identity: ${mapped.name}.`,
+                sessionId,
+              );
             }
             if (mapped.observeOnly) {
               // afterFileEdit: the stream's tool_call events already feed the
@@ -3169,10 +3323,14 @@ export class AgentManager {
               // four of their id fields carry the same session id, so parent
               // linkage is not derivable). Until that changes, a Cursor run
               // renders its tool calls flat and shows no subagent row.
-              if (event === 'subagentStart' || event === 'subagentStop') {
+              // Keyed off the MAPPED identity, not the raw `event` string: the
+              // CLI's spelling is normalised in mapHookEvent, so comparing the
+              // raw value here would miss `subagent_start` and silently drop the
+              // audit row.
+              if (mapped.name === 'Agent') {
                 this.emitHook(
                   sessionId,
-                  event === 'subagentStart' ? 'subagent-start' : 'subagent-stop',
+                  /stop$/i.test(event.trim()) ? 'subagent-stop' : 'subagent-start',
                   {
                     tool: 'Agent',
                     summary: 'Cursor subagent',
@@ -3192,6 +3350,7 @@ export class AgentManager {
                 mapped.name,
                 mapped.input,
                 abort.signal,
+                { readShaped: mapped.readShaped },
               ).then((r): HookDecision => {
                 if (r.behavior === 'allow') return { permission: 'allow' };
                 return {
@@ -3299,6 +3458,10 @@ export class AgentManager {
     const allowRules = [
       ...sessionAllowRules({
         autoApproveReads: agent.autoApproveReads && agent.permissionMode !== 'approve-all',
+        // NOT ANDed with `approve-all` — see CursorAllowPosture.readOnlyShell.
+        // Withdrawing the read-only shell floor under "prompt me for everything"
+        // left a hookless run with no way to prompt and no way to read.
+        readOnlyShell: agent.autoApproveReads,
         limbooMcp: limbooBridge,
         attachmentsStaged: attachmentStaging != null,
       }),
@@ -3369,7 +3532,17 @@ export class AgentManager {
         withSessionCliJson(cwd, { deny: denyRules, allow: allowRules, ask: askRules }, inner);
       // Outermost: the declarative `.cursor/sandbox.json` (snapshot+restored like
       // every other generated session file, so `git status` stays clean).
-      return withSessionSandboxJson(cwd, sandbox, withCli);
+      //
+      // The jail must grant the bridge its socket + binaries, or it starves the
+      // permission mechanism itself: the hook child cannot connect, fails
+      // closed, and every tool call is denied "bridge unreachable".
+      const pipePath = pipe?.env.LIMBOO_BRIDGE_PIPE;
+      return withSessionSandboxJson(cwd, sandbox, withCli, {
+        socketDir:
+          pipePath && process.platform !== 'win32' ? path.dirname(pipePath) : undefined,
+        executables: pipe ? [bridgeNodeCommand()] : [],
+        scripts: [hookRunnerPath, mcpBridgePath].filter((p): p is string => !!p),
+      });
     };
 
     let outcome: CursorRunOutcome;
@@ -3416,6 +3589,22 @@ export class AgentManager {
         // verification so 'default' runs revert to propose-only. An aborted
         // run proves nothing (hooks may simply not have fired yet), so it
         // never clears — otherwise a single Stop would flip-flop the posture.
+        // Hooks registered but never connected means the run had no way to
+        // PROMPT — the declarative cli.json floor was the only thing standing
+        // between the agent and a total block. Say so once per run so
+        // Troubleshooting can explain a degraded session instead of leaving the
+        // user to infer it from things silently not working.
+        if (hookCfg && !pipe.hookConnected && gatedToolSeen) {
+          this.diag(
+            'tool',
+            'warning',
+            'Cursor hook bridge never connected — interactive approval was unavailable',
+            'Tool calls were governed by the declarative .cursor/cli.json rules alone. ' +
+              'Reads stay allowed by the read-only floor; anything outside it was refused ' +
+              'by the CLI without reaching a prompt.',
+            sessionId,
+          );
+        }
         if (hookCfg && cliVersion) {
           if (pipe.hookConnected) {
             setHooksVerified(cliVersion);
@@ -4558,9 +4747,23 @@ export class AgentManager {
     permMode: SessionPermissionMode,
     injectedContext?: string,
   ): Options {
-    // The model id is persisted user data riding into the SDK spawn — charset-
-    // validate it before use (mirrors runCursorOnce's model gate; unknown-but-
-    // well-formed ids are allowed so newer Anthropic models keep working).
+    // PROVIDER first, charset second. Charset validation alone let every
+    // plausible Cursor id (`composer-2`, `cheetah`, `gpt-5`) through — they all
+    // match ANTHROPIC_MODEL_ID_RE — so a mis-routed model was handed verbatim to
+    // the Claude SDK and the user watched Claude Code stream while Cursor was
+    // selected. The Cursor arm has always cross-checked its provider; the
+    // asymmetry WAS the bug. A mismatch is a hard error, never a silent
+    // substitution: running someone else's model is worse than not running.
+    const routing = resolveModelRouting(agent.model);
+    if (routing.provider !== 'anthropic') {
+      throw new Error(
+        routing.provider === null
+          ? `${routing.reason}. Pick a model in the composer.`
+          : `"${agent.model.slice(0, 80)}" is served by ${routing.provider}, not Claude Code.`,
+      );
+    }
+    // Charset guard stays for well-formed but unknown ANTHROPIC ids, so newer
+    // Claude models keep working before the catalog catches up.
     const model = ANTHROPIC_MODEL_ID_RE.test(agent.model)
       ? agent.model
       : DEFAULT_SETTINGS.agent.model;
@@ -4703,6 +4906,7 @@ export class AgentManager {
     toolName: string,
     input: Record<string, unknown>,
     signal: AbortSignal,
+    hints?: ToolGateHints,
   ): Promise<PermissionResult> {
     // Both providers (Claude's canUseTool and the Cursor hook bridge) call this
     // wrapper, so a single emission records the pre-tool-use gate outcome onto
@@ -4719,6 +4923,7 @@ export class AgentManager {
       input,
       signal,
       gate,
+      hints,
     );
     const decision = result.behavior === 'allow' ? 'allow' : 'deny';
     const risk = classifyTool(toolName);
@@ -4766,6 +4971,7 @@ export class AgentManager {
     input: Record<string, unknown>,
     signal: AbortSignal,
     gate?: { prompted: boolean },
+    hints?: ToolGateHints,
   ): Promise<PermissionResult> {
       // Sandbox-escape audit (G4): when a tool sets the SDK's
       // `dangerouslyDisableSandbox` flag, it is being retried OUTSIDE the OS jail
@@ -4898,8 +5104,15 @@ export class AgentManager {
         (toolName === 'BashOutput' ||
           toolName === 'KillBash' ||
           toolName === 'KillShell' ||
-          (toolName === 'Bash' && isReadOnlyShellCommand(input.command)));
-      const effectiveRisk: ToolRisk = readOnlyShell ? 'read' : risk;
+          (toolName === 'Bash' && isReadOnlyShellCommand(input.command, { cwd })));
+      // An adapter tool with no name mapping classifies as command-risk because
+      // `classifyTool` cannot recognise it — which hard-denies it in plan/ask.
+      // When the raw name reads as an inspection tool (`grep_search`,
+      // `file_search`, …) the caller says so and it gates as a read. This only
+      // ever RELAXES, and only for a name the provider itself supplied; the
+      // crown-jewel and workspace guards below are unaffected.
+      const readShaped = risk === 'command' && hints?.readShaped === true;
+      const effectiveRisk: ToolRisk = readOnlyShell || readShaped ? 'read' : risk;
 
       // An external MCP tool the user declared reachable in the read-only modes
       // (per-server `planAccess`, optionally backed by the server's own

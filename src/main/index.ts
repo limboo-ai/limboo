@@ -384,6 +384,12 @@ function bootstrap(): void {
       if (configureCursorExec({ executablePath: next.agent.cursor.executablePath })) {
         void cursorAuth.probe(true);
       }
+      // Keep MAIN's routing registry in step with the persisted list, exactly
+      // as the renderer's own settings subscription does. Without this, any
+      // writer other than the auth probe (an import, a second window, a
+      // hand-edited settings.json) updated the renderer's registry and not
+      // main's — the picker would offer a model that main then routed to Claude.
+      registerCursorModels(next.agent.cursor.discoveredModels);
     });
     terminal.setSessionRootResolver((sessionId) => worktrees.resolveSessionRoot(sessionId));
     resume.setSessionRootResolver((sessionId) => worktrees.resolveSessionRoot(sessionId));

@@ -33,7 +33,11 @@ export function useAgentModels(): AgentModelOption[] {
       provider: m.provider,
     }));
     const known = new Set(out.map((m) => m.value));
-    for (const id of discoveredLive ?? discoveredPersisted ?? []) {
+    // UNION, not coalesce. `??` meant that the moment the live auth state
+    // carried a present-but-EMPTY array (a probe that returned nothing, a
+    // signed-out account mid-refresh), the persisted list was discarded and the
+    // user's selected Cursor model vanished from the picker.
+    for (const id of new Set([...(discoveredLive ?? []), ...(discoveredPersisted ?? [])])) {
       if (known.has(id)) continue;
       known.add(id);
       out.push({ value: id, label: id, provider: 'cursor' });

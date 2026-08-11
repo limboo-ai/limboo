@@ -12,8 +12,8 @@
  * captured byte passes redactCursor before a log/diagnostic line.
  */
 import type { ChildProcess } from 'node:child_process';
-import { execFile } from 'node:child_process';
 import { CURSOR_LIMITS, CURSOR_MODEL_ID_RE, CURSOR_RESUME_ID_RE } from '@shared/constants';
+import { killTree as sharedKillTree } from '../agent/killTree';
 import type { CursorAuthManager } from './CursorAuthManager';
 import { redactCursor, runCursorAgent, spawnCursorRun } from './exec';
 import { NO_RESULT_MARKER } from './errors';
@@ -161,7 +161,7 @@ export class CursorRuntime {
             if (
               !spec.force &&
               result.status === 'done' &&
-              isProposedMutation(mapped.name, mapped.input)
+              isProposedMutation(mapped.name, mapped.input, spec.cwd)
             ) {
               outcome.proposedMutations += 1;
             }
@@ -274,24 +274,5 @@ function argvLabel(spec: CursorRunSpec): string {
 
 /** Kill the child and its whole process tree (cursor-agent spawns helpers). */
 function killTree(child: ChildProcess): void {
-  if (child.exitCode !== null || child.signalCode !== null || !child.pid) return;
-  if (process.platform === 'win32') {
-    // taskkill /T fells the whole tree; plain kill() orphans grandchildren.
-    execFile('taskkill', ['/pid', String(child.pid), '/T', '/F'], { windowsHide: true }, () => undefined);
-    return;
-  }
-  try {
-    child.kill('SIGTERM');
-  } catch {
-    return;
-  }
-  const hardKill = setTimeout(() => {
-    try {
-      if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');
-    } catch {
-      // already gone
-    }
-  }, CURSOR_LIMITS.killGraceMs);
-  // Don't hold the event loop open for the grace timer.
-  hardKill.unref?.();
+  sharedKillTree(child, CURSOR_LIMITS.killGraceMs);
 }

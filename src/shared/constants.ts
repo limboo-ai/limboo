@@ -59,6 +59,26 @@ export const AGENT_MODELS = [
 ] as const;
 
 /**
+ * Harness id → display label, for both processes.
+ *
+ * The full descriptors (module specifiers, capabilities, sandbox requirements)
+ * live in `main/managers/agent/harnessRegistry.ts` and are MAIN-ONLY — the
+ * renderer must never see a module specifier, the same rule
+ * `PROVIDER_CAPABILITIES` follows. Only the id/label pair crosses, because the
+ * Settings and Composer pickers need something to render.
+ */
+export const HARNESS_LABELS: Record<string, string> = {
+  'claude-code': 'Claude Code',
+  'cursor-cli': 'Cursor',
+};
+
+/** The harness ids that serve a provider, renderer-safe. */
+export const PROVIDER_HARNESS: Record<AgentProvider, string> = {
+  anthropic: 'claude-code',
+  cursor: 'cursor-cli',
+};
+
+/**
  * Charset guard for an Anthropic model id before it reaches the Agent SDK.
  * Settings normally only ever hold picker values, but the model string is
  * persisted user data — never trust it verbatim (CLAUDE.md §6 input
@@ -83,11 +103,63 @@ export function registerCursorModels(ids: readonly string[]): void {
   }
 }
 
-/** Resolve the provider that serves a given model id. */
-export function providerForModel(model: string): AgentProvider {
+/**
+ * Forget every runtime-discovered id. The registry used to be append-only, so
+ * signing out of Cursor or switching accounts left stale ids routing to a
+ * provider that no longer serves them. Callers REPLACE (clear + register) so
+ * there is no window where the set is empty and a live model mis-routes.
+ */
+export function clearCursorModels(): void {
+  dynamicCursorModels.clear();
+}
+
+/**
+ * Every id known to be a Cursor model: the static catalog plus whatever the
+ * running process has registered. This is the SINGLE routing set — the run-time
+ * validation in `runCursorOnce` consults it too, so "what routes to Cursor" and
+ * "what Cursor will accept" can no longer disagree (they used to: validation
+ * additionally read the auth cache, so an id in the cache but not the registry
+ * routed to Claude and never reached the check that would have caught it).
+ */
+export function cursorModelSet(): Set<string> {
+  const out = new Set<string>(dynamicCursorModels);
+  for (const m of AGENT_MODELS) if (m.provider === 'cursor') out.add(m.value);
+  return out;
+}
+
+/**
+ * Route a model id to its provider, or report that nothing claims it.
+ *
+ * There is deliberately no "default" provider. `providerForModel` used to
+ * answer `'anthropic'` for any unrecognised id, which meant a Cursor model that
+ * had not been registered yet was handed to the Claude SDK — and because
+ * `buildOptions` validated by charset rather than provider, it ran and streamed
+ * as Claude Code with no error anywhere. An unknown id must be a named failure,
+ * not a guess.
+ */
+export function resolveModelRouting(
+  model: string,
+): { provider: AgentProvider } | { provider: null; reason: string } {
   const known = AGENT_MODELS.find((m) => m.value === model)?.provider;
-  if (known) return known;
-  return dynamicCursorModels.has(model) ? 'cursor' : 'anthropic';
+  if (known) return { provider: known };
+  if (dynamicCursorModels.has(model)) return { provider: 'cursor' };
+  return {
+    provider: null,
+    reason: `"${model.slice(0, 80)}" is not a known model for any configured provider`,
+  };
+}
+
+/**
+ * Resolve the provider that serves a given model id.
+ *
+ * Convenience wrapper over {@link resolveModelRouting} for the many callers
+ * that only need a label or a capability lookup and cannot act on "unknown".
+ * **Do not use it to choose an execution path** — it collapses unknown into
+ * `'anthropic'`, which is exactly the bug `resolveModelRouting` exists to
+ * prevent. Dispatch and option-building must call `resolveModelRouting`.
+ */
+export function providerForModel(model: string): AgentProvider {
+  return resolveModelRouting(model).provider ?? 'anthropic';
 }
 
 /** Bounds the main process clamps agent settings against. */

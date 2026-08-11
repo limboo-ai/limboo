@@ -19,6 +19,7 @@
  * config is best-effort augmentation; the enforced floor remains the cli.json
  * permission rules plus the `--workspace` confinement.
  */
+import { dirname } from 'node:path';
 import { withSessionFile, safeParseObject, copySafeKeys } from './sessionFile';
 import type { EffectiveSandbox } from '../sandbox/policy';
 
@@ -40,19 +41,48 @@ export function sandboxArgv(eff: EffectiveSandbox): string[] {
   return []; // 'auto' → omit, let the CLI decide
 }
 
+/**
+ * The on-disk resources the per-run bridge needs from inside the jail. Without
+ * these the sandbox starves the very mechanism that asks the user for
+ * permission: `net.connect(PIPE)` fails in the hook child, the runner fails
+ * closed, and EVERY tool call is denied with "Limboo bridge unreachable".
+ */
+export interface CursorBridgePaths {
+  /** Directory holding the unix socket (posix); empty on win32 named pipes. */
+  socketDir?: string;
+  /** Executables the hook / MCP children are spawned as. */
+  executables?: string[];
+  /** The bundled .cjs scripts those executables run. */
+  scripts?: string[];
+}
+
 /** Build the `.cursor/sandbox.json` body from the neutral policy. */
-function buildSandboxConfig(eff: EffectiveSandbox): CursorSandboxConfig {
+function buildSandboxConfig(
+  eff: EffectiveSandbox,
+  bridge?: CursorBridgePaths,
+): CursorSandboxConfig {
   const networkPolicy: CursorSandboxConfig['networkPolicy'] =
     eff.network.policy === 'all'
       ? 'all'
       : eff.network.policy === 'off'
         ? 'off'
         : { allowedDomains: eff.network.allowedDomains };
+  // The socket needs connect (and the 0700 dir needs traversal), so it is a
+  // read-WRITE grant; the binaries and scripts are only executed, never written.
+  const rw = [...eff.writeRoots.slice(1)];
+  if (bridge?.socketDir) rw.push(bridge.socketDir);
+  const ro = [...eff.readOnly];
+  for (const p of [...(bridge?.executables ?? []), ...(bridge?.scripts ?? [])]) {
+    if (p) ro.push(dirname(p));
+  }
   return {
     // writeRoots[0] is the workspace (already the CLI's writable root); only the
     // *extra* grants belong here.
-    additionalReadwritePaths: eff.writeRoots.slice(1),
-    additionalReadonlyPaths: eff.readOnly,
+    additionalReadwritePaths: [...new Set(rw)],
+    additionalReadonlyPaths: [...new Set(ro)],
+    // Stated explicitly rather than left to the CLI default: the bridge socket
+    // lives under the system temp dir on posix.
+    disableTmpWrite: false,
     networkPolicy,
   };
 }
@@ -67,9 +97,10 @@ export async function withSessionSandboxJson<T>(
   root: string,
   eff: EffectiveSandbox,
   fn: () => Promise<T>,
+  bridge?: CursorBridgePaths,
 ): Promise<T> {
   if (!eff.enabled) return fn();
-  const ours = buildSandboxConfig(eff);
+  const ours = buildSandboxConfig(eff, bridge);
   return withSessionFile(
     root,
     '.cursor/sandbox.json',
@@ -88,6 +119,8 @@ export async function withSessionSandboxJson<T>(
       mergeList('additionalReadonlyPaths', ours.additionalReadonlyPaths ?? []);
       // Limboo's network policy wins (it is the orchestration authority).
       out.networkPolicy = ours.networkPolicy;
+      // Never let a repo-authored `true` cut the bridge socket off.
+      out.disableTmpWrite = false;
       return JSON.stringify(out, null, 2);
     },
     fn,
