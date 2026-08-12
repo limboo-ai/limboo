@@ -26,7 +26,7 @@ import {
   X,
 } from 'lucide-react';
 import type { GitFileChange } from '@shared/types';
-import { providerForModel } from '@shared/constants';
+import { resolveModelRouting } from '@shared/constants';
 import { EmptyState, IconButton, Spinner } from '@/renderer/components/ui';
 import { agentDisplayName } from '@/renderer/features/agent/status';
 import { cn } from '@/renderer/lib/cn';
@@ -336,10 +336,13 @@ function ChangesView() {
   const agentLifecycle = useAgentStore((s) => s.lifecycle);
   const agentModel = useSettingsStore((s) => s.settings.agent.model);
   const agentName = agentDisplayName(agentModel);
+  const agentRouting = resolveModelRouting(agentModel);
   const agentReady =
-    providerForModel(agentModel) === 'cursor'
+    agentRouting.provider === 'cursor'
       ? agentLifecycle !== 'not-installed' && agentLifecycle !== 'auth-required'
-      : agentInstalled;
+      : agentRouting.provider
+        ? agentInstalled
+        : false;
   const template = useSettingsStore((s) => s.settings.git.commitMessageTemplate);
   const addToast = useUIStore((s) => s.addToast);
   const [committing, setCommitting] = useState(false);

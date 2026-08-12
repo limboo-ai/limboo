@@ -16,7 +16,7 @@ import { useEffect, useRef, useState } from 'react';
 import type { ClipboardEvent, DragEvent, KeyboardEvent } from 'react';
 import { ArrowUp, CircleStop, Mic, Paperclip, Sparkles, Volume2 } from 'lucide-react';
 import type { SessionPermissionMode } from '@shared/types';
-import { providerForModel } from '@shared/constants';
+import { resolveModelRouting } from '@shared/constants';
 import { cn } from '@/renderer/lib/cn';
 import { HelixLoader } from '@/renderer/components/ui';
 import { useSessionStore } from '@/renderer/stores/useSessionStore';
@@ -141,8 +141,13 @@ export function Composer({ disabled = false }: { disabled?: boolean }) {
   // from the Cursor auth classification — not-installed / auth-required).
   const model = useSettingsStore((s) => s.settings.agent.model);
   const agentName = agentDisplayName(model);
+  const modelRouting = resolveModelRouting(model);
   const connected =
-    providerForModel(model) === 'cursor' ? lifecycle !== 'not-installed' : installed;
+    modelRouting.provider === 'cursor'
+      ? lifecycle !== 'not-installed'
+      : modelRouting.provider
+        ? installed
+        : false;
   const blocked = disabled || !connected || busy || restricted || planBlocked || activating;
 
   // Rotating typewriter placeholder — only in the normal "ready to type" state;

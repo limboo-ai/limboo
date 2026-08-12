@@ -9,7 +9,7 @@ import { Brain, Check, ChevronDown, Search, type LucideIcon } from 'lucide-react
 import {
   HARNESS_LABELS,
   PROVIDER_HARNESS,
-  providerForModel,
+  resolveModelRouting,
   type AgentProvider,
 } from '@shared/constants';
 import { cn } from '@/renderer/lib/cn';
@@ -155,6 +155,8 @@ const AGENT_CHOICES: { provider: AgentProvider; label: string }[] = (
   Object.keys(PROVIDER_HARNESS) as AgentProvider[]
 ).map((p) => ({ provider: p, label: HARNESS_LABELS[PROVIDER_HARNESS[p]] ?? p }));
 
+type AgentChoiceValue = AgentProvider | 'unknown';
+
 export function ComposerControls({ disabled = false }: { disabled?: boolean }) {
   const agent = useSettingsStore((s) => s.settings.agent);
   const update = useSettingsStore((s) => s.update);
@@ -163,22 +165,38 @@ export function ComposerControls({ disabled = false }: { disabled?: boolean }) {
   // The provider follows the model; the Agent select switches by jumping to
   // the target provider's first catalog model, and the Model select then
   // offers only that provider's models.
-  const provider = providerForModel(agent.model);
-  const providerModels = models.filter((m) => m.provider === provider);
+  const provider = resolveModelRouting(agent.model).provider;
+  const selectedProvider: AgentChoiceValue = provider ?? 'unknown';
+  const providerModels = provider ? models.filter((m) => m.provider === provider) : [];
+  const agentOptions: Option<AgentChoiceValue>[] = [
+    ...(provider
+      ? []
+      : [{ value: 'unknown' as const, label: 'Unknown model', glyph: <Brain size={13} className="text-warning" /> }]),
+    ...AGENT_CHOICES.map((c) => ({
+      value: c.provider,
+      label: c.label,
+      glyph: <ProviderIcon provider={c.provider} size={13} className="text-muted" />,
+    })),
+  ];
+  const modelOptions = provider
+    ? providerModels.map((m) => ({ value: m.value, label: m.label }))
+    : [{ value: agent.model, label: 'Unknown model' }, ...models.map((m) => ({ value: m.value, label: m.label }))];
 
   return (
     <div className="flex min-w-0 items-center gap-0.5">
       <MiniSelect
         title="Agent"
-        value={provider}
-        triggerGlyph={<ProviderIcon provider={provider} size={12} className="text-faint" />}
-        options={AGENT_CHOICES.map((c) => ({
-          value: c.provider,
-          label: c.label,
-          glyph: <ProviderIcon provider={c.provider} size={13} className="text-muted" />,
-        }))}
+        value={selectedProvider}
+        triggerGlyph={
+          provider ? (
+            <ProviderIcon provider={provider} size={12} className="text-faint" />
+          ) : (
+            <Brain size={12} className="text-warning" />
+          )
+        }
+        options={agentOptions}
         onChange={(next) => {
-          if (next === provider) return;
+          if (next === selectedProvider || next === 'unknown') return;
           const first = models.find((m) => m.provider === next);
           if (first) void update({ agent: { model: first.value } });
         }}
@@ -188,7 +206,7 @@ export function ComposerControls({ disabled = false }: { disabled?: boolean }) {
       <MiniSelect
         title="Model"
         value={agent.model}
-        options={providerModels.map((m) => ({ value: m.value, label: m.label }))}
+        options={modelOptions}
         onChange={(model) => void update({ agent: { model } })}
         disabled={disabled}
         searchable

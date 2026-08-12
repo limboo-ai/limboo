@@ -18,7 +18,7 @@ import type {
   McpServerStatus,
   RequestPhase,
 } from '@shared/types';
-import { HARNESS_LABELS, PROVIDER_HARNESS, providerForModel } from '@shared/constants';
+import { HARNESS_LABELS, PROVIDER_HARNESS, resolveModelRouting } from '@shared/constants';
 
 /**
  * The human name of the agent serving a model id (composer copy, banners).
@@ -28,7 +28,8 @@ import { HARNESS_LABELS, PROVIDER_HARNESS, providerForModel } from '@shared/cons
  * be labelled Claude while something else ran.
  */
 export function agentDisplayName(model: string): string {
-  const provider = providerForModel(model);
+  const provider = resolveModelRouting(model).provider;
+  if (!provider) return 'Unknown model';
   return HARNESS_LABELS[PROVIDER_HARNESS[provider]] ?? provider;
 }
 

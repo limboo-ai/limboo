@@ -6,7 +6,7 @@
  */
 import { AlertTriangle, ClipboardCheck, KeyRound, Loader2, TimerReset } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
-import { providerForModel } from '@shared/constants';
+import { resolveModelRouting } from '@shared/constants';
 import { cn } from '@/renderer/lib/cn';
 import { runCommand } from '@/renderer/lib/commands';
 import { agentDisplayName } from '@/renderer/features/agent/status';
@@ -48,7 +48,7 @@ export function ComposerBanner() {
   );
   const model = useSettingsStore((s) => s.settings.agent.model);
   const agentName = agentDisplayName(model);
-  const isCursor = providerForModel(model) === 'cursor';
+  const isCursor = resolveModelRouting(model).provider === 'cursor';
 
   let tone: Tone | null = null;
   let Icon: LucideIcon = AlertTriangle;

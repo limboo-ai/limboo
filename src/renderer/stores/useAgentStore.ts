@@ -451,7 +451,7 @@ export const useAgentStore = create<AgentStoreState>((set, get) => {
 
       // Cursor provider auth — lazy probe + live updates (secret-free state).
       // Discovered model ids feed this process's provider-routing registry so
-      // the pickers and providerForModel() stay in sync with main.
+      // the pickers and shared model-routing table stay in sync with main.
       const intakeCursorAuth = (cursorAuth: CursorAuthState) => {
         if (cursorAuth.models?.length) registerCursorModels(cursorAuth.models);
         set({ cursorAuth });

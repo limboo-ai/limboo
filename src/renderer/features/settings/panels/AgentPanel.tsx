@@ -13,7 +13,7 @@ import {
   HARNESSES_WITHOUT_READ_GATING,
   HARNESS_LABELS,
   PROVIDER_HARNESS,
-  providerForModel,
+  resolveModelRouting,
 } from '@shared/constants';
 import { cn } from '@/renderer/lib/cn';
 import { ProviderIcon } from '@/renderer/components/brand/ProviderIcon';
@@ -45,14 +45,43 @@ export function AgentPanel() {
   // The harness serving the SELECTED model, and whether it can honour
   // `autoApproveReads` at all (the AI SDK harnesses cannot — see the shared
   // constant). Only used to tell the truth in a hint; the toggle still writes.
-  const activeHarnessId = PROVIDER_HARNESS[providerForModel(agent.model)];
-  const activeHarnessLabel = HARNESS_LABELS[activeHarnessId] ?? activeHarnessId;
+  const activeProvider = resolveModelRouting(agent.model).provider;
+  const activeHarnessId = activeProvider ? PROVIDER_HARNESS[activeProvider] : null;
+  const activeHarnessLabel = activeHarnessId ? HARNESS_LABELS[activeHarnessId] ?? activeHarnessId : 'Unknown model';
   const readGatingUnavailable =
+    !!activeHarnessId &&
     agent.harness.id === activeHarnessId &&
     !agent.harness.legacyClaudeSdk &&
     HARNESSES_WITHOUT_READ_GATING.includes(activeHarnessId);
 
   const meta = lifecycleMeta(lifecycle, install.installed);
+  const claudeActive = activeHarnessId === 'claude-code';
+  const cursorActive = activeHarnessId === 'cursor-cli';
+  const claudeStatusLine = install.installed
+    ? claudeActive
+      ? 'Active — reusing your local Claude Code login.'
+      : 'Available — not selected for the current model.'
+    : install.error ?? 'Not connected.';
+  const cursorStatusLine = cursorActive
+    ? `Active — ${cursorStatus.line}`
+    : cursorStatus.meta.label === 'Connected'
+      ? `Available — ${cursorStatus.line}. Not selected for the current model.`
+      : `Not selected — ${cursorStatus.line}`;
+  const availableMeta = { ...lifecycleMeta('ready', true), label: 'Available' };
+  const claudeMeta = claudeActive ? meta : install.installed ? availableMeta : meta;
+  const cursorMeta =
+    cursorActive || cursorStatus.meta.label !== 'Connected'
+      ? cursorStatus.meta
+      : { ...cursorStatus.meta, label: 'Available' };
+  const harnessCards = [
+    <HarnessCard key="claude-code" harnessId="claude-code" statusLine={claudeStatusLine} meta={claudeMeta}>
+      <ClaudeCodeControls />
+    </HarnessCard>,
+    <HarnessCard key="cursor-cli" harnessId="cursor-cli" statusLine={cursorStatusLine} meta={cursorMeta}>
+      <CursorAuthControls />
+    </HarnessCard>,
+  ];
+  if (cursorActive) harnessCards.reverse();
   const set = <K extends keyof typeof agent>(key: K, value: (typeof agent)[K]) =>
     void update({ agent: { [key]: value } });
   const setSandbox = <K extends keyof typeof agent.sandbox>(
@@ -66,20 +95,12 @@ export function AgentPanel() {
         title="Harnesses"
         hint="The coding agents Limboo can drive. A harness is HOW a model runs; picking a model in the composer selects its harness. Claude Code reuses its own local login; Cursor connects via CLI sign-in or an encrypted API key — no provider credentials are stored by this app."
       >
-        <HarnessCard
-          harnessId="claude-code"
-          statusLine={
-            install.installed
-              ? 'Connected — reusing your local Claude Code login.'
-              : install.error ?? 'Not connected.'
-          }
-          meta={meta}
-        >
-          <ClaudeCodeControls />
-        </HarnessCard>
-        <HarnessCard harnessId="cursor-cli" statusLine={cursorStatus.line} meta={cursorStatus.meta}>
-          <CursorAuthControls />
-        </HarnessCard>
+        {!activeHarnessId && (
+          <p className="px-2 text-[11px] text-warning">
+            Unknown model selected. Pick a known model before sending prompts.
+          </p>
+        )}
+        {harnessCards}
       </Section>
 
       <Section title="Model & thinking">
