@@ -88,13 +88,52 @@ jobs:
         run: node ci/scripts/embed-release-manifest.mjs "${{ inputs.ref }}"
 
       - name: Build branded installers (Forge package + electron-builder)
+        if: runner.os != 'Windows'
         # Forge packages the app (Vite build + security fuses + asar layout); then
         # electron-builder wraps that prepackaged dir into the branded NSIS / dmg /
         # AppImage targets and emits the latest*.yml auto-update metadata. `--publish
         # never` keeps this reusable build side-effect-free; release.yml publishes.
-        run: npm run dist -- --publish never
+        shell: bash
+        run: |
+          status=0
+          for attempt in 1 2 3; do
+            npm run dist -- --publish never && exit 0
+            status=$?
+            if [ "$attempt" -lt 3 ]; then
+              echo "::warning::Packaging failed with exit code $status; retrying attempt $((attempt + 1))/3 after transient backoff."
+              sleep $((attempt * 20))
+            fi
+          done
+          exit "$status"
+
+      - name: Build branded installers (Forge package + electron-builder, Windows)
+        if: runner.os == 'Windows'
+        # Same retry envelope as Unix runners; Windows hosted runners can hit
+        # short-lived download/socket failures while electron-builder fetches
+        # packaging tools.
+        shell: pwsh
+        run: |
+          $status = 0
+          foreach ($attempt in 1..3) {
+            npm run dist -- --publish never
+            $status = $LASTEXITCODE
+            if ($status -eq 0) {
+              exit 0
+            }
+            if ($attempt -lt 3) {
+              $next = $attempt + 1
+              Write-Warning "Packaging failed with exit code $status; retrying attempt $next/3 after transient backoff."
+              Start-Sleep -Seconds ($attempt * 20)
+            }
+          }
+          exit $status
 
       - name: Generate SBOM (CycloneDX)
+        # The SBOM describes the checked-out source/dependency graph, not a
+        # platform-specific installer. Generate it on the primary matrix only;
+        # supplementary architecture jobs still publish installers and checksums,
+        # while release.yml/release-supplement.yml keep a single release SBOM.
+        if: ${{ matrix.os == 'ubuntu-latest' || matrix.os == 'macos-latest' || matrix.os == 'windows-latest' }}
         uses: anchore/sbom-action@v0
         with:
           path: .
@@ -130,7 +169,7 @@ jobs:
             dist/**/*.zip
 
       - name: Attest SBOM
-        if: ${{ inputs.attest }}
+        if: ${{ inputs.attest && (matrix.os == 'ubuntu-latest' || matrix.os == 'macos-latest' || matrix.os == 'windows-latest') }}
         uses: actions/attest-sbom@v1
         with:
           subject-path: dist/SHA256SUMS
