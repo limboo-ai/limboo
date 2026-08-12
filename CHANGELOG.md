@@ -7,7 +7,7 @@ All notable changes to Limboo are documented here. The format is based on
 
 ## [Unreleased]
 
-## [1.18.0-beta.1] - 2026-08-12
+## [1.18.0-beta.2] - 2026-08-12
 
 The first beta. Two bugs that made Cursor sessions unusable are fixed, agents can
 now run through a swappable harness layer instead of one hardcoded integration,

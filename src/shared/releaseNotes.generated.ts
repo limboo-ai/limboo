@@ -22,7 +22,7 @@ export interface ReleaseNotesEntry {
 /** Newest first. */
 export const RELEASE_NOTES: ReleaseNotesEntry[] = [
   {
-    version: '1.18.0-beta.1',
+    version: '1.18.0-beta.2',
     date: '2026-08-12',
     markdown: `The first beta. Two bugs that made Cursor sessions unusable are fixed, agents can
 now run through a swappable harness layer instead of one hardcoded integration,

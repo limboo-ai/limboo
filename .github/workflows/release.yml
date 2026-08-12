@@ -147,6 +147,15 @@ jobs:
       # This affects stable releases exactly as much as prereleases; it only
       # surfaced now because this is the first release published through this
       # workflow since immutability was turned on.
+      #
+      # A TAG IS BURNED BY A FAILED PUBLISH. Once a tag has been used by an
+      # immutable release, GitHub reserves it permanently — deleting the release
+      # does NOT free it, and a later attempt fails with
+      # "HTTP 422: tag_name was used by an immutable release". v1.18.0-beta.1 was
+      # lost that way: the release was deleted, the assets uploaded cleanly into
+      # a fresh draft, and that draft could then never be published. If this job
+      # ever fails at the publish step again, do not retry the same tag —
+      # increment it.
       - name: Stage release as a draft
         id: draft
         uses: softprops/action-gh-release@v2

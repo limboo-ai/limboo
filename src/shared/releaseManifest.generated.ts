@@ -24,11 +24,11 @@ import type { ReleaseIndexEntry, ReleaseManifestEntry } from './release';
 /** Newest first. */
 export const RELEASE_MANIFESTS: ReleaseManifestEntry[] = [
   {
-    "version": "1.18.0-beta.1",
+    "version": "1.18.0-beta.2",
     "date": "2026-08-12",
     "channel": "beta",
     "codename": null,
-    "gitTag": "v1.18.0-beta.1",
+    "gitTag": "v1.18.0-beta.2",
     "commit": null,
     "buildNumber": null,
     "summary": "The first beta. Two bugs that made Cursor sessions unusable are fixed, agents can\nnow run through a swappable harness layer instead of one hardcoded integration,\nand Settings opens as a workspace tab. This build is published for testing ahead\nof a stable release — read the warning at the top of these notes before\ninstalling it over a working copy.",
@@ -173,9 +173,9 @@ export const RELEASE_MANIFESTS: ReleaseManifestEntry[] = [
       "deletions": null
     },
     "links": {
-      "release": "https://github.com/limboo-ai/limboo/releases/tag/v1.18.0-beta.1",
+      "release": "https://github.com/limboo-ai/limboo/releases/tag/v1.18.0-beta.2",
       "compare": null,
-      "tag": "https://github.com/limboo-ai/limboo/releases/tag/v1.18.0-beta.1",
+      "tag": "https://github.com/limboo-ai/limboo/releases/tag/v1.18.0-beta.2",
       "milestone": null
     },
     "checksumManifest": "SHA256SUMS",
@@ -585,7 +585,7 @@ export const RELEASE_MANIFESTS: ReleaseManifestEntry[] = [
 /** Every released version, newest first. */
 export const RELEASE_INDEX: ReleaseIndexEntry[] = [
   {
-    "version": "1.18.0-beta.1",
+    "version": "1.18.0-beta.2",
     "date": "2026-08-12",
     "channel": "beta",
     "summary": "The first beta. Two bugs that made Cursor sessions unusable are fixed, agents can\nnow run through a swappable harness layer instead of one hardcoded integration,\nand Settings opens as a workspace tab. This build is published for testing ahead\nof a stable release — read the warning at the top of these notes before\ninstalling it over a working copy.",
