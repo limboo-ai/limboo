@@ -134,13 +134,27 @@ jobs:
       - name: Generate release notes
         run: node ci/scripts/generate-release-notes.mjs "${{ inputs.tag }}" RELEASE_NOTES.md
 
-      - name: Publish release
+      # Created as a DRAFT, then published in the next step.
+      #
+      # This repository has immutable releases enabled, which forbids adding an
+      # asset to a release that is already published — and the action publishes
+      # first, then uploads. With `draft: false` every upload failed with
+      # "Cannot upload asset … to an immutable release", leaving a published
+      # prerelease with ZERO downloads: visible to users, and useless to a
+      # client looking for `latest*.yml`. A draft accepts assets, so the release
+      # only becomes visible once it is complete.
+      #
+      # This affects stable releases exactly as much as prereleases; it only
+      # surfaced now because this is the first release published through this
+      # workflow since immutability was turned on.
+      - name: Stage release as a draft
+        id: draft
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ inputs.tag }}
           name: Limboo ${{ inputs.tag }}
           body_path: RELEASE_NOTES.md
-          draft: false
+          draft: true
           prerelease: ${{ contains(inputs.tag, '-') }}
           # The *.yml + *.blockmap files are electron-builder's auto-update metadata
           # — electron-updater reads latest.yml / latest-mac.yml / latest-linux.yml
@@ -165,3 +179,39 @@ jobs:
             # patterns above. Anything new added to dist/ needs a line here.
             dist/release-manifest.json
             SHA256SUMS
+
+      # Flip the completed draft to visible. Separate from the upload so a
+      # release is never publicly readable in a half-uploaded state, and so a
+      # failed upload leaves a draft to inspect rather than an empty release
+      # users can see. `--verify-tag` is not available on `release edit`; the
+      # tag was already verified by the `validate` job.
+      - name: Publish the draft
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh release edit "${{ inputs.tag }}" --repo "$GITHUB_REPOSITORY" --draft=false
+          echo "Published ${{ inputs.tag }} with $(gh release view "${{ inputs.tag }}" \
+            --repo "$GITHUB_REPOSITORY" --json assets -q '.assets | length') asset(s)."
+
+      # An empty release is the failure mode this whole two-step exists to
+      # prevent, so assert it did not happen rather than trust that it did not.
+      # A published release with no assets offers a client nothing to download
+      # and cannot be repaired in place on an immutable-releases repository.
+      - name: Verify the published release carries its assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          count=$(gh release view "${{ inputs.tag }}" --repo "$GITHUB_REPOSITORY" \
+            --json assets -q '.assets | length')
+          if [ "$count" -lt 5 ]; then
+            echo "::error::Published ${{ inputs.tag }} with only $count asset(s)." >&2
+            exit 1
+          fi
+          # The update feeds are what make a release installable at all.
+          for feed in latest.yml latest-mac.yml latest-linux.yml; do
+            gh release view "${{ inputs.tag }}" --repo "$GITHUB_REPOSITORY" \
+              --json assets -q '.assets[].name' | grep -qx "$feed" \
+              || echo "::warning::$feed is not attached — that platform cannot auto-update."
+          done
