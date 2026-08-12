@@ -56,17 +56,28 @@ function quoted(p: string): string {
  * event. `nodeCommand` is Electron-as-node (ELECTRON_RUN_AS_NODE rides the
  * run child's environment, which hook processes inherit along with the
  * bridge pipe/token vars).
+ *
+ * Each event gets its OWN command carrying `--event <name>`. Registering one
+ * undiscriminated command for all six left the payload's `hook_event_name` key
+ * as the only way the runner could tell which event fired — and if the CLI
+ * spells that key differently (hook support in print mode is undocumented, see
+ * the header), the runner saw no event, `mapHookEvent` returned null, and the
+ * gate denied EVERY read, shell, grep and edit. The argv is authoritative
+ * because we write it; the payload key is now only a fallback.
  */
 export function buildHooksConfig(nodeCommand: string, runnerPath: string): string {
-  const command = `${quoted(nodeCommand)} ${quoted(runnerPath)}`;
-  const entry = {
-    command,
-    timeout: CURSOR_LIMITS.hookTimeoutSecs,
-    // A runner that crashes or can't reach the bridge must block, not pass.
-    failClosed: true,
-  };
   const hooks: Record<string, unknown> = {};
-  for (const event of HOOK_EVENTS) hooks[event] = [entry];
+  for (const event of HOOK_EVENTS) {
+    hooks[event] = [
+      {
+        // HOOK_EVENTS is a literal `const` tuple — no interpolation surface.
+        command: `${quoted(nodeCommand)} ${quoted(runnerPath)} --event ${event}`,
+        timeout: CURSOR_LIMITS.hookTimeoutSecs,
+        // A runner that crashes or can't reach the bridge must block, not pass.
+        failClosed: true,
+      },
+    ];
+  }
   return JSON.stringify({ version: 1, hooks }, null, 2);
 }
 

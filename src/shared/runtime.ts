@@ -46,6 +46,34 @@ export const PROVIDER_CAPABILITIES: Record<AgentProvider, RuntimeCapabilities> =
     thinkingTokens: true,
     retries: true,
   },
+  // The AI SDK harnesses report step usage (so a context window and token counts
+  // are measurable) but not quotas, cost or itemised reasoning tokens. Pessimistic
+  // where unverified: a capability claimed and absent renders as a zero, which
+  // reads as a measurement rather than a gap.
+  openai: {
+    contextWindow: true,
+    tokenUsage: true,
+    costEstimate: false,
+    requestQuota: false,
+    quotaWindows: false,
+    latency: true,
+    compaction: false,
+    toolProgress: true,
+    thinkingTokens: false,
+    retries: false,
+  },
+  pi: {
+    contextWindow: true,
+    tokenUsage: true,
+    costEstimate: false,
+    requestQuota: false,
+    quotaWindows: false,
+    latency: true,
+    compaction: false,
+    toolProgress: true,
+    thinkingTokens: false,
+    retries: false,
+  },
   cursor: {
     contextWindow: false,
     tokenUsage: false,
@@ -71,6 +99,26 @@ export const CAPABILITY_NOTE: Record<
   Partial<Record<RuntimeCapabilityKey, string>>
 > = {
   anthropic: {},
+  // Both AI SDK harnesses stream through the same normalised part vocabulary,
+  // which carries step usage but not the provider-specific extras. Stated per
+  // capability rather than left to render a zero — "not measured" and "zero" are
+  // opposite claims and must not look alike.
+  openai: {
+    requestQuota: 'The Codex harness does not report request quotas to the host.',
+    quotaWindows: 'Rolling usage windows are not reported by this harness.',
+    costEstimate: 'Cost is not reported by this harness.',
+    compaction: 'Compaction events are surfaced as tool parts, not as usage data.',
+    thinkingTokens: 'Reasoning-token counts are not itemised by this harness.',
+    retries: 'Retry attempts are not reported by this harness.',
+  },
+  pi: {
+    requestQuota: 'The Pi harness does not report request quotas to the host.',
+    quotaWindows: 'Rolling usage windows are not reported by this harness.',
+    costEstimate: 'Cost is not reported by this harness.',
+    compaction: 'Compaction events are not reported by this harness.',
+    thinkingTokens: 'Thinking-token counts are not itemised by this harness.',
+    retries: 'Retry attempts are not reported by this harness.',
+  },
   cursor: {
     contextWindow:
       'The Cursor CLI does not report token counts or a context window in its stream-json output.',

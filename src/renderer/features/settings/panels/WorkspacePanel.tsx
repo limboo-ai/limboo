@@ -11,7 +11,7 @@ import { useWorkspaceStore } from '@/renderer/stores/useWorkspaceStore';
 import { useFileSystemStore } from '@/renderer/stores/useFileSystemStore';
 import { useUIStore } from '@/renderer/stores/useUIStore';
 import { CircularProgress } from '@/renderer/components/ui';
-import { Section, Field, Select, StackedField, Toggle, TextInput } from '../controls';
+import { Section, Field, Select, StackedField, TextArea, Toggle, TextInput } from '../controls';
 import { detectedStack, suggestedIgnores } from '../detectIgnores';
 
 export function WorkspacePanel() {
@@ -190,14 +190,13 @@ function WorkspaceConfig({ workspace }: { workspace: Workspace }) {
         label="Ignored directories"
         hint="One per line. Excluded from stats and indexing. Relative paths only."
       >
-        <textarea
+        <TextArea
           value={ignoredDraft}
-          onChange={(e) => setIgnoredDraft(e.target.value)}
+          onChange={setIgnoredDraft}
           onBlur={commitIgnored}
-          spellCheck={false}
           rows={4}
-          placeholder="node_modules&#10;dist&#10;.git"
-          className="w-full resize-y rounded-md border border-line bg-surface-2 px-2 py-1.5 font-mono text-[11px] leading-relaxed text-fg placeholder:text-faint focus:border-line-strong focus:outline-none"
+          mono
+          placeholder={'node_modules\ndist\n.git'}
         />
       </StackedField>
 

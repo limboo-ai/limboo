@@ -13,6 +13,8 @@
  * against the absolute DB/config/secrets paths), so a read of those stays
  * blocked regardless of what this module says.
  */
+import fs from 'node:fs';
+import path from 'node:path';
 
 /** Whole-command rejects: substitution, expansion, redirection, background.
  *  `&&` is a permitted separator; a lone `&` (backgrounding) is not — hence
@@ -143,21 +145,56 @@ function isReadOnlyGh(args: string[]): boolean {
  * `..` traversal. Bash args never reach the workspace path guard (only
  * `file_path` inputs do), so the classifier itself must refuse them; otherwise
  * `cat C:\...\.ssh\id_rsa` would auto-run as a "read" in plan/ask mode.
+ *
+ * When `cwd` (the session's effective root) is supplied, an absolute token that
+ * RESOLVES INSIDE that root is not an escape. Cursor's CLI emits absolute
+ * worktree paths by default, so without this every `cat /abs/worktree/src/x.ts`
+ * was classified command-risk and hard-denied in plan/ask — a read of a file
+ * inside the workspace, refused for being spelled absolutely. The declarative
+ * `Shell(cat)` allow rule already permitted it, so the two layers disagreed.
+ * Absent `cwd` the conservative answer stands: inside cannot be distinguished
+ * from outside, so it is an escape.
  */
-function escapesWorkspace(token: string): boolean {
+function escapesWorkspace(token: string, cwd?: string): boolean {
   // A `..` PATH SEGMENT is traversal; `HEAD..main` (a git range) is not.
   if (/(?:^|[\\/])\.\.(?:$|[\\/])/.test(token)) return true;
-  return /(?:^|=)(?:[A-Za-z]:[\\/]|[\\/~])/.test(token);
+  if (!/(?:^|=)(?:[A-Za-z]:[\\/]|[\\/~])/.test(token)) return false;
+  if (!cwd) return true;
+  // `NAME=/abs/path` — the path is what is addressed, not the assignment.
+  const raw = token.includes('=') ? token.slice(token.indexOf('=') + 1) : token;
+  // `~` is the user's home, never the workspace root.
+  if (raw.startsWith('~')) return true;
+  // Absolute-shaped for ANOTHER platform (a `C:\` token on posix) would be
+  // resolved as relative below and look contained — refuse it outright.
+  if (!path.isAbsolute(raw)) return true;
+  const root = path.resolve(cwd);
+  if (contains(root, path.resolve(raw))) {
+    // A symlink inside the root may still point out of it. Canonicalize
+    // best-effort; a path that does not exist yet cannot be a symlink escape.
+    try {
+      return !contains(fs.realpathSync(root), fs.realpathSync(raw));
+    } catch {
+      return false;
+    }
+  }
+  return true;
 }
 
-function isReadOnlySegment(segment: string): boolean {
+/** True when `target` is `root` itself or lies beneath it. */
+function contains(root: string, target: string): boolean {
+  if (target === root) return true;
+  const rel = path.relative(root, target);
+  return rel.length > 0 && !rel.startsWith('..') && !path.isAbsolute(rel);
+}
+
+function isReadOnlySegment(segment: string, cwd?: string): boolean {
   const tokens = tokenize(segment.trim());
   if (!tokens || tokens.length === 0) return false;
   const [cmd, ...args] = tokens;
   // A path-y or assignment-shaped head is not a plain allowlisted binary.
   if (/[\\/=]/.test(cmd)) return false;
   // Workspace-relative arguments only — see escapesWorkspace.
-  if (args.some(escapesWorkspace)) return false;
+  if (args.some((a) => escapesWorkspace(a, cwd))) return false;
   const lower = cmd.toLowerCase();
 
   if (BARE_SAFE.has(lower)) return true;
@@ -185,15 +222,21 @@ function isReadOnlySegment(segment: string): boolean {
  * True only when the whole command string is provably read-only: no shell
  * metacharacters beyond `&& || | ;` separators, and every segment's binary +
  * subcommand is on the read-only allowlist. Anything unparseable is `false`.
+ *
+ * Pass `opts.cwd` (the session's effective root) wherever it is known: it is
+ * what lets an absolute path INSIDE the workspace count as workspace-relative.
+ * Omitting it is safe but strictly more restrictive — see escapesWorkspace.
  */
-export function isReadOnlyShellCommand(command: unknown): boolean {
+export function isReadOnlyShellCommand(command: unknown, opts?: { cwd?: string }): boolean {
   if (typeof command !== 'string') return false;
   const text = command.trim();
   if (text.length === 0 || text.length > MAX_COMMAND_LENGTH) return false;
   if (CONTROL_CHARS.test(text)) return false;
   if (UNSAFE_PATTERN.test(text)) return false;
   const segments = text.split(/&&|\|\||\||;/);
-  return segments.every((segment) => segment.trim().length > 0 && isReadOnlySegment(segment));
+  return segments.every(
+    (segment) => segment.trim().length > 0 && isReadOnlySegment(segment, opts?.cwd),
+  );
 }
 
 /**

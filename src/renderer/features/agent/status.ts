@@ -18,11 +18,18 @@ import type {
   McpServerStatus,
   RequestPhase,
 } from '@shared/types';
-import { providerForModel } from '@shared/constants';
+import { HARNESS_LABELS, PROVIDER_HARNESS, providerForModel } from '@shared/constants';
 
-/** The human name of the provider serving a model id (composer copy, banners). */
+/**
+ * The human name of the agent serving a model id (composer copy, banners).
+ *
+ * Reads the shared harness table rather than testing for Cursor and calling
+ * everything else "Claude Code" — that shape is what let an unroutable model
+ * be labelled Claude while something else ran.
+ */
 export function agentDisplayName(model: string): string {
-  return providerForModel(model) === 'cursor' ? 'Cursor' : 'Claude Code';
+  const provider = providerForModel(model);
+  return HARNESS_LABELS[PROVIDER_HARNESS[provider]] ?? provider;
 }
 
 export interface LifecycleMeta {

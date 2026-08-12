@@ -42,6 +42,10 @@ import { AttachmentManager } from './managers/attachments/AttachmentManager';
 import { SecretStore } from './secrets/SecretStore';
 import { CursorAuthManager } from './managers/cursor/CursorAuthManager';
 import { CursorRuntime } from './managers/cursor/CursorRuntime';
+import { harnessById } from './managers/agent/harnessRegistry';
+import { HarnessRuntime } from './managers/harness/HarnessRuntime';
+import { LocalWorktreeSandboxProvider } from './managers/harness/sandbox/LocalWorktreeSandbox';
+import { resolveSandboxConfig } from './managers/sandbox/policy';
 import { McpManager } from './managers/mcp/McpManager';
 import { WorkGraphManager } from './managers/graph/WorkGraphManager';
 import { RuntimeTelemetryManager } from './managers/telemetry/RuntimeTelemetryManager';
@@ -113,6 +117,8 @@ function bootstrap(): void {
   let voice: VoiceManager;
   let cursorAuth: CursorAuthManager;
   let cursorRuntime: CursorRuntime;
+  let harnessRuntime: HarnessRuntime;
+  let harnessSandbox: LocalWorktreeSandboxProvider;
   let mcp: McpManager;
   let workGraph: WorkGraphManager;
   let runtime: RuntimeTelemetryManager;
@@ -385,6 +391,36 @@ function bootstrap(): void {
       const state = worktrees.getRepoConfigState(sessionId);
       return !state.config || state.acked;
     });
+    // AI SDK harness runs. The sandbox provider takes RESOLVERS, not managers
+    // (the setSessionRootResolver idiom above), so it stays a leaf that cannot
+    // reach back into the app — and it is rooted in the session's real
+    // worktree, which is what keeps the repository on this machine.
+    const sessionAttachmentsDir = (sessionId: string): string | undefined => {
+      try {
+        return attachments.hasAny(sessionId) ? attachments.sessionDir(sessionId) : undefined;
+      } catch {
+        return undefined;
+      }
+    };
+    harnessSandbox = new LocalWorktreeSandboxProvider({
+      resolveRoot: (sessionId) => worktrees.resolveSessionRoot(sessionId),
+      resolveSandbox: (sessionId, cwd) =>
+        resolveSandboxConfig(settings.getAll().agent.sandbox, {
+          cwd,
+          provider: 'anthropic',
+          attachmentsDir: sessionAttachmentsDir(sessionId),
+        }),
+      attachmentsDirFor: (sessionId) => sessionAttachmentsDir(sessionId),
+      // Credential var NAMES the active harness reads. Forwarded only when the
+      // user's own environment already has them; Limboo stores none.
+      envKeysFor: () => harnessById(settings.getAll().agent.harness.id)?.envKeys ?? [],
+      diag: (severity, label, detail) => {
+        if (severity === 'error') logger.error(`[harness] ${label}`, detail ?? '');
+        else logger.info(`[harness] ${label}`, detail ?? '');
+      },
+    });
+    harnessRuntime = new HarnessRuntime(harnessSandbox);
+    agent.setHarnessRuntime(harnessRuntime, harnessSandbox);
     // Cursor executable override + persisted model routing, applied before
     // agent.start() so the first probe/send already sees them. The settings
     // listener re-probes when the user changes the override path.
@@ -394,6 +430,12 @@ function bootstrap(): void {
       if (configureCursorExec({ executablePath: next.agent.cursor.executablePath })) {
         void cursorAuth.probe(true);
       }
+      // Keep MAIN's routing registry in step with the persisted list, exactly
+      // as the renderer's own settings subscription does. Without this, any
+      // writer other than the auth probe (an import, a second window, a
+      // hand-edited settings.json) updated the renderer's registry and not
+      // main's — the picker would offer a model that main then routed to Claude.
+      registerCursorModels(next.agent.cursor.discoveredModels);
     });
     terminal.setSessionRootResolver((sessionId) => worktrees.resolveSessionRoot(sessionId));
     resume.setSessionRootResolver((sessionId) => worktrees.resolveSessionRoot(sessionId));
@@ -471,15 +513,13 @@ function bootstrap(): void {
     // Begin the auto-update check + hourly poll (packaged builds only).
     updates.start();
 
-    // File System Layer: watch + index the *effective root* — the workspace
-    // path, or the active session's worktree checkout when it owns one — and
-    // follow every active-workspace AND active-session change. The retarget is
-    // guarded by the last effective root so unrelated session broadcasts (and
-    // switches between plain sessions) never churn the watcher or the index.
-    // ONE ordered, cancellable pipeline replaces what used to be a synchronous
+    // File System Layer: ONE ordered, cancellable activation pipeline replaces
+    // what used to be a synchronous
     // `void` retarget fanned out from several independent listeners with the
     // slow parts discarded. See `managers/session/activation.ts` for why the
-    // ordering (and the generation counter) is load-bearing.
+    // ordering (and the generation counter) is load-bearing. It owns the
+    // effective-root rebind, git/GitHub invalidation, search indexing, service
+    // auto-start, resume handoff, and agent session activation together.
     activation = createActivationPipeline({
       workspace,
       sessions,
@@ -653,6 +693,10 @@ function bootstrap(): void {
     safeDispose('agent', () => agent?.cleanup());
     safeDispose('cursorRuntime', () => cursorRuntime?.dispose());
     safeDispose('cursorAuth', () => cursorAuth?.dispose());
+    // Parks harness sessions and releases reserved ports. Deletes nothing —
+    // the "sandbox root" is the user's worktree (see LocalWorktreeSandbox).
+    safeDispose('harnessRuntime', () => void harnessRuntime?.dispose());
+    safeDispose('harnessSandbox', () => void harnessSandbox?.dispose());
     safeDispose('mcp', () => mcp?.dispose());
     safeDispose('fileSystem', () => void fileSystem?.dispose());
     safeDispose('proxy', () => proxy?.stop());

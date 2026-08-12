@@ -157,7 +157,7 @@ export function VoicePanel() {
       </Field>
 
       {voiceError && (
-        <p className="rounded-md border border-line bg-surface-2 px-3 py-2 text-[12px] text-danger">
+        <p className="px-2 py-1 text-[12px] text-danger">
           {voiceError}
         </p>
       )}

@@ -10,8 +10,15 @@ import type { ActivityTab, AppSettings, WorkspaceConfig } from './types';
  *
  * v28 — `git.avatars` added. The deep-merge supplies the default, so there is
  * no data migration; the bump exists so the new key's presence is dated.
+ *
+ * v30 — `agent.harness` added (harness id, the legacy-SDK rollback, the pinned
+ * sandbox provider, adapter debug). The deep-merge supplies the defaults, so
+ * again no data migration. **29 is deliberately skipped**: installs in the
+ * wild already carry a settings.json stamped 29 from a parallel build, and
+ * reusing the number would make "already migrated" and "written by something
+ * else" indistinguishable.
  */
-export const SETTINGS_VERSION = 29;
+export const SETTINGS_VERSION = 30;
 
 /**
  * Every valid right-drawer tab id, in display order. The renderer's
@@ -35,7 +42,7 @@ export const ACTIVITY_TAB_IDS: readonly ActivityTab[] = [
  * selected model — picking a Composer model routes runs through the Cursor
  * runtime adapter.
  */
-export type AgentProvider = 'anthropic' | 'cursor';
+export type AgentProvider = 'anthropic' | 'cursor' | 'openai' | 'pi';
 
 /**
  * Selectable agent models (id + short label + provider). The Anthropic ids are
@@ -56,7 +63,91 @@ export const AGENT_MODELS = [
   { value: 'claude-haiku-4-5-20251001', label: 'Haiku 4.5', provider: 'anthropic' },
   { value: 'composer-2', label: 'Composer 2', provider: 'cursor' },
   { value: 'composer-2.5', label: 'Composer 2.5', provider: 'cursor' },
+  // Pi publishes no discoverable default model id, so rather than invent one
+  // this selects "whatever the adapter picks" — see HARNESS_DEFAULT_MODEL_SUFFIX.
+  { value: 'pi:default', label: 'Pi (default model)', provider: 'pi' },
+  // NO CODEX MODEL, deliberately. `@ai-sdk/harness-codex@1.0.67` declares
+  // `supportsBuiltinToolApprovals: false`, so its `bash` tool cannot be routed
+  // through Limboo's permission gate and the harness is refused at preflight.
+  // A picker entry that can only ever fail is worse than an absent one. The
+  // harness stays registered (see harnessRegistry.ts) so the Harnesses surface
+  // can say WHY it is unavailable; add a model here only after the published
+  // flag changes.
 ] as const;
+
+/**
+ * A model value ending in this means "let the adapter choose its own model".
+ *
+ * Needed because routing requires SOME id to resolve a provider from, but not
+ * every harness publishes one — and inventing a plausible-looking id would send
+ * a wrong string to a real API. `buildAdapterSettings` omits `model` entirely
+ * for these, which is what the adapters document as selecting their default.
+ */
+export const HARNESS_DEFAULT_MODEL_SUFFIX = ':default';
+
+/** True when a model id defers the choice to the adapter. */
+export function isAdapterDefaultModel(model: string): boolean {
+  return model.endsWith(HARNESS_DEFAULT_MODEL_SUFFIX);
+}
+
+/**
+ * Harness id → display label, for both processes.
+ *
+ * The full descriptors (module specifiers, capabilities, sandbox requirements)
+ * live in `main/managers/agent/harnessRegistry.ts` and are MAIN-ONLY — the
+ * renderer must never see a module specifier, the same rule
+ * `PROVIDER_CAPABILITIES` follows. Only the id/label pair crosses, because the
+ * Settings and Composer pickers need something to render.
+ */
+export const HARNESS_LABELS: Record<string, string> = {
+  'claude-code': 'Claude Code',
+  'cursor-cli': 'Cursor',
+  codex: 'Codex',
+  pi: 'Pi',
+};
+
+/**
+ * Harness id → the provider that serves its models. Renderer-safe.
+ *
+ * This direction, not the reverse: MANY harnesses can serve one provider (the
+ * `claude-code` harness and Limboo's direct Claude Agent SDK path are both
+ * `anthropic`), while a harness always has exactly one provider. A
+ * `Record<AgentProvider, string>` could not express the first case and had to be
+ * duplicated by hand wherever a harness needed its provider.
+ */
+export const HARNESS_PROVIDER: Record<string, AgentProvider> = {
+  'claude-code': 'anthropic',
+  'cursor-cli': 'cursor',
+  codex: 'openai',
+  pi: 'pi',
+};
+
+/**
+ * The harness a provider's models run on by default, renderer-safe.
+ *
+ * Retained for the UI paths that start from a model's provider (the composer's
+ * agent picker, the read-gating hint). Dispatch does NOT use this — it resolves
+ * the harness from settings, because a provider can have more than one.
+ */
+export const PROVIDER_HARNESS: Record<AgentProvider, string> = {
+  anthropic: 'claude-code',
+  cursor: 'cursor-cli',
+  openai: 'codex',
+  pi: 'pi',
+};
+
+/**
+ * Harness ids whose built-in READ tools cannot be routed through Limboo's
+ * permission gate — the renderer-safe half of `HarnessCapabilities.gatesReads`.
+ *
+ * The AI SDK harnesses gate edits and shell commands but never reads: their
+ * permission modes have no "ask about reads" setting, and the only lever over a
+ * built-in read denies it outright instead of asking. So `autoApproveReads` is
+ * inert on those paths, and the settings UI must say that plainly rather than
+ * render a control that looks like it works. Same posture as Cursor's "not
+ * reported by this provider" — state the limit, never fake the capability.
+ */
+export const HARNESSES_WITHOUT_READ_GATING: readonly string[] = ['claude-code'];
 
 /**
  * Charset guard for an Anthropic model id before it reaches the Agent SDK.
@@ -83,11 +174,63 @@ export function registerCursorModels(ids: readonly string[]): void {
   }
 }
 
-/** Resolve the provider that serves a given model id. */
-export function providerForModel(model: string): AgentProvider {
+/**
+ * Forget every runtime-discovered id. The registry used to be append-only, so
+ * signing out of Cursor or switching accounts left stale ids routing to a
+ * provider that no longer serves them. Callers REPLACE (clear + register) so
+ * there is no window where the set is empty and a live model mis-routes.
+ */
+export function clearCursorModels(): void {
+  dynamicCursorModels.clear();
+}
+
+/**
+ * Every id known to be a Cursor model: the static catalog plus whatever the
+ * running process has registered. This is the SINGLE routing set — the run-time
+ * validation in `runCursorOnce` consults it too, so "what routes to Cursor" and
+ * "what Cursor will accept" can no longer disagree (they used to: validation
+ * additionally read the auth cache, so an id in the cache but not the registry
+ * routed to Claude and never reached the check that would have caught it).
+ */
+export function cursorModelSet(): Set<string> {
+  const out = new Set<string>(dynamicCursorModels);
+  for (const m of AGENT_MODELS) if (m.provider === 'cursor') out.add(m.value);
+  return out;
+}
+
+/**
+ * Route a model id to its provider, or report that nothing claims it.
+ *
+ * There is deliberately no "default" provider. `providerForModel` used to
+ * answer `'anthropic'` for any unrecognised id, which meant a Cursor model that
+ * had not been registered yet was handed to the Claude SDK — and because
+ * `buildOptions` validated by charset rather than provider, it ran and streamed
+ * as Claude Code with no error anywhere. An unknown id must be a named failure,
+ * not a guess.
+ */
+export function resolveModelRouting(
+  model: string,
+): { provider: AgentProvider } | { provider: null; reason: string } {
   const known = AGENT_MODELS.find((m) => m.value === model)?.provider;
-  if (known) return known;
-  return dynamicCursorModels.has(model) ? 'cursor' : 'anthropic';
+  if (known) return { provider: known };
+  if (dynamicCursorModels.has(model)) return { provider: 'cursor' };
+  return {
+    provider: null,
+    reason: `"${model.slice(0, 80)}" is not a known model for any configured provider`,
+  };
+}
+
+/**
+ * Resolve the provider that serves a given model id.
+ *
+ * Convenience wrapper over {@link resolveModelRouting} for the many callers
+ * that only need a label or a capability lookup and cannot act on "unknown".
+ * **Do not use it to choose an execution path** — it collapses unknown into
+ * `'anthropic'`, which is exactly the bug `resolveModelRouting` exists to
+ * prevent. Dispatch and option-building must call `resolveModelRouting`.
+ */
+export function providerForModel(model: string): AgentProvider {
+  return resolveModelRouting(model).provider ?? 'anthropic';
 }
 
 /** Bounds the main process clamps agent settings against. */
@@ -103,6 +246,15 @@ export const AGENT_LIMITS = {
    * document, this one rides in a conversation turn.
    */
   planPromptMax: 24_000,
+  /**
+   * Ceiling on suspend/continue rounds in one harness run.
+   *
+   * A harness gates built-in tools by suspending the turn and asking, so one
+   * round is spent per gated tool call — `maxTurns` is what actually bounds the
+   * work. This exists only so an adapter that keeps asking cannot spin forever;
+   * exceeding it is reported, never a silent stop.
+   */
+  maxApprovalRounds: 400,
   /**
    * Cap on the free-text feedback the user attaches to "Keep planning". It is
    * relayed verbatim to the model, so it is bounded at the IPC boundary like
@@ -984,6 +1136,17 @@ export const DEFAULT_SETTINGS: AppSettings = {
       failIfUnavailable: false,
       providerOverride: 'auto',
     },
+    harness: {
+      id: 'claude-code',
+      // Ships OFF. The harness path lands behind this switch so it can be
+      // exercised without changing a single existing install's behaviour;
+      // flipping the default is its own deliberate step.
+      legacyClaudeSdk: true,
+      sandboxProvider: 'local-worktree',
+      debug: false,
+      // Nothing approved yet — the first harness run asks.
+      bootstrapAck: '',
+    },
     hookEngine: {
       enabled: true,
       audit: 'lifecycle',
@@ -1185,6 +1348,9 @@ export const DEFAULT_SETTINGS: AppSettings = {
     // Empty on a fresh install: the very first launch shows the notes for the
     // version it shipped with, which is the correct introduction to the app.
     lastSeenVersion: '',
+    // Stable by default: a prerelease is opt-in, never the path of least
+    // resistance.
+    channel: 'stable',
   },
   voice: {
     enabled: true,

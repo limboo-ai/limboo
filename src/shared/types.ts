@@ -47,6 +47,23 @@ export type ActivityTab =
   | 'graph';
 
 /** Kinds of center-column workspace document that survive a restart. */
+/**
+ * The active harness's one-time setup plan, as shown for approval.
+ *
+ * Secret-free by construction: command strings and file names the adapter
+ * declares about itself, nothing derived from the environment.
+ */
+export interface HarnessBootstrapInfo {
+  /** False when the adapter could not be loaded at all. */
+  available: boolean;
+  harnessId: string;
+  /** `null` when this harness installs nothing — there is nothing to approve. */
+  plan: { commands: string[]; files: string[]; fingerprint: string } | null;
+  /** True when the current plan's fingerprint matches the stored approval. */
+  acked: boolean;
+  error?: string;
+}
+
 export type PersistedDocumentKind = 'diff' | 'file';
 
 /**
@@ -347,6 +364,50 @@ export interface AppSettings {
        * matches the running agent. `auto` = follow the active provider.
        */
       providerOverride: 'auto' | 'claude-native' | 'cursor-native';
+    };
+    /**
+     * Which agent HARNESS runs the selected model, and how.
+     *
+     * A harness is *how* a model runs; the provider is *who* serves it. They
+     * are not the same axis: Anthropic models can run through either the AI
+     * SDK's `claude-code` harness or Limboo's direct Claude Agent SDK path,
+     * while Cursor has no AI SDK adapter at all and stays a native runtime.
+     */
+    harness: {
+      /** Registry id (`main/managers/agent/harnessRegistry.ts`). */
+      id: string;
+      /**
+       * Run Anthropic models through the direct Claude Agent SDK instead of
+       * the harness. The documented rollback while the harness path settles —
+       * the harness packages are experimental and exact-pinned.
+       */
+      legacyClaudeSdk: boolean;
+      /**
+       * Sandbox provider for harness runs. `local-worktree` is the ONLY
+       * permitted value and `SettingsManager.normalize` re-asserts it: a
+       * remote sandbox would ship the user's repository off the machine,
+       * which CLAUDE.md §1 forbids. The field exists so that constraint is
+       * explicit and enforced rather than merely implied by there being no
+       * alternative wired up.
+       */
+      sandboxProvider: 'local-worktree';
+      /** Forward adapter log lines into the Agent Console. */
+      debug: boolean;
+      /**
+       * Fingerprint of the harness bootstrap commands the user approved.
+       *
+       * A bridge-backed harness installs its agent CLI before the first
+       * session, which reaches the npm registry from this machine (CLAUDE.md
+       * §1, third item). That is gated like repo-authored `limboo.json`
+       * commands: the verbatim commands are shown and approved once, and the
+       * ack is keyed to a hash of those exact commands — so an adapter upgrade
+       * that changes what runs re-prompts, because what was approved is no
+       * longer what would execute. Empty = not approved; runs are refused.
+       *
+       * Deliberately NOT a boolean "allow network": the user approves specific
+       * commands, not a standing permission.
+       */
+      bootstrapAck: string;
     };
   };
   /**
@@ -722,6 +783,20 @@ export interface AppSettings {
      * Any mismatch with the running version opens the tab exactly once.
      */
     lastSeenVersion: string;
+    /**
+     * Which releases this install is offered.
+     *
+     * `stable` sees only full releases. `beta` additionally sees prereleases —
+     * tags carrying a suffix (`v1.4.0-beta.1`), which every publisher already
+     * marks as a GitHub prerelease.
+     *
+     * A beta offer is NEVER auto-downloaded, whatever {@link autoDownload} says.
+     * An unreleased build is a decision the user should make per version, not one
+     * a background preference makes for them — so on this channel the update
+     * strip offers a link and waits. Once a beta IS installed it updates like any
+     * other build, because at that point the user has already chosen the channel.
+     */
+    channel: 'stable' | 'beta';
   };
   /**
    * Voice subsystem — speech is another input/output modality for the SAME
@@ -1096,6 +1171,25 @@ export interface UpdateStatus {
    * the app cannot replace, and so on. Written for the user, shown verbatim.
    */
   disabledReason?: string;
+  /**
+   * The channel this install is subscribed to, echoed so the renderer never has
+   * to read settings to know how to phrase an offer.
+   */
+  channel?: 'stable' | 'beta';
+  /**
+   * True when the OFFERED version is a prerelease (its tag carries a suffix).
+   *
+   * Drives two things the UI must not infer: the warning that the build is not
+   * yet released and may contain bugs, and the fact that it is offered as a
+   * link to click rather than fetched in the background.
+   */
+  prerelease?: boolean;
+  /**
+   * True when the RUNNING build is itself a prerelease. Independent of
+   * {@link prerelease}, which describes the offer — a beta install can be
+   * offered a stable release, and both facts are displayed differently.
+   */
+  runningPrerelease?: boolean;
 }
 
 /**

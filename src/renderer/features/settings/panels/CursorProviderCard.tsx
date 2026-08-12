@@ -1,8 +1,14 @@
 /**
- * Cursor provider card — Settings › Agent › Providers. Authentication (the
- * interactive `cursor-agent login` flow with a manual-browser mode, or a
- * Cursor API key held safeStorage-encrypted in the main process) plus CLI
- * maintenance: executable-path override, sandbox mode, and self-update.
+ * Cursor authentication + CLI maintenance controls — the body of the Cursor
+ * card in Settings › Agent › Harnesses. Authentication (the interactive
+ * `cursor-agent login` flow with a manual-browser mode, or a Cursor API key
+ * held safeStorage-encrypted in the main process) plus CLI maintenance:
+ * executable-path override and self-update.
+ *
+ * The status row and the card chrome now belong to {@link HarnessCard}, so
+ * every harness presents identically; this file supplies only what is specific
+ * to Cursor. {@link useCursorStatus} exposes the status line and pill so the
+ * card above can render them from the same source of truth.
  *
  * Security posture: this card never sees, caches, or renders a secret. The
  * key lives only in transient local input state (cleared on save/unmount) and
@@ -26,9 +32,52 @@ import {
   TextInput,
   Toggle,
 } from '../controls';
-import { ProviderStatusRow } from './ProviderCard';
 
-export function CursorProviderCard() {
+/**
+ * The Cursor harness's live status line + pill, derived from the secret-free
+ * auth state. Lives here (not in HarnessCard) because only this module knows
+ * how to phrase Cursor's four classifications.
+ */
+export function useCursorStatus(): { line: string; meta: ReturnType<typeof cursorStatusMeta> } {
+  const auth = useAgentStore((s) => s.cursorAuth);
+  const preferredAuth = useSettingsStore((s) => s.settings.agent.cursor.preferredAuth);
+  const meta = cursorStatusMeta(auth?.status ?? 'unknown');
+  if (!auth) return { line: 'Checking the Cursor CLI…', meta };
+  switch (auth.status) {
+    case 'not-installed':
+      return { line: auth.error ?? 'Cursor CLI (cursor-agent) not found on PATH.', meta };
+    case 'authenticated-cli':
+      return {
+        line: `Logged in as ${auth.account?.email ?? auth.account?.name ?? 'your Cursor account'}${
+          auth.cliVersion ? ` · CLI ${auth.cliVersion}` : ''
+        }`,
+        meta,
+      };
+    case 'authenticated-api-key':
+      return {
+        line: `API key configured${
+          auth.apiKey.source === 'env'
+            ? ' via CURSOR_API_KEY'
+            : auth.apiKey.updatedAt
+              ? ` · updated ${new Date(auth.apiKey.updatedAt).toLocaleDateString()}`
+              : ''
+        }`,
+        meta,
+      };
+    case 'not-authenticated':
+      return {
+        line:
+          preferredAuth === 'api-key' && !auth.apiKey.configured
+            ? `Installed${auth.cliVersion ? ` (CLI ${auth.cliVersion})` : ''} — API key preferred but none configured yet.`
+            : `Installed${auth.cliVersion ? ` (CLI ${auth.cliVersion})` : ''} — sign in or add an API key.`,
+        meta,
+      };
+    default:
+      return { line: 'Checking the Cursor CLI…', meta };
+  }
+}
+
+export function CursorAuthControls() {
   const auth = useAgentStore((s) => s.cursorAuth);
   const refresh = useAgentStore((s) => s.cursorRefresh);
   const loginStart = useAgentStore((s) => s.cursorLoginStart);
@@ -58,37 +107,10 @@ export function CursorProviderCard() {
   };
 
   const openExternal = (url: string) => void window.limboo?.system?.openExternal?.(url);
-  const meta = cursorStatusMeta(auth?.status ?? 'unknown');
+  // The status pill is rendered by HarnessCard via useCursorStatus().
   const login = auth?.login ?? { phase: 'idle' as const };
   const loginBusy = login.phase !== 'idle' && login.phase !== 'failed';
   const installed = !!auth && auth.status !== 'not-installed' && auth.status !== 'unknown';
-
-  const statusLine = (() => {
-    if (!auth) return 'Checking the Cursor CLI…';
-    switch (auth.status) {
-      case 'not-installed':
-        return auth.error ?? 'Cursor CLI (cursor-agent) not found on PATH.';
-      case 'authenticated-cli':
-        return `Logged in as ${auth.account?.email ?? auth.account?.name ?? 'your Cursor account'}${
-          auth.cliVersion ? ` · CLI ${auth.cliVersion}` : ''
-        }`;
-      case 'authenticated-api-key':
-        return `API key configured${
-          auth.apiKey.source === 'env'
-            ? ' via CURSOR_API_KEY'
-            : auth.apiKey.updatedAt
-              ? ` · updated ${new Date(auth.apiKey.updatedAt).toLocaleDateString()}`
-              : ''
-        }`;
-      case 'not-authenticated':
-        if (cursorPrefs.preferredAuth === 'api-key' && !auth.apiKey.configured) {
-          return `Installed${auth.cliVersion ? ` (CLI ${auth.cliVersion})` : ''} — API key preferred but none configured yet.`;
-        }
-        return `Installed${auth.cliVersion ? ` (CLI ${auth.cliVersion})` : ''} — sign in or add an API key.`;
-      default:
-        return 'Checking the Cursor CLI…';
-    }
-  })();
 
   const saveKey = async () => {
     const ok = await setApiKey(keyDraft.trim());
@@ -100,9 +122,7 @@ export function CursorProviderCard() {
 
   return (
     <div className="flex flex-col gap-1">
-      {/* Status row — the shared provider layout (same as the Claude Code card). */}
-      <ProviderStatusRow provider="cursor" name="Cursor" statusLine={statusLine} meta={meta} />
-
+      {/* The status row belongs to HarnessCard — this is the Cursor-specific body. */}
       {/* Actions per state. */}
       {auth?.status === 'not-installed' && (
         <div className="flex items-center gap-1.5 px-2 py-1.5">
@@ -238,7 +258,7 @@ export function CursorProviderCard() {
             />
           </Field>
           {login.phase === 'waiting-manual-url' && login.url && (
-            <div className="mx-2 flex flex-col gap-1.5 rounded-md border border-line bg-surface-2 px-2.5 py-2">
+            <div className="mx-2 flex flex-col gap-1.5 px-0.5 py-1">
               <span className="break-all font-mono text-[11px] text-muted">{login.url}</span>
               <div className="flex items-center gap-1.5">
                 <ActionButton

@@ -108,7 +108,7 @@ export function AgentTroubleshooting() {
         label="Cursor CLI detection"
         hint="Exactly what the last probe resolved. Refresh re-runs the full detection (PATH, %LOCALAPPDATA%\cursor-agent, ~/.local/bin, and the Executable path setting)."
       >
-        <div className="flex flex-col gap-1 rounded-md border border-line bg-surface-2 px-2.5 py-2">
+        <div className="flex flex-col gap-1 py-1">
           <DiagRow label="Status" value={`${meta.label}${auth?.status ? ` (${auth.status})` : ''}`} />
           <DiagRow label="Executable" value={auth?.exec?.path ?? 'not resolved'} mono />
           {auth?.exec && (
@@ -137,7 +137,7 @@ export function AgentTroubleshooting() {
         label="Cursor run bridge"
         hint="Whether the last Cursor run's permission hooks and Limboo memory/search MCP servers connected over the per-run bridge. Both layers only ever tighten — runs stay safe without them."
       >
-        <div className="flex flex-col gap-1 rounded-md border border-line bg-surface-2 px-2.5 py-2">
+        <div className="flex flex-col gap-1 py-1">
           <DiagRow label="Hooks" value={bridgeLabel(bridge?.hooksActive, 'hooks')} />
           <DiagRow label="MCP" value={bridgeLabel(bridge?.mcpActive, 'mcp')} />
           <DiagRow label="Execution" value={interactiveLabel(interactive)} />
@@ -149,7 +149,7 @@ export function AgentTroubleshooting() {
       </StackedField>
 
       <StackedField id="troubleshootClaude" label="Claude Code">
-        <div className="rounded-md border border-line bg-surface-2 px-2.5 py-2">
+        <div className="py-1">
           <DiagRow
             label="Status"
             value={

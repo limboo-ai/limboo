@@ -116,6 +116,7 @@ import type {
   McpProbeResult,
   McpLogLine,
   McpServerRuntime,
+  HarnessBootstrapInfo,
 } from '@shared/types';
 
 /** Subscribe to a one-way main -> renderer event. Returns an unsubscribe fn. */
@@ -282,6 +283,9 @@ const servicesApi = {
 
 const agentApi = {
   getInstall: (): Promise<AgentInstall> => ipcRenderer.invoke(IpcChannels.agentGetInstall),
+  /** The active harness's setup plan, for the one-time consent surface. */
+  harnessBootstrapPlan: (): Promise<HarnessBootstrapInfo> =>
+    ipcRenderer.invoke(IpcChannels.agentHarnessBootstrapPlan),
   getState: (): Promise<AgentState> => ipcRenderer.invoke(IpcChannels.agentGetState),
   getSnapshot: (sessionId: string): Promise<AgentSessionSnapshot> =>
     ipcRenderer.invoke(IpcChannels.agentGetSnapshot, sessionId),

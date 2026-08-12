@@ -24,6 +24,165 @@ import type { ReleaseIndexEntry, ReleaseManifestEntry } from './release';
 /** Newest first. */
 export const RELEASE_MANIFESTS: ReleaseManifestEntry[] = [
   {
+    "version": "1.18.0-beta.2",
+    "date": "2026-08-12",
+    "channel": "beta",
+    "codename": null,
+    "gitTag": "v1.18.0-beta.2",
+    "commit": null,
+    "buildNumber": null,
+    "summary": "The first beta. Two bugs that made Cursor sessions unusable are fixed, agents can\nnow run through a swappable harness layer instead of one hardcoded integration,\nand Settings opens as a workspace tab. This build is published for testing ahead\nof a stable release — read the warning at the top of these notes before\ninstalling it over a working copy.",
+    "sections": [
+      {
+        "category": "fixed",
+        "title": "Fixed",
+        "items": [
+          {
+            "lead": "Cursor sessions denied every tool call",
+            "text": "The hook runner read the event name\n  from a single payload key that the CLI does not always send. With no event name\n  it could not identify what was being asked, so it failed closed — which is the\n  correct posture, but it meant every read, search, shell command and edit was\n  refused, and nothing on screen said why. The event name now travels in the\n  runner's own arguments, where Limboo writes it, with five payload spellings as\n  fallbacks, and a genuine failure now names the missing key in the timeline\n  instead of denying silently."
+          },
+          {
+            "lead": "Four more ways a Cursor run could stall",
+            "text": "The permission helper could boot as\n  a GUI process instead of a script and then hang for the full ten-minute hook\n  timeout on every single tool call; nothing timed out while it waited for input;\n  a successful approval could be truncated on its way out and be read as a\n  refusal; and the sandbox denied the helper access to its own communication\n  socket. Each is fixed, and each failure now reports what happened."
+          },
+          {
+            "lead": "\"Prompt me for everything\" meant \"deny everything\"",
+            "text": "Tightening the approval\n  policy withdrew the rule that let Cursor read files at all. Because the only way\n  to ask for permission on that path is the hook bridge, a session with hooks\n  unavailable was left unable to read or to ask. Reads and inspection commands\n  now keep their floor regardless of the policy; the permission gate still runs\n  on top of it."
+          },
+          {
+            "lead": "A Cursor session could stream as Claude Code",
+            "text": "The model was checked for\n  character shape rather than for which provider serves it, and every Cursor\n  model id passes that check — so a mis-routed model was handed to the Claude\n  integration and ran there, with no error anywhere. Routing now has an explicit\n  \"unknown\" answer, dispatch is exhaustive, and a model nothing claims fails by\n  name instead of quietly running somewhere."
+          },
+          {
+            "lead": "Commit-message generation always used Claude",
+            "text": "A Cursor-only user pressing\n  the button started a Claude run and, with Claude not installed, was told to sign\n  in to a product they were not using. It now follows the agent you selected, and\n  the button is no longer disabled for Cursor users."
+          },
+          {
+            "lead": "Searching Settings missed several controls",
+            "text": "Some settings were never\n  registered in the search index, so typing their name found nothing. Fixed for\n  the Agent and Runtime categories, with a check that fails the build if it\n  happens again."
+          },
+          {
+            "lead": "Absolute paths inside your project were treated as escapes",
+            "text": "Cursor's CLI\n  writes full paths by default, and a full path to a file inside your own worktree\n  was classified as leaving it — so ordinary reads were refused during planning."
+          }
+        ],
+        "markdown": "- **Cursor sessions denied every tool call.** The hook runner read the event name\n  from a single payload key that the CLI does not always send. With no event name\n  it could not identify what was being asked, so it failed closed — which is the\n  correct posture, but it meant every read, search, shell command and edit was\n  refused, and nothing on screen said why. The event name now travels in the\n  runner's own arguments, where Limboo writes it, with five payload spellings as\n  fallbacks, and a genuine failure now names the missing key in the timeline\n  instead of denying silently.\n- **Four more ways a Cursor run could stall.** The permission helper could boot as\n  a GUI process instead of a script and then hang for the full ten-minute hook\n  timeout on every single tool call; nothing timed out while it waited for input;\n  a successful approval could be truncated on its way out and be read as a\n  refusal; and the sandbox denied the helper access to its own communication\n  socket. Each is fixed, and each failure now reports what happened.\n- **\"Prompt me for everything\" meant \"deny everything\".** Tightening the approval\n  policy withdrew the rule that let Cursor read files at all. Because the only way\n  to ask for permission on that path is the hook bridge, a session with hooks\n  unavailable was left unable to read or to ask. Reads and inspection commands\n  now keep their floor regardless of the policy; the permission gate still runs\n  on top of it.\n- **A Cursor session could stream as Claude Code.** The model was checked for\n  character shape rather than for which provider serves it, and every Cursor\n  model id passes that check — so a mis-routed model was handed to the Claude\n  integration and ran there, with no error anywhere. Routing now has an explicit\n  \"unknown\" answer, dispatch is exhaustive, and a model nothing claims fails by\n  name instead of quietly running somewhere.\n- **Commit-message generation always used Claude.** A Cursor-only user pressing\n  the button started a Claude run and, with Claude not installed, was told to sign\n  in to a product they were not using. It now follows the agent you selected, and\n  the button is no longer disabled for Cursor users.\n- **Searching Settings missed several controls.** Some settings were never\n  registered in the search index, so typing their name found nothing. Fixed for\n  the Agent and Runtime categories, with a check that fails the build if it\n  happens again.\n- **Absolute paths inside your project were treated as escapes.** Cursor's CLI\n  writes full paths by default, and a full path to a file inside your own worktree\n  was classified as leaving it — so ordinary reads were refused during planning."
+      },
+      {
+        "category": "added",
+        "title": "Added",
+        "items": [
+          {
+            "lead": "Agents can run through a harness layer",
+            "text": "Limboo now drives agents through\n  Vercel AI SDK 7's harness abstraction as well as its own integrations, so a new\n  agent runtime becomes an adapter rather than a new code path. Pi is available;\n  Claude Code runs through it behind an opt-in switch. Everything above the\n  adapter — the conversation, permissions, memory, search, the work graph, the\n  runtime panel — is unchanged, because they all sit on one seam."
+          },
+          {
+            "lead": "A sandbox that runs on your own worktree",
+            "text": "Every shipped sandbox for that\n  abstraction is either a cloud service or a private filesystem, and neither\n  fits: your repository must not leave the machine, and the agent has to edit the\n  actual files that git, the diff viewer and checkpoints are watching. Limboo has\n  its own, rooted at the session's worktree, with the same containment rules the\n  rest of the app enforces — nothing outside the worktree, and never the app's own\n  database, settings or secrets."
+          },
+          {
+            "lead": "Settings opens as a workspace tab",
+            "text": "An icon beside the close button promotes\n  the dialog into an editor tab, the way a diff opens. Both surfaces render the\n  same panels, so nothing drifts. The tab has no Cancel: settings apply as you\n  change them, exactly as they already did."
+          },
+          {
+            "lead": "An update channel you can choose",
+            "text": "Settings › Updates now offers Stable or\n  Beta. A beta is never downloaded in the background — you are shown its release\n  notes and decide."
+          }
+        ],
+        "markdown": "- **Agents can run through a harness layer.** Limboo now drives agents through\n  Vercel AI SDK 7's harness abstraction as well as its own integrations, so a new\n  agent runtime becomes an adapter rather than a new code path. Pi is available;\n  Claude Code runs through it behind an opt-in switch. Everything above the\n  adapter — the conversation, permissions, memory, search, the work graph, the\n  runtime panel — is unchanged, because they all sit on one seam.\n- **A sandbox that runs on your own worktree.** Every shipped sandbox for that\n  abstraction is either a cloud service or a private filesystem, and neither\n  fits: your repository must not leave the machine, and the agent has to edit the\n  actual files that git, the diff viewer and checkpoints are watching. Limboo has\n  its own, rooted at the session's worktree, with the same containment rules the\n  rest of the app enforces — nothing outside the worktree, and never the app's own\n  database, settings or secrets.\n- **Settings opens as a workspace tab.** An icon beside the close button promotes\n  the dialog into an editor tab, the way a diff opens. Both surfaces render the\n  same panels, so nothing drifts. The tab has no Cancel: settings apply as you\n  change them, exactly as they already did.\n- **An update channel you can choose.** Settings › Updates now offers Stable or\n  Beta. A beta is never downloaded in the background — you are shown its release\n  notes and decide."
+      },
+      {
+        "category": "changed",
+        "title": "Changed",
+        "items": [
+          {
+            "lead": "Settings panels are flat rows",
+            "text": "The Agent and MCP categories wrapped groups\n  of settings in bordered panels while every other category used plain labelled\n  rows, which made them look like a different application. The boxes are gone.\n  Every input, button and select now uses one corner radius."
+          },
+          {
+            "lead": "The Agent panel is reorganised",
+            "text": "Providers became Harnesses and now reads as\n  one list instead of two hand-built cards. Connection and reliability moved to\n  Runtime, where the rest of the supervision settings live. A section that\n  contained no settings at all was removed, and the remainder is ordered by the\n  decision you are making: which agent, which model, what it may do, what\n  contains it."
+          },
+          {
+            "lead": "The model hint stopped being wrong",
+            "text": "It named a default the app had not used\n  for several versions, because the text was typed by hand next to the value it\n  described. It is now derived from that value."
+          }
+        ],
+        "markdown": "- **Settings panels are flat rows.** The Agent and MCP categories wrapped groups\n  of settings in bordered panels while every other category used plain labelled\n  rows, which made them look like a different application. The boxes are gone.\n  Every input, button and select now uses one corner radius.\n- **The Agent panel is reorganised.** Providers became Harnesses and now reads as\n  one list instead of two hand-built cards. Connection and reliability moved to\n  Runtime, where the rest of the supervision settings live. A section that\n  contained no settings at all was removed, and the remainder is ordered by the\n  decision you are making: which agent, which model, what it may do, what\n  contains it.\n- **The model hint stopped being wrong.** It named a default the app had not used\n  for several versions, because the text was typed by hand next to the value it\n  described. It is now derived from that value."
+      },
+      {
+        "category": "security",
+        "title": "Security",
+        "items": [
+          {
+            "lead": "Built-in tools on the harness path are gated by Limboo",
+            "text": "The harness\n  abstraction has two separate approval surfaces, and the one Limboo had wired\n  covers only tools the host supplies — built-in file writes and shell commands\n  are governed by a different setting that defaults to allowing everything. On\n  that path an agent could have written files and run commands without Limboo's\n  permission gate. Every built-in tool call now suspends the turn and asks, using\n  the same authority, the same risk labels, the same dialogs and the same audit\n  trail as every other agent."
+          },
+          {
+            "lead": "A harness that cannot ask for permission is refused",
+            "text": "Rather than run it with\n  weaker enforcement, Limboo declines to start it and says so. This is not\n  theoretical: the Codex adapter reports that it cannot request approval for its\n  shell tool, so it is registered as unavailable with the reason shown rather than\n  offered and then failing."
+          },
+          {
+            "lead": "The harness setup step asks first",
+            "text": "Preparing a harness for its first run\n  downloads its agent CLI, which is the only time Limboo reaches the network\n  outside talking to your agent and fetching contributor avatars. The exact\n  commands are read from the adapter and shown to you for approval once, and the\n  approval is tied to those commands — if a later version changes them, you are\n  asked again. Without approval the run does not start."
+          },
+          {
+            "lead": "Credentials are passed through, never stored",
+            "text": "A harness receives an API key\n  only if your own environment already has one, from an explicitly named list.\n  Nothing is written to settings, accepted over the app's internal channels, put\n  on a command line, or logged. A gap in log redaction that could have printed\n  those variables is closed."
+          },
+          {
+            "lead": "Reads on the harness path cannot be gated, and the setting says so",
+            "text": "The\n  underlying runtime allows built-in file reads unconditionally, so\n  \"auto-approve reads\" has no effect there. Rather than leave a control that looks\n  like it works, the setting explains the limitation."
+          }
+        ],
+        "markdown": "- **Built-in tools on the harness path are gated by Limboo.** The harness\n  abstraction has two separate approval surfaces, and the one Limboo had wired\n  covers only tools the host supplies — built-in file writes and shell commands\n  are governed by a different setting that defaults to allowing everything. On\n  that path an agent could have written files and run commands without Limboo's\n  permission gate. Every built-in tool call now suspends the turn and asks, using\n  the same authority, the same risk labels, the same dialogs and the same audit\n  trail as every other agent.\n- **A harness that cannot ask for permission is refused.** Rather than run it with\n  weaker enforcement, Limboo declines to start it and says so. This is not\n  theoretical: the Codex adapter reports that it cannot request approval for its\n  shell tool, so it is registered as unavailable with the reason shown rather than\n  offered and then failing.\n- **The harness setup step asks first.** Preparing a harness for its first run\n  downloads its agent CLI, which is the only time Limboo reaches the network\n  outside talking to your agent and fetching contributor avatars. The exact\n  commands are read from the adapter and shown to you for approval once, and the\n  approval is tied to those commands — if a later version changes them, you are\n  asked again. Without approval the run does not start.\n- **Credentials are passed through, never stored.** A harness receives an API key\n  only if your own environment already has one, from an explicitly named list.\n  Nothing is written to settings, accepted over the app's internal channels, put\n  on a command line, or logged. A gap in log redaction that could have printed\n  those variables is closed.\n- **Reads on the harness path cannot be gated, and the setting says so.** The\n  underlying runtime allows built-in file reads unconditionally, so\n  \"auto-approve reads\" has no effect there. Rather than leave a control that looks\n  like it works, the setting explains the limitation."
+      },
+      {
+        "category": "known-issues",
+        "title": "Known limitations",
+        "items": [
+          {
+            "lead": "Beta builds are not released builds",
+            "text": "Features may change or be removed\n  before release. Settings and session data move forward but not back, so a build\n  made after this one may not read data this one wrote. Keep a stable install for\n  work you cannot repeat."
+          },
+          {
+            "lead": "The harness path is off by default",
+            "text": "Claude Code and Cursor continue to run\n  through their own integrations. Turn the harness on in Settings › Agent ›\n  Harnesses if you want to try it; you will be asked to approve its setup step\n  first."
+          },
+          {
+            "lead": "A harness conversation does not resume",
+            "text": "Each message starts a fresh\n  conversation with the underlying runtime. The alternative failed on every second\n  message, so this is deliberate until the resume format is handled properly."
+          },
+          {
+            "lead": "Codex is unavailable",
+            "text": "Its adapter cannot ask for permission before running\n  shell commands. It is listed with that reason rather than hidden."
+          }
+        ],
+        "markdown": "- **Beta builds are not released builds.** Features may change or be removed\n  before release. Settings and session data move forward but not back, so a build\n  made after this one may not read data this one wrote. Keep a stable install for\n  work you cannot repeat.\n- **The harness path is off by default.** Claude Code and Cursor continue to run\n  through their own integrations. Turn the harness on in Settings › Agent ›\n  Harnesses if you want to try it; you will be asked to approve its setup step\n  first.\n- **A harness conversation does not resume.** Each message starts a fresh\n  conversation with the underlying runtime. The alternative failed on every second\n  message, so this is deliberate until the resume format is handled properly.\n- **Codex is unavailable.** Its adapter cannot ask for permission before running\n  shell commands. It is listed with that reason rather than hidden."
+      }
+    ],
+    "contributors": [],
+    "pullRequests": [],
+    "mergedBranches": [],
+    "assets": [],
+    "signing": [],
+    "stats": {
+      "commits": null,
+      "filesChanged": null,
+      "additions": null,
+      "deletions": null
+    },
+    "links": {
+      "release": "https://github.com/limboo-ai/limboo/releases/tag/v1.18.0-beta.2",
+      "compare": null,
+      "tag": "https://github.com/limboo-ai/limboo/releases/tag/v1.18.0-beta.2",
+      "milestone": null
+    },
+    "checksumManifest": "SHA256SUMS",
+    "provenanceRepo": "limboo-ai/limboo",
+    "markdown": "The first beta. Two bugs that made Cursor sessions unusable are fixed, agents can\nnow run through a swappable harness layer instead of one hardcoded integration,\nand Settings opens as a workspace tab. This build is published for testing ahead\nof a stable release — read the warning at the top of these notes before\ninstalling it over a working copy.\n\n### Fixed\n\n- **Cursor sessions denied every tool call.** The hook runner read the event name\n  from a single payload key that the CLI does not always send. With no event name\n  it could not identify what was being asked, so it failed closed — which is the\n  correct posture, but it meant every read, search, shell command and edit was\n  refused, and nothing on screen said why. The event name now travels in the\n  runner's own arguments, where Limboo writes it, with five payload spellings as\n  fallbacks, and a genuine failure now names the missing key in the timeline\n  instead of denying silently.\n- **Four more ways a Cursor run could stall.** The permission helper could boot as\n  a GUI process instead of a script and then hang for the full ten-minute hook\n  timeout on every single tool call; nothing timed out while it waited for input;\n  a successful approval could be truncated on its way out and be read as a\n  refusal; and the sandbox denied the helper access to its own communication\n  socket. Each is fixed, and each failure now reports what happened.\n- **\"Prompt me for everything\" meant \"deny everything\".** Tightening the approval\n  policy withdrew the rule that let Cursor read files at all. Because the only way\n  to ask for permission on that path is the hook bridge, a session with hooks\n  unavailable was left unable to read or to ask. Reads and inspection commands\n  now keep their floor regardless of the policy; the permission gate still runs\n  on top of it.\n- **A Cursor session could stream as Claude Code.** The model was checked for\n  character shape rather than for which provider serves it, and every Cursor\n  model id passes that check — so a mis-routed model was handed to the Claude\n  integration and ran there, with no error anywhere. Routing now has an explicit\n  \"unknown\" answer, dispatch is exhaustive, and a model nothing claims fails by\n  name instead of quietly running somewhere.\n- **Commit-message generation always used Claude.** A Cursor-only user pressing\n  the button started a Claude run and, with Claude not installed, was told to sign\n  in to a product they were not using. It now follows the agent you selected, and\n  the button is no longer disabled for Cursor users.\n- **Searching Settings missed several controls.** Some settings were never\n  registered in the search index, so typing their name found nothing. Fixed for\n  the Agent and Runtime categories, with a check that fails the build if it\n  happens again.\n- **Absolute paths inside your project were treated as escapes.** Cursor's CLI\n  writes full paths by default, and a full path to a file inside your own worktree\n  was classified as leaving it — so ordinary reads were refused during planning.\n\n### Added\n\n- **Agents can run through a harness layer.** Limboo now drives agents through\n  Vercel AI SDK 7's harness abstraction as well as its own integrations, so a new\n  agent runtime becomes an adapter rather than a new code path. Pi is available;\n  Claude Code runs through it behind an opt-in switch. Everything above the\n  adapter — the conversation, permissions, memory, search, the work graph, the\n  runtime panel — is unchanged, because they all sit on one seam.\n- **A sandbox that runs on your own worktree.** Every shipped sandbox for that\n  abstraction is either a cloud service or a private filesystem, and neither\n  fits: your repository must not leave the machine, and the agent has to edit the\n  actual files that git, the diff viewer and checkpoints are watching. Limboo has\n  its own, rooted at the session's worktree, with the same containment rules the\n  rest of the app enforces — nothing outside the worktree, and never the app's own\n  database, settings or secrets.\n- **Settings opens as a workspace tab.** An icon beside the close button promotes\n  the dialog into an editor tab, the way a diff opens. Both surfaces render the\n  same panels, so nothing drifts. The tab has no Cancel: settings apply as you\n  change them, exactly as they already did.\n- **An update channel you can choose.** Settings › Updates now offers Stable or\n  Beta. A beta is never downloaded in the background — you are shown its release\n  notes and decide.\n\n### Changed\n\n- **Settings panels are flat rows.** The Agent and MCP categories wrapped groups\n  of settings in bordered panels while every other category used plain labelled\n  rows, which made them look like a different application. The boxes are gone.\n  Every input, button and select now uses one corner radius.\n- **The Agent panel is reorganised.** Providers became Harnesses and now reads as\n  one list instead of two hand-built cards. Connection and reliability moved to\n  Runtime, where the rest of the supervision settings live. A section that\n  contained no settings at all was removed, and the remainder is ordered by the\n  decision you are making: which agent, which model, what it may do, what\n  contains it.\n- **The model hint stopped being wrong.** It named a default the app had not used\n  for several versions, because the text was typed by hand next to the value it\n  described. It is now derived from that value.\n\n### Security\n\n- **Built-in tools on the harness path are gated by Limboo.** The harness\n  abstraction has two separate approval surfaces, and the one Limboo had wired\n  covers only tools the host supplies — built-in file writes and shell commands\n  are governed by a different setting that defaults to allowing everything. On\n  that path an agent could have written files and run commands without Limboo's\n  permission gate. Every built-in tool call now suspends the turn and asks, using\n  the same authority, the same risk labels, the same dialogs and the same audit\n  trail as every other agent.\n- **A harness that cannot ask for permission is refused.** Rather than run it with\n  weaker enforcement, Limboo declines to start it and says so. This is not\n  theoretical: the Codex adapter reports that it cannot request approval for its\n  shell tool, so it is registered as unavailable with the reason shown rather than\n  offered and then failing.\n- **The harness setup step asks first.** Preparing a harness for its first run\n  downloads its agent CLI, which is the only time Limboo reaches the network\n  outside talking to your agent and fetching contributor avatars. The exact\n  commands are read from the adapter and shown to you for approval once, and the\n  approval is tied to those commands — if a later version changes them, you are\n  asked again. Without approval the run does not start.\n- **Credentials are passed through, never stored.** A harness receives an API key\n  only if your own environment already has one, from an explicitly named list.\n  Nothing is written to settings, accepted over the app's internal channels, put\n  on a command line, or logged. A gap in log redaction that could have printed\n  those variables is closed.\n- **Reads on the harness path cannot be gated, and the setting says so.** The\n  underlying runtime allows built-in file reads unconditionally, so\n  \"auto-approve reads\" has no effect there. Rather than leave a control that looks\n  like it works, the setting explains the limitation.\n\n### Known limitations\n\n- **Beta builds are not released builds.** Features may change or be removed\n  before release. Settings and session data move forward but not back, so a build\n  made after this one may not read data this one wrote. Keep a stable install for\n  work you cannot repeat.\n- **The harness path is off by default.** Claude Code and Cursor continue to run\n  through their own integrations. Turn the harness on in Settings › Agent ›\n  Harnesses if you want to try it; you will be asked to approve its setup step\n  first.\n- **A harness conversation does not resume.** Each message starts a fresh\n  conversation with the underlying runtime. The alternative failed on every second\n  message, so this is deliberate until the resume format is handled properly.\n- **Codex is unavailable.** Its adapter cannot ask for permission before running\n  shell commands. It is listed with that reason rather than hidden."
+  },
+  {
     "version": "1.17.0",
     "date": "2026-08-01",
     "channel": "stable",
@@ -471,85 +630,18 @@ export const RELEASE_MANIFESTS: ReleaseManifestEntry[] = [
     "checksumManifest": "SHA256SUMS",
     "provenanceRepo": "limboo-ai/limboo",
     "markdown": "When the agent hands work to a specialist, you can finally watch it happen.\nDelegated work used to arrive as an anonymous pile of tool calls mixed into the\nmain reply; it now reads as one line you can open, follow live, and take apart\nafterwards — without ever leaving the conversation.\n\n### Added\n\n- **Delegated work reads as one activity.** When the agent hands a job to a\n  specialist — exploring the repository, reviewing code, running tests — the\n  conversation shows a single line naming the worker and what it was asked to do,\n  with its progress underneath. The worker's own tool calls no longer scatter\n  through the reply as if the main agent had run them. Opening the line shows how\n  long it took, which model it used, what it read and changed, which tools and\n  connected servers it reached, what it verified, and what it concluded.\n- **Live progress in the worker's own words.** While a specialist works, it\n  reports what it is doing in plain language — \"Analyzing authentication module\"\n  — refreshed as it goes. When that is unavailable the progress is worked out\n  from the tools it is using, so there is always something to read.\n- **Open a worker in its own tab.** Maximize a delegation and it opens beside\n  your files as a full-width tab: live progress, everything it ran, its notes and\n  its conclusion, following along as it works. Minimizing returns it to the\n  conversation exactly where you left it — same scroll position, same sections\n  open. If the worker pauses for permission while you are watching, you can\n  answer without going back.\n- **Actions on every delegation.** Copy the conclusion or the worker's notes,\n  export the whole record as Markdown, jump to it in the work graph, or open any\n  file it changed straight into a diff. Copying while it is still working\n  captures everything that has arrived.\n- **Delegated work in the task list.** Specialists running right now appear under\n  the task they belong to, with finished ones collected below it, so a long\n  execution can be followed from the Tasks panel without reading the whole\n  conversation.\n- **Settings for delegated work.** Under Agent › Subagents you can turn the\n  inline activity off, stop requesting live progress descriptions, or stop\n  keeping a worker's notes.\n\n### Fixed\n\n- **The plan was dumped into the conversation as raw text.** Approving a plan\n  sent it to the agent, and everything sent to the agent is shown — so the whole\n  plan appeared in a chat bubble as unformatted markup, tags and all, sometimes\n  thousands of characters of it. The approval now reads as one line with the plan\n  beneath it, properly formatted and collapsed by default. Nothing is hidden:\n  viewing the message raw still shows exactly what the agent received.\n- **Checklists in plans rendered twice over.** Every `- [ ]` item drew a tick box\n  *and* a bullet, on plans that are almost entirely checklists. Ticked items are\n  now also greyed, so a plan reads like a plan.\n- **The Tasks panel could go blank.** A specialist that failed or was denied took\n  the whole panel down with it.\n- **Long output was hard to read and hard to escape.** A worker's notes and\n  conclusion ran together with everything around them at a size that fought its\n  surroundings, inside a small scrolling box that trapped the page. They are now\n  properly separated, one consistent size, and clipped with a clear way to read\n  the rest.\n- **A worker's tool list could bury everything below it.** A specialist that\n  reads thirty files pushed its own conclusion off the screen. Long lists now\n  arrive folded, with the count and anything still running or failed still\n  visible.\n- **Delegated work went unrecognized on current agent versions.** The tool that\n  starts a specialist was renamed upstream, and Limboo only recognized the old\n  name — so on any recent version delegated work was recorded as ordinary tool\n  calls and never appeared as delegation at all. Both names are now recognized.\n- **A specialist's work vanished when you sent the next message.** A worker still\n  running when you typed again had the rest of its work spill into the new turn\n  as loose tool calls. Its record also now survives restarting the app.\n- **Sessions were named after approving a plan.** An untitled session took its\n  name from the approval instead of from what you had asked for.\n\n### Security\n\n- **\"Always allow\" no longer grants more than you agreed to.** Allowing an action\n  for the session applied to *every* later action, whatever its kind — approving a\n  file read also pre-approved writing files and running commands, and satisfied\n  the guard on secrets like `.env` files and private keys. It now applies only to\n  the kind of action you were actually shown, and access to secrets always asks\n  on its own.\n- **A specialist's notes are treated as untrusted.** What a worker writes is\n  stored and shown as text, with a size limit, and is never fed back to the agent\n  as instructions.\n- **Approvals name the worker that asked.** A permission request raised inside a\n  delegation says so — and when it cannot be attributed with certainty, it says\n  nothing rather than guessing."
-  },
-  {
-    "version": "1.13.2",
-    "date": "2026-07-28",
-    "channel": "stable",
-    "codename": null,
-    "gitTag": "v1.13.2",
-    "commit": null,
-    "buildNumber": null,
-    "summary": "A plan you left waiting can be approved again.",
-    "sections": [
-      {
-        "category": "fixed",
-        "title": "Fixed",
-        "items": [
-          {
-            "lead": "Approving a plan after reopening the app did nothing",
-            "text": "A plan waiting for\n  your approval was saved, but the conversation that produced it was not — a plan\n  run always ends by interrupting the agent, and an interrupted conversation is\n  cleared so your next message cannot fail on it. Approving afterwards therefore\n  started a fresh conversation and told it to implement a plan it had never seen:\n  the run finished having done nothing, and the plan was filed as complete. The\n  approved plan is now sent with the approval, so it no longer matters whether\n  the earlier conversation survived. This applies to both Claude and Cursor."
-          },
-          {
-            "lead": "Approve was greyed out while Reject still worked",
-            "text": "Approve, \"Approve &\n  accept edits\" and \"Keep planning\" are disabled while a run is finishing;\n  Reject is not. A run that ended without reporting back — after reloading the\n  window mid-run, or when a planning run did not fully unwind — left the session\n  looking permanently busy, so the only control that still responded was Reject.\n  A session that claims to be working with nothing running is now corrected on\n  the spot."
-          },
-          {
-            "lead": "Plans could get stuck with no way out",
-            "text": "Closing the app while a plan was\n  being written, or while one was being implemented, left it in that state\n  forever — and while a plan is being written the panel hides its whole toolbar,\n  so there was no approve, no reject and no regenerate. Interrupted plans are now\n  settled on startup: one that was never finished is cleared, and one that was\n  part-way through being implemented returns to awaiting approval so you can\n  start it again. Regenerate also stays available while a plan is being written."
-          },
-          {
-            "lead": "Approve could stop responding with no explanation",
-            "text": "Clicking Approve blocked\n  further clicks until the whole implementation run finished, so a run that hung\n  left the button silently dead for the rest of the session. It is now released\n  as soon as the run actually starts."
-          },
-          {
-            "lead": "Starting a new plan discarded the one waiting for approval",
-            "text": "It was replaced\n  without being recorded, so it was not even in the plan's own History. A pending\n  plan is now saved to History first. Reopening the app restores Plan mode by\n  default, which made this reachable by simply typing."
-          },
-          {
-            "lead": "A failed approval could leave the composer in the wrong mode",
-            "text": "After\n  reopening the app it stayed on \"Ask before edits\" even though the plan had been\n  put back and was waiting for approval again. It now returns to Plan."
-          }
-        ],
-        "markdown": "- **Approving a plan after reopening the app did nothing.** A plan waiting for\n  your approval was saved, but the conversation that produced it was not — a plan\n  run always ends by interrupting the agent, and an interrupted conversation is\n  cleared so your next message cannot fail on it. Approving afterwards therefore\n  started a fresh conversation and told it to implement a plan it had never seen:\n  the run finished having done nothing, and the plan was filed as complete. The\n  approved plan is now sent with the approval, so it no longer matters whether\n  the earlier conversation survived. This applies to both Claude and Cursor.\n- **Approve was greyed out while Reject still worked.** Approve, \"Approve &\n  accept edits\" and \"Keep planning\" are disabled while a run is finishing;\n  Reject is not. A run that ended without reporting back — after reloading the\n  window mid-run, or when a planning run did not fully unwind — left the session\n  looking permanently busy, so the only control that still responded was Reject.\n  A session that claims to be working with nothing running is now corrected on\n  the spot.\n- **Plans could get stuck with no way out.** Closing the app while a plan was\n  being written, or while one was being implemented, left it in that state\n  forever — and while a plan is being written the panel hides its whole toolbar,\n  so there was no approve, no reject and no regenerate. Interrupted plans are now\n  settled on startup: one that was never finished is cleared, and one that was\n  part-way through being implemented returns to awaiting approval so you can\n  start it again. Regenerate also stays available while a plan is being written.\n- **Approve could stop responding with no explanation.** Clicking Approve blocked\n  further clicks until the whole implementation run finished, so a run that hung\n  left the button silently dead for the rest of the session. It is now released\n  as soon as the run actually starts.\n- **Starting a new plan discarded the one waiting for approval.** It was replaced\n  without being recorded, so it was not even in the plan's own History. A pending\n  plan is now saved to History first. Reopening the app restores Plan mode by\n  default, which made this reachable by simply typing.\n- **A failed approval could leave the composer in the wrong mode.** After\n  reopening the app it stayed on \"Ask before edits\" even though the plan had been\n  put back and was waiting for approval again. It now returns to Plan."
-      },
-      {
-        "category": "changed",
-        "title": "Changed",
-        "items": [
-          {
-            "lead": "The plan approval controls are no longer boxed in",
-            "text": "The Approve, \"Approve &\n  accept edits\", \"Keep planning\" and Reject buttons sit directly on the panel\n  instead of inside a tinted card, matching how the same controls already read in\n  the conversation."
-          }
-        ],
-        "markdown": "- **The plan approval controls are no longer boxed in.** The Approve, \"Approve &\n  accept edits\", \"Keep planning\" and Reject buttons sit directly on the panel\n  instead of inside a tinted card, matching how the same controls already read in\n  the conversation."
-      }
-    ],
-    "contributors": [],
-    "pullRequests": [],
-    "mergedBranches": [],
-    "assets": [],
-    "signing": [],
-    "stats": {
-      "commits": null,
-      "filesChanged": null,
-      "additions": null,
-      "deletions": null
-    },
-    "links": {
-      "release": "https://github.com/limboo-ai/limboo/releases/tag/v1.13.2",
-      "compare": "https://github.com/limboo-ai/limboo/compare/v1.13.1...v1.13.2",
-      "tag": "https://github.com/limboo-ai/limboo/releases/tag/v1.13.2",
-      "milestone": null
-    },
-    "checksumManifest": "SHA256SUMS",
-    "provenanceRepo": "limboo-ai/limboo",
-    "markdown": "A plan you left waiting can be approved again.\n\n### Fixed\n\n- **Approving a plan after reopening the app did nothing.** A plan waiting for\n  your approval was saved, but the conversation that produced it was not — a plan\n  run always ends by interrupting the agent, and an interrupted conversation is\n  cleared so your next message cannot fail on it. Approving afterwards therefore\n  started a fresh conversation and told it to implement a plan it had never seen:\n  the run finished having done nothing, and the plan was filed as complete. The\n  approved plan is now sent with the approval, so it no longer matters whether\n  the earlier conversation survived. This applies to both Claude and Cursor.\n- **Approve was greyed out while Reject still worked.** Approve, \"Approve &\n  accept edits\" and \"Keep planning\" are disabled while a run is finishing;\n  Reject is not. A run that ended without reporting back — after reloading the\n  window mid-run, or when a planning run did not fully unwind — left the session\n  looking permanently busy, so the only control that still responded was Reject.\n  A session that claims to be working with nothing running is now corrected on\n  the spot.\n- **Plans could get stuck with no way out.** Closing the app while a plan was\n  being written, or while one was being implemented, left it in that state\n  forever — and while a plan is being written the panel hides its whole toolbar,\n  so there was no approve, no reject and no regenerate. Interrupted plans are now\n  settled on startup: one that was never finished is cleared, and one that was\n  part-way through being implemented returns to awaiting approval so you can\n  start it again. Regenerate also stays available while a plan is being written.\n- **Approve could stop responding with no explanation.** Clicking Approve blocked\n  further clicks until the whole implementation run finished, so a run that hung\n  left the button silently dead for the rest of the session. It is now released\n  as soon as the run actually starts.\n- **Starting a new plan discarded the one waiting for approval.** It was replaced\n  without being recorded, so it was not even in the plan's own History. A pending\n  plan is now saved to History first. Reopening the app restores Plan mode by\n  default, which made this reachable by simply typing.\n- **A failed approval could leave the composer in the wrong mode.** After\n  reopening the app it stayed on \"Ask before edits\" even though the plan had been\n  put back and was waiting for approval again. It now returns to Plan.\n\n### Changed\n\n- **The plan approval controls are no longer boxed in.** The Approve, \"Approve &\n  accept edits\", \"Keep planning\" and Reject buttons sit directly on the panel\n  instead of inside a tinted card, matching how the same controls already read in\n  the conversation."
   }
 ];
 
 /** Every released version, newest first. */
 export const RELEASE_INDEX: ReleaseIndexEntry[] = [
+  {
+    "version": "1.18.0-beta.2",
+    "date": "2026-08-12",
+    "channel": "beta",
+    "summary": "The first beta. Two bugs that made Cursor sessions unusable are fixed, agents can\nnow run through a swappable harness layer instead of one hardcoded integration,\nand Settings opens as a workspace tab. This build is published for testing ahead\nof a stable release — read the warning at the top of these notes before\ninstalling it over a working copy.",
+    "detailed": true
+  },
   {
     "version": "1.17.0",
     "date": "2026-08-01",
@@ -583,7 +675,7 @@ export const RELEASE_INDEX: ReleaseIndexEntry[] = [
     "date": "2026-07-28",
     "channel": "stable",
     "summary": "A plan you left waiting can be approved again.",
-    "detailed": true
+    "detailed": false
   },
   {
     "version": "1.13.1",

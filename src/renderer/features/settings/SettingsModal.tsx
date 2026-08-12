@@ -7,10 +7,12 @@
  * Dark-only by product rule: no theme toggle, no light palette, no gradients.
  */
 import { useEffect, useRef, useState } from 'react';
-import { X } from 'lucide-react';
+import { PanelsTopLeft, X } from 'lucide-react';
 import type { AppSettings } from '@shared/types';
 import { useUIStore } from '@/renderer/stores/useUIStore';
 import { useSettingsStore } from '@/renderer/stores/useSettingsStore';
+import { useDocumentStore } from '@/renderer/stores/useDocumentStore';
+import { useSessionStore } from '@/renderer/stores/useSessionStore';
 import { SETTINGS_CATALOG } from './catalog';
 import { SettingsNav } from './SettingsNav';
 import { SettingsHighlightContext } from './controls';
@@ -22,6 +24,8 @@ const DEFAULT_CATEGORY = 'general';
 export function SettingsModal() {
   const open = useUIStore((s) => s.activeModal === 'settings');
   const close = useUIStore((s) => s.closeModal);
+  // Documents live per session, so promotion needs one to live in.
+  const activeSessionId = useSessionStore((s) => s.selectedId);
 
   const [activeId, setActiveId] = useState(DEFAULT_CATEGORY);
   const [query, setQuery] = useState('');
@@ -132,14 +136,43 @@ export function SettingsModal() {
         <div className="flex min-w-0 flex-1 flex-col">
           <div className="flex h-11 shrink-0 items-center justify-between border-b border-line px-4">
             <span className="text-[13px] font-semibold text-fg">{category.label}</span>
-            <button
-              type="button"
-              aria-label="Close"
-              onClick={attemptClose}
-              className="flex h-7 w-7 items-center justify-center rounded-md text-muted transition-colors hover:bg-surface-2 hover:text-fg"
-            >
-              <X size={15} />
-            </button>
+            <div className="flex items-center gap-1">
+              {/* Promote to an editor tab. LEFT of close: dismissive actions
+                  stay rightmost. Disabled with no session, because documents are
+                  session-scoped and there would be no tab strip to host one —
+                  the modal stays the always-available surface. */}
+              <button
+                type="button"
+                aria-label="Open in workspace"
+                title={
+                  activeSessionId
+                    ? 'Open in workspace'
+                    : 'Open a session to use the Settings tab'
+                }
+                disabled={!activeSessionId}
+                onClick={() => {
+                  if (!activeSessionId) return;
+                  useDocumentStore
+                    .getState()
+                    .promote(activeSessionId, { kind: 'settings', category: activeId });
+                  // `close`, not `attemptClose`: promoting is not an ambiguous
+                  // dismissal — the same surface stays open in a tab, so there
+                  // is nothing to confirm and the baseline is moot.
+                  close();
+                }}
+                className="flex h-7 w-7 items-center justify-center rounded-md text-muted transition-colors hover:bg-surface-2 hover:text-fg disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                <PanelsTopLeft size={14} />
+              </button>
+              <button
+                type="button"
+                aria-label="Close"
+                onClick={attemptClose}
+                className="flex h-7 w-7 items-center justify-center rounded-md text-muted transition-colors hover:bg-surface-2 hover:text-fg"
+              >
+                <X size={15} />
+              </button>
+            </div>
           </div>
 
           <div className="min-h-0 flex-1 overflow-y-auto p-4">

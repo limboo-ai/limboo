@@ -121,7 +121,7 @@ export function ReleaseNotesDocument({ version }: ReleaseNotesDocumentProps) {
               placeholder="Filter this release"
               aria-label="Filter this release"
               className={cn(
-                'h-6 w-44 rounded border border-line bg-surface-2 pl-6 pr-6 text-[11px] text-fg',
+                'h-6 w-44 rounded-md border border-line bg-surface-2 pl-6 pr-6 text-[11px] text-fg',
                 'placeholder:text-faint focus:outline-none focus:ring-1 focus:ring-accent',
               )}
             />
@@ -130,7 +130,7 @@ export function ReleaseNotesDocument({ version }: ReleaseNotesDocumentProps) {
                 type="button"
                 aria-label="Clear filter"
                 onClick={() => setFilter(version, '')}
-                className="absolute right-1 top-1/2 -translate-y-1/2 rounded p-0.5 text-faint hover:text-fg focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+                className="absolute right-1 top-1/2 -translate-y-1/2 rounded-md p-0.5 text-faint hover:text-fg focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
               >
                 <X size={10} />
               </button>
@@ -256,7 +256,7 @@ function ToolbarButton({
       title={label}
       aria-label={label}
       onClick={onClick}
-      className="shrink-0 rounded p-1 text-faint transition-colors hover:bg-surface-2 hover:text-fg focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+      className="shrink-0 rounded-md p-1 text-faint transition-colors hover:bg-surface-2 hover:text-fg focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
     >
       <Icon size={12} />
     </button>

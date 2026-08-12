@@ -141,6 +141,19 @@ export function sessionAskRules(): string[] {
 export interface CursorAllowPosture {
   /** settings.agent.autoApproveReads under a mode that honors it. */
   autoApproveReads: boolean;
+  /**
+   * Whether provably read-only inspection shells stay declaratively allowed.
+   *
+   * Deliberately SEPARATE from {@link autoApproveReads}: it used to be the same
+   * boolean, ANDed with `permissionMode !== 'approve-all'`. `approve-all` means
+   * "prompt me for everything" — but on the Cursor path the only prompting
+   * mechanism is the hook bridge, so when hooks are unavailable that setting
+   * withdrew every read allowance and converted *ask me* into *deny me*: the
+   * user tightened their posture and the agent went blind. The declarative
+   * allow is a FLOOR, not an authorization — `decideToolUse` still runs on top
+   * of it whenever hooks do fire, so keeping it never weakens Layer 1.
+   */
+  readOnlyShell: boolean;
   /** The Limboo MCP bridge servers are registered for this run. */
   limbooMcp: boolean;
   /** Attachments are staged into the workspace for this run — allow reads. */
@@ -179,6 +192,8 @@ export function sessionAllowRules(posture: CursorAllowPosture): string[] {
     // read glob — so this is the proven bare `Read(**)` (a `Read(/**)` variant
     // hinges on Cursor's single-slash grammar and can break read auto-approval).
     rules.push('Read(**)');
+  }
+  if (posture.readOnlyShell) {
     // Same trust boundary as Read(**): provably read-only inspection shells.
     // Plan/ask runs keep these too — the provider already enforces read-only
     // there, and Claude plan mode can run `git log` via the classifier

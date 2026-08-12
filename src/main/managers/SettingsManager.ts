@@ -17,6 +17,7 @@ import {
   CURSOR_LIMITS,
   CURSOR_MODEL_ID_RE,
   DEFAULT_SETTINGS,
+  HARNESS_LABELS,
   DOCUMENT_LIMITS,
   FONT_SCALE_LIMITS,
   GIT_LIMITS,
@@ -299,6 +300,25 @@ export class SettingsManager {
       .map((c) => c.trim())
       .slice(0, SANDBOX_LIMITS.maxExcludedCommands);
 
+    // Harness selection. `sandboxProvider` is pinned to the single local value
+    // and RE-ASSERTED here rather than merely defaulted: this is the
+    // enforcement point for "the repository never leaves the machine"
+    // (CLAUDE.md §1), so a hand-edited settings.json naming a remote sandbox
+    // must be corrected, not honoured.
+    const harness = merged.agent.harness;
+    if (typeof harness.id !== 'string' || !HARNESS_LABELS[harness.id]) {
+      harness.id = DEFAULT_SETTINGS.agent.harness.id;
+    }
+    harness.sandboxProvider = 'local-worktree';
+    harness.legacyClaudeSdk = !!harness.legacyClaudeSdk;
+    harness.debug = !!harness.debug;
+    // A consent fingerprint is a short lowercase hex digest. Anything else is
+    // not something this app wrote, and must not be honoured as an approval —
+    // the run refuses instead, which re-asks rather than assuming.
+    harness.bootstrapAck = /^[0-9a-f]{8,64}$/.test(String(harness.bootstrapAck ?? ''))
+      ? String(harness.bootstrapAck)
+      : '';
+
     // Hook Engine — coerce the toggle and whitelist the audit-verbosity enum.
     // `enabled` only gates emission of observability; it can never weaken the
     // permission gate (enforcement always runs in the main process).
@@ -577,6 +597,9 @@ export class SettingsManager {
 
     merged.updates.autoCheck = !!merged.updates.autoCheck;
     merged.updates.autoDownload = !!merged.updates.autoDownload;
+    // Anything but the literal 'beta' falls back to stable. A malformed value
+    // must never widen what this install is offered.
+    merged.updates.channel = merged.updates.channel === 'beta' ? 'beta' : 'stable';
     // Persisted user data, so never trusted verbatim: it is compared against
     // `app.getVersion()` and rendered, and a hand-edited settings.json must not
     // be able to put an unbounded string into either path.

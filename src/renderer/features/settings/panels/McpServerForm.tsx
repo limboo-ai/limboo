@@ -16,7 +16,16 @@ import type {
   McpTransport,
 } from '@shared/types';
 import { cn } from '@/renderer/lib/cn';
-import { ActionButton, SecretInput, SegmentedControl, Select, StackedField, TextInput, Toggle } from '../controls';
+import {
+  ActionButton,
+  SecretInput,
+  SegmentedControl,
+  Select,
+  StackedField,
+  TextArea,
+  TextInput,
+  Toggle,
+} from '../controls';
 
 const CATEGORY_OPTIONS: { value: McpCategory; label: string }[] = [
   { value: 'custom', label: 'Custom' },
@@ -187,26 +196,24 @@ export function McpServerForm({
             <TextInput value={command} placeholder="npx" onChange={setCommand} />
           </StackedField>
           <StackedField label="Arguments" hint="One per line.">
-            <textarea
+            <TextArea
               value={argsText}
-              onChange={(e) => setArgsText(e.target.value)}
+              onChange={setArgsText}
               rows={3}
-              spellCheck={false}
+              mono
               placeholder={'-y\n@modelcontextprotocol/server-filesystem\n/path'}
-              className="w-full rounded-md border border-line bg-surface-2 px-2 py-1 font-mono text-[12px] text-fg placeholder:text-faint focus:border-line-strong focus:outline-none"
             />
           </StackedField>
           <StackedField label="Working directory" hint="Optional.">
             <TextInput value={cwd} placeholder="(server default)" onChange={setCwd} />
           </StackedField>
           <StackedField label="Environment variables" hint="One KEY=VALUE per line (non-secret).">
-            <textarea
+            <TextArea
               value={envText}
-              onChange={(e) => setEnvText(e.target.value)}
+              onChange={setEnvText}
               rows={2}
-              spellCheck={false}
+              mono
               placeholder="NODE_ENV=production"
-              className="w-full rounded-md border border-line bg-surface-2 px-2 py-1 font-mono text-[12px] text-fg placeholder:text-faint focus:border-line-strong focus:outline-none"
             />
           </StackedField>
         </>
@@ -216,13 +223,12 @@ export function McpServerForm({
             <TextInput value={url} placeholder="https://api.example.com/mcp" onChange={setUrl} />
           </StackedField>
           <StackedField label="Headers" hint="One Name: Value per line (non-secret).">
-            <textarea
+            <TextArea
               value={headersText}
-              onChange={(e) => setHeadersText(e.target.value)}
+              onChange={setHeadersText}
               rows={2}
-              spellCheck={false}
+              mono
               placeholder="X-Api-Version: 2024-01"
-              className="w-full rounded-md border border-line bg-surface-2 px-2 py-1 font-mono text-[12px] text-fg placeholder:text-faint focus:border-line-strong focus:outline-none"
             />
           </StackedField>
         </>

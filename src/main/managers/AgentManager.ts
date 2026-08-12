@@ -53,6 +53,7 @@ import type {
   FileChange,
   FileChangeStatus,
   GenerateCommitMessageResult,
+  HarnessBootstrapInfo,
   GitCommitContext,
   GitCommitMessageStreamEvent,
   PermissionDecision,
@@ -86,7 +87,6 @@ import {
   ACTIVITY_LIMITS,
   AGENT_LIMITS,
   SUBAGENT_LIMITS,
-  AGENT_MODELS,
   ANTHROPIC_MODEL_ID_RE,
   CURSOR_MODEL_ID_RE,
   CURSOR_RESUME_ID_RE,
@@ -97,7 +97,10 @@ import {
   RESUME_LIMITS,
   SEARCH_LIMITS,
   clamp,
+  cursorModelSet,
+  PROVIDER_HARNESS,
   providerForModel,
+  resolveModelRouting,
 } from '@shared/constants';
 import type { AgentProvider } from '@shared/constants';
 import type { CursorAuthManager } from './cursor/CursorAuthManager';
@@ -149,6 +152,12 @@ import {
 import type { ProviderTelemetrySignal, RuntimeSink } from './telemetry/types';
 import type { PermissionDecisionSignal } from './graph/builder';
 import type { CursorRunOutcome, ProviderRunBridge } from './cursor/types';
+import type { HarnessRuntime, HarnessRunHandle } from './harness/HarnessRuntime';
+import type { LocalWorktreeSandboxProvider } from './harness/sandbox/LocalWorktreeSandbox';
+import { buildToolApprovalMap } from './harness/approval';
+import { readBootstrapPlan } from './harness/bootstrap';
+import { loadHarness } from './harness';
+import { harnessById } from './agent/harnessRegistry';
 import { isSubagentTool } from '@shared/subagents';
 import { IpcEvents } from '@shared/ipc-channels';
 import { getDb } from '../db/database';
@@ -539,8 +548,23 @@ function redact(text: string): string {
   return text
     .replace(/sk-[A-Za-z0-9_-]{10,}/g, 'sk-***')
     .replace(/crsr_[A-Za-z0-9_-]{8,}/g, 'crsr_***')
-    .replace(/(ANTHROPIC_API_KEY|ANTHROPIC_AUTH_TOKEN|CLAUDE_CODE_OAUTH_TOKEN|CURSOR_API_KEY)=\S+/gi, '$1=***')
+    .replace(
+      /(ANTHROPIC_API_KEY|ANTHROPIC_AUTH_TOKEN|CLAUDE_CODE_OAUTH_TOKEN|CURSOR_API_KEY|OPENAI_API_KEY|CODEX_API_KEY|AI_GATEWAY_API_KEY)=\S+/gi,
+      '$1=***',
+    )
     .replace(/(authorization|bearer)\s*[:=]?\s*[A-Za-z0-9._-]{10,}/gi, '$1 ***');
+}
+
+/**
+ * Caller-supplied context for the permission gate. These are HINTS from the
+ * adapter that translated the call — never authorization. They may only relax
+ * risk classification for a tool identity Limboo could not recognise; every
+ * guard in {@link AgentManager.decideToolUseCore} (crown jewels, workspace
+ * containment, plan read-only, remembered scoping) runs regardless.
+ */
+interface ToolGateHints {
+  /** The adapter's raw tool name reads as an inspection tool (see B5). */
+  readShaped?: boolean;
 }
 
 /* ------------------------------------------------------------------ */
@@ -997,6 +1021,19 @@ export class AgentManager {
   /** Inject the Cursor runtime so cursor-model sessions can run. */
   setCursorRuntime(runtime: CursorRuntime): void {
     this.cursorRuntime = runtime;
+  }
+
+  /** AI SDK harness runtime + its local sandbox provider (setter-injected). */
+  private harnessRuntime: HarnessRuntime | null = null;
+  private harnessSandbox: LocalWorktreeSandboxProvider | null = null;
+
+  /**
+   * Inject the harness runtime. Both are supplied together because the runtime
+   * is useless without the provider that roots it in the session's worktree.
+   */
+  setHarnessRuntime(runtime: HarnessRuntime, sandbox: LocalWorktreeSandboxProvider): void {
+    this.harnessRuntime = runtime;
+    this.harnessSandbox = sandbox;
   }
 
   /**
@@ -2046,9 +2083,29 @@ export class AgentManager {
     workspaceId: string,
     ctx: GitCommitContext,
   ): Promise<GenerateCommitMessageResult> {
-    const install = this.getInstall();
-    if (!install.installed) {
-      return { ok: false, reason: 'agent-unavailable', error: install.error };
+    // Gate on the ACTIVE provider, not unconditionally on Claude. This ran the
+    // Claude SDK regardless of what the user had selected, so a Cursor-only user
+    // clicking "generate commit message" launched a Claude Code run — and, with
+    // Claude not installed, was told "Claude Code unavailable" by a feature they
+    // never asked Claude for.
+    const commitProvider = providerForModel(this.settings.getAll().agent.model);
+    if (commitProvider === 'cursor') {
+      const cursorState = this.cursorAuth?.getCachedState();
+      const ready =
+        cursorState?.status === 'authenticated-cli' ||
+        cursorState?.status === 'authenticated-api-key';
+      if (!ready) {
+        return {
+          ok: false,
+          reason: 'agent-unavailable',
+          error: cursorState?.error ?? 'Sign in to Cursor to generate commit messages.',
+        };
+      }
+    } else {
+      const install = this.getInstall();
+      if (!install.installed) {
+        return { ok: false, reason: 'agent-unavailable', error: install.error };
+      }
     }
     if (this.state.lifecycle === 'rate-limited') {
       return {
@@ -2108,6 +2165,16 @@ export class AgentManager {
         // Belt + braces: GitManager's commitGen caps keep us far below this.
         throw new Error('Commit context too large.');
       }
+      let finalText = '';
+      let resultOk: boolean | null = null;
+      let resultText = '';
+
+      if (commitProvider === 'cursor') {
+        const out = await this.runCursorUtility(prompt, ctx.root, abort, queueDelta, run);
+        finalText = out.text;
+        resultOk = out.ok;
+        resultText = out.text;
+      } else {
       const sdk = await loadSdk();
       const options = this.buildUtilityOptions(ctx.root, abort);
       const q = sdk.query({ prompt, options }) as unknown as AsyncIterable<SDKMessage> & {
@@ -2115,9 +2182,6 @@ export class AgentManager {
       };
       run.query = q;
 
-      let finalText = '';
-      let resultOk: boolean | null = null;
-      let resultText = '';
       for await (const msg of q) {
         if (abort.signal.aborted) break;
         switch (msg.type) {
@@ -2149,6 +2213,7 @@ export class AgentManager {
           default:
             break;
         }
+      }
       }
       flushDelta();
 
@@ -2186,6 +2251,116 @@ export class AgentManager {
       if (subagentSession) {
         this.emitHook(subagentSession, 'subagent-stop', { summary: 'Commit-message sub-agent' });
       }
+    }
+  }
+
+  /**
+   * The Cursor analogue of {@link buildUtilityOptions}: a tool-less, one-shot,
+   * non-resuming print-mode run used for utility generations (commit messages).
+   *
+   * `--mode ask` is the closest thing Cursor has to Claude's `allowedTools: []`
+   * — it is provider-enforced read-only — and `force: false` means nothing can
+   * be applied even if the model tried. No bridge pipe, no hooks, no MCP, no
+   * generated session files, and the bridge's `onToolUse` is inert, so this can
+   * never mutate the repository. Nothing is persisted: no resume id is stored
+   * and none is replayed, so a utility run never disturbs the user's chat.
+   */
+  private async runCursorUtility(
+    prompt: string,
+    cwd: string,
+    abort: AbortController,
+    queueDelta: (text: string) => void,
+    run: { query: { close?: () => void } | null },
+  ): Promise<{ ok: boolean; text: string }> {
+    const runtime = this.cursorRuntime;
+    if (!runtime) throw new Error('The Cursor runtime is not available.');
+    const agent = this.settings.getAll().agent;
+    const model = agent.model;
+    if (!CURSOR_MODEL_ID_RE.test(model) || !cursorModelSet().has(model)) {
+      throw new Error(`"${model.slice(0, 80)}" is not an available Cursor model.`);
+    }
+
+    let text = '';
+    let ok = true;
+    const bridge: ProviderRunBridge = {
+      ensureStreaming: () => undefined,
+      queueDelta: (t) => {
+        text += t;
+        queueDelta(t);
+      },
+      finishStreaming: (final) => {
+        if (final && final.trim().length > 0) text = final;
+      },
+      // A utility run has no tools. Record nothing and, critically, grant
+      // nothing — there is no permission gate wired up here to ask.
+      onToolUse: () => undefined,
+      onToolResult: () => undefined,
+      onInit: () => undefined,
+      onResult: (good, t) => {
+        ok = good;
+        if (t && t.trim().length > 0) text = t;
+      },
+      diag: (category, severity, label, detail) =>
+        this.diag(
+          category === 'stream' ? 'stream' : 'request',
+          severity,
+          label,
+          detail,
+          this.state.activeSessionId,
+        ),
+    };
+
+    const handle = await runtime.start(
+      {
+        sessionId: `commit-msg:${newId()}`,
+        prompt,
+        cwd,
+        mode: 'ask',
+        force: false,
+        trusted: false,
+        model,
+        // No attachmentsDir: a utility run has no session and no attachments.
+        sandbox: resolveSandboxConfig(agent.sandbox, { cwd, provider: 'cursor' }),
+        abort,
+      },
+      bridge,
+    );
+    run.query = { close: handle.close };
+    await handle.done;
+    return { ok, text };
+  }
+
+  /**
+   * The active harness's one-time setup plan, for the consent surface.
+   *
+   * Loads the adapter to ask it — which is also a useful availability probe —
+   * and reports `available: false` with the reason when it cannot be loaded, so
+   * the UI can distinguish "nothing to approve" from "this harness is broken".
+   */
+  async harnessBootstrapPlan(): Promise<HarnessBootstrapInfo> {
+    const agent = this.settings.getAll().agent;
+    const descriptor = harnessById(agent.harness.id);
+    if (!descriptor || !descriptor.module) {
+      return { available: true, harnessId: agent.harness.id, plan: null, acked: true };
+    }
+    try {
+      const { adapter, createAdapter } = await loadHarness(agent.harness.id);
+      const built = createAdapter ? createAdapter({}) : adapter;
+      const plan = await readBootstrapPlan(built);
+      return {
+        available: true,
+        harnessId: agent.harness.id,
+        plan,
+        acked: plan == null || plan.fingerprint === agent.harness.bootstrapAck,
+      };
+    } catch (err) {
+      return {
+        available: false,
+        harnessId: agent.harness.id,
+        plan: null,
+        acked: false,
+        error: redact(err instanceof Error ? err.message : String(err)).slice(0, 300),
+      };
     }
   }
 
@@ -2271,7 +2446,11 @@ export class AgentManager {
     const provider = providerForModel(this.settings.getAll().agent.model);
     if (provider === 'cursor') {
       await this.assertCursorReady();
-    } else {
+    } else if (provider === 'anthropic' && this.settings.getAll().agent.harness.legacyClaudeSdk) {
+      // Only the DIRECT Claude Agent SDK path depends on a local Claude Code
+      // install. A harness brings its own runtime, so gating it on that probe
+      // would refuse a perfectly runnable harness because a different tool is
+      // missing; its own preflight reports what it actually needs.
       const install = this.getInstall();
       if (!install.installed) {
         this.setLifecycle('auth-required');
@@ -2599,6 +2778,230 @@ export class AgentManager {
     }
   }
 
+  /**
+   * A single run through the AI SDK `HarnessAgent`.
+   *
+   * Deliberately the same shape as {@link runCursorOnce}: compose the context,
+   * build a {@link ProviderRunBridge} over the caller's streaming closures,
+   * hand both to a runtime, and let everything downstream stay unaware of
+   * which adapter produced the events.
+   *
+   * Layer 1 is preserved by construction — `toolApproval` routes into
+   * `makeCanUseTool`, the SAME callback the Claude SDK path installs, so risk
+   * classification, the crown-jewel and workspace guards, plan read-only,
+   * remembered scoping and the PermissionRequest dialog are literally the same
+   * code (see `harness/approval.ts`).
+   */
+  private async runHarnessOnce(
+    sessionId: string,
+    prompt: string,
+    cwd: string,
+    abort: AbortController,
+    permMode: SessionPermissionMode,
+    stream: {
+      ensureStreaming: () => ChatMessage;
+      queueDelta: (text: string) => void;
+      finishStreaming: (finalText?: string) => void;
+    },
+  ): Promise<void> {
+    const runtime = this.harnessRuntime;
+    const provider = this.harnessSandbox;
+    if (!runtime || !provider) throw new Error('The agent harness runtime is not available.');
+    const agent = this.settings.getAll().agent;
+    const run = this.runs.get(sessionId);
+
+    // The harness follows the MODEL, not the settings field. `agent.harness.id`
+    // is the choice for Anthropic models — where a harness and the direct SDK
+    // both exist — but a Codex or Pi model can only run on its own harness, and
+    // reading the stored id there would try to run it on Claude Code.
+    const modelProvider = providerForModel(agent.model);
+    const harnessId =
+      modelProvider === 'anthropic' ? agent.harness.id : PROVIDER_HARNESS[modelProvider];
+    const descriptor = harnessById(harnessId);
+    if (!descriptor) throw new Error(`Unknown harness "${harnessId}".`);
+
+    // Same three context producers, same order, same one-shot resume-delta
+    // semantics as both other paths. They ride `instructions` here, which is
+    // the harness's equivalent of Claude's single systemPrompt.append.
+    const memoryContext = this.memoryContextFor(sessionId, prompt);
+    const searchContext = this.searchContextFor(sessionId, prompt);
+    const resumeContext = this.resumeContextFor(sessionId);
+    const injectedContext =
+      [memoryContext, searchContext, resumeContext].filter(Boolean).join('\n\n') || undefined;
+
+    this.emitRunStart(sessionId, agent.model, permMode, {
+      memory: memoryContext?.length ?? 0,
+      search: searchContext?.length ?? 0,
+      resume: resumeContext?.length ?? 0,
+    });
+
+    const sandbox = this.resolveSandboxFor(sessionId, cwd, 'anthropic', agent);
+    if (sandbox.enabled) this.recordSandboxStatus(sessionId, sandbox);
+
+    // `workDir` must be the worktree's BASENAME: the framework always appends
+    // a path segment to the provider's defaultWorkingDirectory (it rejects
+    // '.'), so this is what lands the session ON the worktree instead of in a
+    // new subdirectory of it.
+    const workDir = provider.workDirFor(sessionId);
+    if (!workDir) throw new Error('No execution root resolved for this session.');
+
+    const bridge: ProviderRunBridge = {
+      ensureStreaming: () => {
+        stream.ensureStreaming();
+      },
+      queueDelta: stream.queueDelta,
+      finishStreaming: stream.finishStreaming,
+      onToolUse: (id, name, input, parentCallId) =>
+        this.onToolUse(sessionId, id, name, input, parentCallId),
+      onToolResult: (id, status, output) => this.onToolResult(sessionId, id, status, output),
+      // Deliberately inert on this path. The harness's resume token is a
+      // structured `HarnessAgentResumeSessionState` object obtained from
+      // `session.detach()`/`stop()` — NOT anything the stream carries — and it
+      // must be stored under its own provider key so it can never collide with
+      // the legacy Claude SDK row. Until that lands, storing nothing is
+      // correct; storing the wrong thing corrupted the legacy path's resume.
+      onInit: () => undefined,
+      onResult: (ok, text) =>
+        this.recordRunResult(sessionId, {
+          ok,
+          subtype: ok ? 'success' : 'error_during_execution',
+          errors: ok || !text ? [] : [text],
+          text,
+        }),
+      onSandboxStatus: (_phase, detail) =>
+        detail ? this.recordStatus(sessionId, detail) : undefined,
+      diag: (category, severity, label, detail) =>
+        this.diag(category as DiagnosticCategory, severity, label, detail, sessionId),
+    };
+
+    // MCP reuse: point limboo_memory / limboo_search at the SAME bundled stdio
+    // bridge Cursor uses, over the same token-authed local pipe, dispatching
+    // into the same transport-neutral plain tools. Both agents therefore query
+    // one memory and one index, and better-sqlite3 stays in a single process —
+    // which is only possible because the sandbox is local.
+    //
+    // Only `onMcp` is wired: permissions travel through `toolApproval`, not
+    // hooks, so there is no gate event to serve here.
+    let pipe: RunBridgeServer | null = null;
+    let mcpServers: Record<string, unknown> | undefined;
+    const mcpBridgePath = this.memory || this.search ? bridgeScriptPath('mcpBridge.cjs') : null;
+    if (mcpBridgePath) {
+      const dispatcher = createMcpDispatcher(this.memory, this.search, this.workspace, this.gh);
+      try {
+        pipe = await startBridgeServer({
+          onMcp: (server, method, params) =>
+            Promise.resolve(dispatcher.dispatch(server, method, params)),
+        });
+        const entry = (kind: 'memory' | 'search'): Record<string, unknown> => ({
+          command: bridgeNodeCommand(),
+          args: [mcpBridgePath],
+          env: {
+            ELECTRON_RUN_AS_NODE: '1',
+            ...(pipe as RunBridgeServer).env,
+            LIMBOO_BRIDGE_SERVER: kind,
+          },
+        });
+        mcpServers = {
+          ...(this.memory ? { limboo_memory: entry('memory') } : {}),
+          ...(this.search ? { limboo_search: entry('search') } : {}),
+        };
+      } catch (err) {
+        // Best-effort, exactly as on the Cursor path: losing the index is a
+        // degraded run, never a failed one.
+        this.diag(
+          'lifecycle',
+          'warning',
+          'Harness bridge pipe failed to start — running without Limboo MCP tools',
+          err instanceof Error ? err.message.slice(0, 300) : undefined,
+          sessionId,
+        );
+      }
+    }
+
+    const canUseTool = this.makeCanUseTool(sessionId, cwd, permMode);
+    // The approval callback needs the handle in order to interrupt the turn,
+    // but the handle only exists once the run has started — hence the cell.
+    const handleRef: { current: HarnessRunHandle | null } = { current: null };
+    try {
+    const handle = await runtime.start(
+      {
+        sessionId,
+        harnessId,
+        prompt,
+        cwd,
+        mode: permMode,
+        model: agent.model,
+        maxTurns: agent.maxTurns,
+        instructions: injectedContext,
+        // The web tools are the one capability a setting removes outright.
+        // Built-in tool keys are the adapter's OWN identifiers and are mostly
+        // native-cased (`WebFetch`, not `webFetch`); only seven are lowercase
+        // common names. `validateToolNames` THROWS on an unknown key, so a
+        // guessed literal here crashed every run with web search turned off
+        // before its first turn. HarnessRuntime validates these against the
+        // adapter's real key set and drops what it does not recognise.
+        inactiveTools: agent.webSearch ? undefined : ['webSearch', 'WebFetch'],
+        harnessLabel: descriptor.label,
+        settingsShape: descriptor.settingsShape,
+        thinking: agent.thinking,
+        webSearch: agent.webSearch,
+        bootstrapAck: agent.harness.bootstrapAck,
+        // Built-in tools are gated by `permissionMode` (set inside the runtime),
+        // NOT by this map — the framework looks the map up by tool name and only
+        // consults it for tools Limboo supplies itself. With no host tools it is
+        // empty, which is honest: there is nothing to route.
+        toolApproval: buildToolApprovalMap([]),
+        // How a permission request is answered. This is the delegation into
+        // Layer 1 — the same `makeCanUseTool` the Claude SDK path installs, so
+        // risk classification, the crown-jewel and workspace guards, plan
+        // read-only, remembered scoping, the Work Graph approval node and the
+        // governance-bus emission are all literally the same code.
+        approval: {
+          canUseTool: (name, input, ctx) =>
+            canUseTool(name, input, ctx) as Promise<{
+              behavior: 'allow' | 'deny';
+              updatedInput?: Record<string, unknown>;
+              message?: string;
+              interrupt?: boolean;
+            }>,
+          // Plan capture denies with `interrupt: true`; the harness has no such
+          // field, so halt the turn here instead. close() prefers suspendTurn,
+          // which preserves the turn for the post-approval continuation.
+          interrupt: () => handleRef.current?.close(),
+          abort: abort.signal,
+          permMode,
+        },
+        sandbox,
+        mcpServers,
+        // No resume yet. `createSession({resumeFrom})` requires a structured
+        // `{type:'resume-session', specificationVersion, harnessId, data}` and
+        // THROWS on anything else, so passing the legacy row's opaque string
+        // failed every second prompt. A fresh conversation per run is a
+        // degradation; an error on every second prompt is a broken feature.
+        resumeFrom: undefined,
+        workDir,
+        debug: agent.harness.debug,
+        abort,
+      },
+      bridge,
+    );
+    handleRef.current = handle;
+    if (run) run.query = { close: handle.close };
+    this.setLifecycle('streaming');
+    this.setRequest(sessionId, { phase: 'streaming' });
+    await handle.done;
+    } finally {
+      // The pipe is per-run: closing it is what stops a stale bridge from
+      // outliving the run that authorized it.
+      if (pipe) {
+        this.setState({
+          cursorBridge: { hooksActive: null, mcpActive: pipe.mcpConnected, at: Date.now() },
+        });
+        void pipe.close();
+      }
+    }
+  }
+
   /** A single SDK run attempt. Streams events; re-throws on any failure. */
   private async runOnce(
     sessionId: string,
@@ -2687,22 +3090,66 @@ export class AgentManager {
     if (run) run.result = undefined;
     this.setRequest(sessionId, { phase: 'connecting' });
 
-    // Provider dispatch: a Cursor model routes into the print-mode runtime,
-    // reusing the exact streaming closures above so everything downstream
-    // (events, persistence, plan artifacts, UI) behaves identically.
-    if (providerForModel(agent.model) === 'cursor') {
-      try {
-        await this.runCursorOnce(sessionId, prompt, cwd, abort, permMode, {
-          ensureStreaming,
-          queueDelta,
-          finishStreaming,
-        });
-      } finally {
-        // Same reconciliation the Claude branch does — a Cursor run cut mid-tool
-        // would otherwise leave its chip spinning for the session's lifetime.
-        this.settleOrphanedToolCalls(sessionId);
+    // Provider dispatch. EXHAUSTIVE by construction: an unroutable model is a
+    // named failure, never a fall-through. This was an `if (cursor) … return;`
+    // with the Claude path underneath, so anything not proven to be Cursor ran
+    // as Claude — which is how a Cursor session ended up streaming Claude Code.
+    // Adding a provider must be a compile-visible change here, not a silent
+    // inheritance of the Anthropic branch.
+    const routing = resolveModelRouting(agent.model);
+    switch (routing.provider) {
+      case 'cursor':
+        try {
+          // Reuses the exact streaming closures above so everything downstream
+          // (events, persistence, plan artifacts, UI) behaves identically.
+          await this.runCursorOnce(sessionId, prompt, cwd, abort, permMode, {
+            ensureStreaming,
+            queueDelta,
+            finishStreaming,
+          });
+        } finally {
+          // Same reconciliation the Claude branch does — a Cursor run cut
+          // mid-tool would otherwise leave its chip spinning forever.
+          this.settleOrphanedToolCalls(sessionId);
+        }
+        return;
+      case 'anthropic':
+        // Anthropic models run through the AI SDK harness, or through the
+        // direct Claude Agent SDK when the documented rollback is set. The
+        // rollback ships ON, so this phase changes nothing until it is flipped.
+        if (!agent.harness.legacyClaudeSdk) {
+          try {
+            await this.runHarnessOnce(sessionId, prompt, cwd, abort, permMode, {
+              ensureStreaming,
+              queueDelta,
+              finishStreaming,
+            });
+          } finally {
+            this.settleOrphanedToolCalls(sessionId);
+          }
+          return;
+        }
+        break; // falls into the Claude Agent SDK path below
+      // Harness-only providers: there is no Limboo-owned runtime for these, so
+      // there is nothing to fall back to and no legacy switch to consult.
+      case 'openai':
+      case 'pi':
+        try {
+          await this.runHarnessOnce(sessionId, prompt, cwd, abort, permMode, {
+            ensureStreaming,
+            queueDelta,
+            finishStreaming,
+          });
+        } finally {
+          this.settleOrphanedToolCalls(sessionId);
+        }
+        return;
+      case null:
+        throw new Error(`${routing.reason}. Pick a model in the composer.`);
+      default: {
+        const never: never = routing.provider;
+        throw new Error(`Unhandled agent provider: ${String(never)}`);
       }
-      return;
     }
 
     try {
@@ -3232,14 +3679,13 @@ export class AgentManager {
 
     // The model id is a settings string — never let it reach argv unless it
     // both passes the strict charset AND names a model we know serves the
-    // Cursor provider (static catalog ∪ account-discovered ∪ persisted).
+    // Cursor provider. `cursorModelSet()` is the SAME set `resolveModelRouting`
+    // consults, so routing and validation cannot disagree: this used to build
+    // its own union (adding the auth cache), which made it strictly larger than
+    // the routing set — an id in the cache but not the registry routed to
+    // Claude and never reached this check. Both feed the registry now.
     const model = agent.model;
-    const knownCursorModels = new Set<string>([
-      ...AGENT_MODELS.filter((m) => m.provider === 'cursor').map((m) => m.value),
-      ...(this.cursorAuth?.getCachedState().models ?? []),
-      ...(agent.cursor?.discoveredModels ?? []),
-    ]);
-    if (!CURSOR_MODEL_ID_RE.test(model) || !knownCursorModels.has(model)) {
+    if (!CURSOR_MODEL_ID_RE.test(model) || !cursorModelSet().has(model)) {
       throw new Error(
         `"${model.slice(0, 80)}" is not an available Cursor model. ` +
           'Pick a Composer model in the model picker (Settings › Agent), then retry.',
@@ -3356,13 +3802,36 @@ export class AgentManager {
       try {
         pipe = await startBridgeServer({
           onHook: (event, payload) => {
-            const mapped = mapHookEvent(event, payload);
-            if (!mapped) {
-              // Unknown GATE events fail closed; Cursor also has failClosed set.
+            const result = mapHookEvent(event, payload);
+            if (!result.ok) {
+              // Unmappable GATE events fail closed; Cursor also has failClosed
+              // set. The reason is NAMED (which key was missing, which event was
+              // unrecognised) and surfaced as a diagnostic — a silent universal
+              // deny here reads to the user as "the agent cannot do anything",
+              // with nothing anywhere saying why.
+              this.diag(
+                'tool',
+                'error',
+                'Hook event could not be mapped',
+                result.reason,
+                sessionId,
+              );
               return Promise.resolve<HookDecision>({
                 permission: 'deny',
-                agentMessage: `Limboo does not handle the ${event || 'unknown'} hook event.`,
+                agentMessage: `Limboo could not interpret this hook: ${result.reason}.`,
               });
+            }
+            const mapped = result.value;
+            if (mapped.unmapped) {
+              this.diag(
+                'tool',
+                mapped.readShaped ? 'debug' : 'warning',
+                `Unmapped Cursor tool "${mapped.unmapped.slice(0, 60)}"`,
+                mapped.readShaped
+                  ? `Treated as a read (the name reads as an inspection tool). Mapped identity: ${mapped.name}.`
+                  : `Treated as command-risk. Mapped identity: ${mapped.name}.`,
+                sessionId,
+              );
             }
             if (mapped.observeOnly) {
               // afterFileEdit: the stream's tool_call events already feed the
@@ -3376,10 +3845,14 @@ export class AgentManager {
               // four of their id fields carry the same session id, so parent
               // linkage is not derivable). Until that changes, a Cursor run
               // renders its tool calls flat and shows no subagent row.
-              if (event === 'subagentStart' || event === 'subagentStop') {
+              // Keyed off the MAPPED identity, not the raw `event` string: the
+              // CLI's spelling is normalised in mapHookEvent, so comparing the
+              // raw value here would miss `subagent_start` and silently drop the
+              // audit row.
+              if (mapped.name === 'Agent') {
                 this.emitHook(
                   sessionId,
-                  event === 'subagentStart' ? 'subagent-start' : 'subagent-stop',
+                  /stop$/i.test(event.trim()) ? 'subagent-stop' : 'subagent-start',
                   {
                     tool: 'Agent',
                     summary: 'Cursor subagent',
@@ -3399,6 +3872,7 @@ export class AgentManager {
                 mapped.name,
                 mapped.input,
                 abort.signal,
+                { readShaped: mapped.readShaped },
               ).then((r): HookDecision => {
                 if (r.behavior === 'allow') return { permission: 'allow' };
                 return {
@@ -3506,6 +3980,10 @@ export class AgentManager {
     const allowRules = [
       ...sessionAllowRules({
         autoApproveReads: agent.autoApproveReads && agent.permissionMode !== 'approve-all',
+        // NOT ANDed with `approve-all` — see CursorAllowPosture.readOnlyShell.
+        // Withdrawing the read-only shell floor under "prompt me for everything"
+        // left a hookless run with no way to prompt and no way to read.
+        readOnlyShell: agent.autoApproveReads,
         limbooMcp: limbooBridge,
         attachmentsStaged: attachmentStaging != null,
       }),
@@ -3576,7 +4054,17 @@ export class AgentManager {
         withSessionCliJson(cwd, { deny: denyRules, allow: allowRules, ask: askRules }, inner);
       // Outermost: the declarative `.cursor/sandbox.json` (snapshot+restored like
       // every other generated session file, so `git status` stays clean).
-      return withSessionSandboxJson(cwd, sandbox, withCli);
+      //
+      // The jail must grant the bridge its socket + binaries, or it starves the
+      // permission mechanism itself: the hook child cannot connect, fails
+      // closed, and every tool call is denied "bridge unreachable".
+      const pipePath = pipe?.env.LIMBOO_BRIDGE_PIPE;
+      return withSessionSandboxJson(cwd, sandbox, withCli, {
+        socketDir:
+          pipePath && process.platform !== 'win32' ? path.dirname(pipePath) : undefined,
+        executables: pipe ? [bridgeNodeCommand()] : [],
+        scripts: [hookRunnerPath, mcpBridgePath].filter((p): p is string => !!p),
+      });
     };
 
     let outcome: CursorRunOutcome;
@@ -3623,6 +4111,22 @@ export class AgentManager {
         // verification so 'default' runs revert to propose-only. An aborted
         // run proves nothing (hooks may simply not have fired yet), so it
         // never clears — otherwise a single Stop would flip-flop the posture.
+        // Hooks registered but never connected means the run had no way to
+        // PROMPT — the declarative cli.json floor was the only thing standing
+        // between the agent and a total block. Say so once per run so
+        // Troubleshooting can explain a degraded session instead of leaving the
+        // user to infer it from things silently not working.
+        if (hookCfg && !pipe.hookConnected && gatedToolSeen) {
+          this.diag(
+            'tool',
+            'warning',
+            'Cursor hook bridge never connected — interactive approval was unavailable',
+            'Tool calls were governed by the declarative .cursor/cli.json rules alone. ' +
+              'Reads stay allowed by the read-only floor; anything outside it was refused ' +
+              'by the CLI without reaching a prompt.',
+            sessionId,
+          );
+        }
         if (hookCfg && cliVersion) {
           if (pipe.hookConnected) {
             setHooksVerified(cliVersion);
@@ -5545,9 +6049,23 @@ export class AgentManager {
     permMode: SessionPermissionMode,
     injectedContext?: string,
   ): Options {
-    // The model id is persisted user data riding into the SDK spawn — charset-
-    // validate it before use (mirrors runCursorOnce's model gate; unknown-but-
-    // well-formed ids are allowed so newer Anthropic models keep working).
+    // PROVIDER first, charset second. Charset validation alone let every
+    // plausible Cursor id (`composer-2`, `cheetah`, `gpt-5`) through — they all
+    // match ANTHROPIC_MODEL_ID_RE — so a mis-routed model was handed verbatim to
+    // the Claude SDK and the user watched Claude Code stream while Cursor was
+    // selected. The Cursor arm has always cross-checked its provider; the
+    // asymmetry WAS the bug. A mismatch is a hard error, never a silent
+    // substitution: running someone else's model is worse than not running.
+    const routing = resolveModelRouting(agent.model);
+    if (routing.provider !== 'anthropic') {
+      throw new Error(
+        routing.provider === null
+          ? `${routing.reason}. Pick a model in the composer.`
+          : `"${agent.model.slice(0, 80)}" is served by ${routing.provider}, not Claude Code.`,
+      );
+    }
+    // Charset guard stays for well-formed but unknown ANTHROPIC ids, so newer
+    // Claude models keep working before the catalog catches up.
     const model = ANTHROPIC_MODEL_ID_RE.test(agent.model)
       ? agent.model
       : DEFAULT_SETTINGS.agent.model;
@@ -5704,6 +6222,7 @@ export class AgentManager {
     toolName: string,
     input: Record<string, unknown>,
     signal: AbortSignal,
+    hints?: ToolGateHints,
   ): Promise<PermissionResult> {
     // Both providers (Claude's canUseTool and the Cursor hook bridge) call this
     // wrapper, so a single emission records the pre-tool-use gate outcome onto
@@ -5720,6 +6239,7 @@ export class AgentManager {
       input,
       signal,
       gate,
+      hints,
     );
     const decision = result.behavior === 'allow' ? 'allow' : 'deny';
     const risk = classifyTool(toolName);
@@ -5767,6 +6287,7 @@ export class AgentManager {
     input: Record<string, unknown>,
     signal: AbortSignal,
     gate?: { prompted: boolean },
+    hints?: ToolGateHints,
   ): Promise<PermissionResult> {
       // THE EXECUTION BARRIER, second layer. `send()` refuses to START a run
       // while a plan awaits a decision; this refuses every TOOL, which is what
@@ -5917,8 +6438,15 @@ export class AgentManager {
         (toolName === 'BashOutput' ||
           toolName === 'KillBash' ||
           toolName === 'KillShell' ||
-          (toolName === 'Bash' && isReadOnlyShellCommand(input.command)));
-      const effectiveRisk: ToolRisk = readOnlyShell ? 'read' : risk;
+          (toolName === 'Bash' && isReadOnlyShellCommand(input.command, { cwd })));
+      // An adapter tool with no name mapping classifies as command-risk because
+      // `classifyTool` cannot recognise it — which hard-denies it in plan/ask.
+      // When the raw name reads as an inspection tool (`grep_search`,
+      // `file_search`, …) the caller says so and it gates as a read. This only
+      // ever RELAXES, and only for a name the provider itself supplied; the
+      // crown-jewel and workspace guards below are unaffected.
+      const readShaped = risk === 'command' && hints?.readShaped === true;
+      const effectiveRisk: ToolRisk = readOnlyShell || readShaped ? 'read' : risk;
 
       // An external MCP tool the user declared reachable in the read-only modes
       // (per-server `planAccess`, optionally backed by the server's own
@@ -6545,7 +7073,18 @@ export class AgentManager {
     try {
       const install = this.probeHealth(true);
       if (!install.installed) throw new Error('Claude Code authentication is no longer available.');
-      await loadSdk();
+      // Probe the module the NEXT run will actually load. Checking the direct
+      // SDK while runs go through the harness would report a healthy capability
+      // whose real execution path is broken.
+      const agentCfg = this.settings.getAll().agent;
+      if (
+        providerForModel(agentCfg.model) === 'anthropic' &&
+        !agentCfg.harness.legacyClaudeSdk
+      ) {
+        await loadHarness(agentCfg.harness.id);
+      } else {
+        await loadSdk();
+      }
       this.markHeartbeatOk();
       if (this.state.lifecycle === 'reconnecting' || this.state.lifecycle === 'offline') {
         this.setLifecycle('ready', { error: undefined });

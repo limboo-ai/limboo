@@ -15,6 +15,7 @@ import type {
   ClarificationDecision,
   ConversationRevertPreview,
   ConversationRevertResult,
+  HarnessBootstrapInfo,
   PermissionDecision,
   PlanRevision,
   SessionPermissionMode,
@@ -99,6 +100,17 @@ function assertPlanFeedback(value: unknown): string | undefined {
 
 export function registerAgentHandlers(agent: AgentManager): void {
   handle<[], AgentInstall>(IpcChannels.agentGetInstall, () => agent.getInstall());
+
+  /**
+   * The active harness's one-time setup plan, for the consent dialog.
+   *
+   * Read-only and secret-free: command strings and file names the adapter
+   * itself declares. Approving is an ordinary settings write of the returned
+   * fingerprint, so no channel here can grant anything.
+   */
+  handle<[], HarnessBootstrapInfo>(IpcChannels.agentHarnessBootstrapPlan, () =>
+    agent.harnessBootstrapPlan(),
+  );
 
   handle<[], AgentState>(IpcChannels.agentGetState, () => agent.getState());
 

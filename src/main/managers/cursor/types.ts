@@ -46,37 +46,11 @@ export interface CursorRunSpec {
 }
 
 /**
- * Run-scoped callbacks into AgentManager. All streaming/tool/persistence
- * behavior stays owned by AgentManager — the runtime only translates wire
- * events into these calls.
+ * The provider seam now lives in `agent/providerBridge.ts` — it is
+ * provider-neutral and shared by every adapter. Re-exported here so existing
+ * Cursor imports keep resolving from their original path.
  */
-export interface ProviderRunBridge {
-  ensureStreaming(): void;
-  queueDelta(text: string): void;
-  finishStreaming(finalText?: string): void;
-  onToolUse(id: string, name: string, input: Record<string, unknown>): void;
-  onToolResult(id: string, status: 'done' | 'error', output?: string): void;
-  /** First `system/init` event → persist the provider resume token. */
-  onInit(chatId: string): void;
-  /** Terminal result event (present only on clean completions). */
-  onResult(ok: boolean, text: string): void;
-  /**
-   * Runtime Telemetry. Optional because a provider bridge is not obliged to
-   * measure anything — and Cursor very nearly does not: `duration_ms` on the
-   * result event is the only quantitative field its stream carries. Token
-   * counts in `--output-format stream-json` are an open Cursor feature
-   * request, not shipped, and request quotas live only in the team-scoped
-   * Enterprise Admin API, which this app deliberately never calls.
-   */
-  onUsage?(usage: { durationMs?: number }): void;
-  /** Structured diagnostics (already-redacted detail only). */
-  diag(
-    category: string,
-    severity: 'debug' | 'info' | 'warning' | 'error',
-    label: string,
-    detail?: string,
-  ): void;
-}
+export type { ProviderRunBridge, SandboxPhase, SubagentSignal } from '../agent/providerBridge';
 
 /** What a completed run reports back to AgentManager. */
 export interface CursorRunOutcome {

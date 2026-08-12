@@ -45,9 +45,12 @@ const REDACT_PATTERNS: RegExp[] = [
   /\b(?:sk|gh[pousr]|github_pat|glpat|xox[baprs])[-_][A-Za-z0-9_-]{8,200}\b/g,
   // Bearer / token authorization headers.
   /\b(bearer|authorization)\s*[:=]?\s+[A-Za-z0-9._~+/-]{8,400}=*/gi,
-  // key=value style secrets (token=, api_key:, password= …). CURSOR_API_KEY
-  // needs its own alternate — the `_` in `cursor_api_key` defeats \bapi_key\b.
-  /\b(token|secret|password|passwd|apikey|api_key|cursor_api_key|access_key|private_key)\b(\s*[:=]\s*)(["']?)[^\s"'&]{4,400}\3/gi,
+  // key=value style secrets (token=, api_key:, password= …). Every underscored
+  // env var name needs its OWN alternate: the `_` before the final segment is a
+  // word character, so `\bapi_key\b` never matches inside `ANTHROPIC_API_KEY`
+  // and `\btoken\b` never matches inside `CLAUDE_CODE_OAUTH_TOKEN`. These are
+  // the names the harness sandbox forwards from the host environment.
+  /\b(token|secret|password|passwd|apikey|api_key|cursor_api_key|anthropic_api_key|anthropic_auth_token|claude_code_oauth_token|openai_api_key|codex_api_key|ai_gateway_api_key|access_key|private_key)\b(\s*[:=]\s*)(["']?)[^\s"'&]{4,400}\3/gi,
   // URL userinfo credentials (https://user:pass@host).
   /(\w+:\/\/)([^\s/:@]{1,128}):([^\s/@]{1,256})@/g,
   // Cursor API keys (crsr_… — lenient shape; the prefix is not contractual).

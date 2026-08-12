@@ -1,9 +1,15 @@
 /**
- * Shared provider status row for Settings › Agent › Providers. Claude and
- * Cursor (and any future adapter) render the same icon-tile + name + status
- * line + icon-pill layout, driven by the shared {@link LifecycleMeta} shape
- * from features/agent/status.ts — one status vocabulary, no per-provider
- * pill styling.
+ * Shared harness status row for Settings › Agent › Harnesses. Claude, Cursor
+ * (and any future adapter) render the same icon-tile + name + status line +
+ * icon-pill layout, driven by the shared {@link LifecycleMeta} shape from
+ * features/agent/status.ts — one status vocabulary, no per-provider pill
+ * styling.
+ *
+ * A ROW, not a card. It carries no border or fill of its own: the settings
+ * panels are flat lists of labelled rows (see `Section`/`Field` in
+ * controls.tsx), and wrapping one group in a bordered well made this the only
+ * place in Settings that looked like a container. The icon tile and the status
+ * pill keep their shapes — those are controls, not chrome.
  */
 import type { AgentProvider } from '@shared/constants';
 import { cn } from '@/renderer/lib/cn';
@@ -23,7 +29,7 @@ export function ProviderStatusRow({
 }) {
   const Icon = meta.icon;
   return (
-    <div className="flex items-center gap-3 rounded-md border border-line bg-surface-2 px-3 py-3">
+    <div className="flex items-center gap-3 px-2 py-2">
       <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-elevated text-muted">
         <ProviderIcon provider={provider} size={18} className="text-muted" />
       </span>

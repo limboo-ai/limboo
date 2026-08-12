@@ -6,18 +6,26 @@
  * turn budget, and the connection-monitoring / reliability controls.
  */
 import { useEffect, useState } from 'react';
-import { AGENT_CONNECTION_LIMITS, AGENT_LIMITS } from '@shared/constants';
+import {
+  AGENT_LIMITS,
+  AGENT_MODELS,
+  DEFAULT_SETTINGS,
+  HARNESSES_WITHOUT_READ_GATING,
+  HARNESS_LABELS,
+  PROVIDER_HARNESS,
+  providerForModel,
+} from '@shared/constants';
 import { cn } from '@/renderer/lib/cn';
 import { ProviderIcon } from '@/renderer/components/brand/ProviderIcon';
 import { useSettingsStore } from '@/renderer/stores/useSettingsStore';
 import { useAgentStore } from '@/renderer/stores/useAgentStore';
 import { lifecycleMeta } from '@/renderer/features/agent/status';
 import { useAgentModels } from '@/renderer/features/agent/models';
-import { Field, Section, Select, SegmentedControl, Slider, StackedField, TextInput, Toggle } from '../controls';
-import { ProviderStatusRow } from './ProviderCard';
-import { CursorProviderCard } from './CursorProviderCard';
+import { Field, Section, SegmentedControl, Slider, StackedField, TextInput, Toggle } from '../controls';
+import { HarnessCard } from './HarnessCard';
+import { CursorAuthControls, useCursorStatus } from './CursorProviderCard';
+import { ClaudeCodeControls } from './ClaudeCodeControls';
 import { AgentTroubleshooting } from './AgentTroubleshooting';
-import { RuntimeIndicatorsSection } from './RuntimeIndicatorsSection';
 
 export function AgentPanel() {
   const agent = useSettingsStore((s) => s.settings.agent);
@@ -25,14 +33,28 @@ export function AgentPanel() {
   const lifecycle = useAgentStore((s) => s.lifecycle);
   const install = useAgentStore((s) => s.install);
   const models = useAgentModels();
+  const cursorStatus = useCursorStatus();
+
+  // DERIVED, never retyped: the hint used to read "Default Sonnet 4.6" while
+  // the actual default had moved on to Opus 5. A hardcoded copy of a value
+  // that lives elsewhere goes stale silently.
+  const defaultModelLabel =
+    AGENT_MODELS.find((m) => m.value === DEFAULT_SETTINGS.agent.model)?.label ??
+    DEFAULT_SETTINGS.agent.model;
+
+  // The harness serving the SELECTED model, and whether it can honour
+  // `autoApproveReads` at all (the AI SDK harnesses cannot — see the shared
+  // constant). Only used to tell the truth in a hint; the toggle still writes.
+  const activeHarnessId = PROVIDER_HARNESS[providerForModel(agent.model)];
+  const activeHarnessLabel = HARNESS_LABELS[activeHarnessId] ?? activeHarnessId;
+  const readGatingUnavailable =
+    agent.harness.id === activeHarnessId &&
+    !agent.harness.legacyClaudeSdk &&
+    HARNESSES_WITHOUT_READ_GATING.includes(activeHarnessId);
 
   const meta = lifecycleMeta(lifecycle, install.installed);
   const set = <K extends keyof typeof agent>(key: K, value: (typeof agent)[K]) =>
     void update({ agent: { [key]: value } });
-  const setConn = <K extends keyof typeof agent.connection>(
-    key: K,
-    value: (typeof agent.connection)[K],
-  ) => void update({ agent: { connection: { [key]: value } } });
   const setSandbox = <K extends keyof typeof agent.sandbox>(
     key: K,
     value: (typeof agent.sandbox)[K],
@@ -41,24 +63,31 @@ export function AgentPanel() {
   return (
     <div className="flex flex-col gap-5">
       <Section
-        title="Providers"
-        hint="The coding agents Limboo can orchestrate. Claude Code reuses its own local login; Cursor connects via CLI sign-in or an encrypted API key — Anthropic keys never pass through this app."
+        title="Harnesses"
+        hint="The coding agents Limboo can drive. A harness is HOW a model runs; picking a model in the composer selects its harness. Claude Code reuses its own local login; Cursor connects via CLI sign-in or an encrypted API key — no provider credentials are stored by this app."
       >
-        <ProviderStatusRow
-          provider="anthropic"
-          name="Claude Code"
+        <HarnessCard
+          harnessId="claude-code"
           statusLine={
             install.installed
               ? 'Connected — reusing your local Claude Code login.'
               : install.error ?? 'Not connected.'
           }
           meta={meta}
-        />
-        <CursorProviderCard />
+        >
+          <ClaudeCodeControls />
+        </HarnessCard>
+        <HarnessCard harnessId="cursor-cli" statusLine={cursorStatus.line} meta={cursorStatus.meta}>
+          <CursorAuthControls />
+        </HarnessCard>
       </Section>
 
       <Section title="Model & thinking">
-        <StackedField id="model" label="Model" hint="Which model the agent runs — the provider follows the model. Default Sonnet 4.6.">
+        <StackedField
+          id="model"
+          label="Model"
+          hint={`Which model the agent runs — the harness follows the model. Default ${defaultModelLabel}.`}
+        >
           <div className="flex flex-wrap gap-1.5">
             {models.map((m) => {
               const active = agent.model === m.value;
@@ -113,7 +142,11 @@ export function AgentPanel() {
         <Field
           id="autoApproveReads"
           label="Auto-approve reads"
-          hint="Let the agent read, search, and look things up without prompting. Default on — reads can't modify your project."
+          hint={
+            readGatingUnavailable
+              ? `Let the agent read, search, and look things up without prompting. Default on — reads can't modify your project. Not enforced on ${activeHarnessLabel}: its runtime allows built-in file reads unconditionally, so turning this off will not make it ask.`
+              : "Let the agent read, search, and look things up without prompting. Default on — reads can't modify your project."
+          }
         >
           <Toggle checked={agent.autoApproveReads} onChange={(v) => set('autoApproveReads', v)} />
         </Field>
@@ -247,127 +280,6 @@ export function AgentPanel() {
         </Field>
       </Section>
 
-      <Section
-        title="Plan Mode"
-        hint="Plan Mode is the review-first workflow — the agent analyzes read-only and proposes a plan you approve before any files change. Its settings now live in the dedicated Plan & Tasks category."
-      >
-        <p className="text-[12px] text-faint">
-          Configure Plan-mode defaults, the Task Panel, execution, and plan history under
-          <span className="text-muted"> Settings › Plan &amp; Tasks</span>.
-        </p>
-      </Section>
-
-      <Section
-        title="Connection & reliability"
-        hint="How Limboo supervises the connected coding agent — shared by every provider. A failed request never marks the agent dead; these knobs govern heartbeat checks and automatic recovery."
-      >
-        <Field
-          id="heartbeatInterval"
-          label="Heartbeat interval"
-          hint="How often Limboo verifies the agent is healthy (a lightweight auth/SDK check, never a model call). Default 30s. Off disables monitoring."
-        >
-          <Select
-            value={agent.connection.heartbeatInterval}
-            options={[
-              { value: 0, label: 'Off' },
-              { value: 15_000, label: 'Every 15s' },
-              { value: 30_000, label: 'Every 30s' },
-              { value: 60_000, label: 'Every 1m' },
-              { value: 120_000, label: 'Every 2m' },
-            ]}
-            onChange={(v) => setConn('heartbeatInterval', v)}
-          />
-        </Field>
-        <StackedField
-          id="heartbeatFailureThreshold"
-          label={`Heartbeat failures before reconnecting · ${agent.connection.heartbeatFailureThreshold}`}
-          hint="Consecutive failed heartbeats tolerated before showing Reconnecting. Default 2 — absorbs brief OS scheduling hiccups without alarming you."
-        >
-          <Slider
-            min={AGENT_CONNECTION_LIMITS.heartbeatFailureThreshold.min}
-            max={AGENT_CONNECTION_LIMITS.heartbeatFailureThreshold.max}
-            step={1}
-            value={agent.connection.heartbeatFailureThreshold}
-            onChange={(v) => setConn('heartbeatFailureThreshold', v)}
-            aria-label="Heartbeat failures before reconnecting"
-          />
-        </StackedField>
-        <StackedField
-          id="maxRecoveryAttempts"
-          label={`Max recovery attempts · ${agent.connection.maxRecoveryAttempts}`}
-          hint="How many times Limboo transparently retries a run after a transient failure before surfacing an error. Default 3. 0 disables auto-recovery."
-        >
-          <Slider
-            min={AGENT_CONNECTION_LIMITS.maxRecoveryAttempts.min}
-            max={AGENT_CONNECTION_LIMITS.maxRecoveryAttempts.max}
-            step={1}
-            value={agent.connection.maxRecoveryAttempts}
-            onChange={(v) => setConn('maxRecoveryAttempts', v)}
-            aria-label="Max recovery attempts"
-          />
-        </StackedField>
-        <Field
-          id="reconnectDelay"
-          label="Reconnect delay"
-          hint="Base wait before the first recovery retry (grows with exponential backoff). Default 1s. Lower recovers faster but retries more aggressively."
-        >
-          <Select
-            value={agent.connection.reconnectDelay}
-            options={[
-              { value: 500, label: '0.5s' },
-              { value: 1_000, label: '1s' },
-              { value: 2_000, label: '2s' },
-              { value: 5_000, label: '5s' },
-            ]}
-            onChange={(v) => setConn('reconnectDelay', v)}
-          />
-        </Field>
-        <Field
-          id="idleTimeout"
-          label="Idle refresh"
-          hint="After this idle window Limboo refreshes its health baseline. Default 5m. Off keeps background work to a minimum."
-        >
-          <Select
-            value={agent.connection.idleTimeout}
-            options={[
-              { value: 0, label: 'Off' },
-              { value: 60_000, label: '1m' },
-              { value: 300_000, label: '5m' },
-              { value: 600_000, label: '10m' },
-              { value: 1_800_000, label: '30m' },
-            ]}
-            onChange={(v) => setConn('idleTimeout', v)}
-          />
-        </Field>
-        <Field
-          id="autoRestart"
-          label="Auto-restart after crashes"
-          hint="Re-probe and return to Ready automatically after a recoverable capability error. Default on. Risk: none — it never re-runs your prompt without asking."
-        >
-          <Toggle checked={agent.connection.autoRestart} onChange={(v) => setConn('autoRestart', v)} />
-        </Field>
-        <Field
-          id="sessionPersistence"
-          label="Persist sessions & diagnostics"
-          hint="Keep conversation continuity and the diagnostics console across app restarts. Default on. Off reduces on-disk footprint."
-        >
-          <Toggle checked={agent.connection.sessionPersistence} onChange={(v) => setConn('sessionPersistence', v)} />
-        </Field>
-        <Field
-          id="connectivityNotifications"
-          label="Connectivity notifications"
-          hint="Desktop notifications when the agent reconnects or hits a usage limit. Default on."
-        >
-          <Toggle
-            checked={agent.connection.connectivityNotifications}
-            onChange={(v) => setConn('connectivityNotifications', v)}
-          />
-        </Field>
-      </Section>
-
-      {/* Runtime Indicators sits between reliability and delegation: it is the
-          surface that tells you how the running agent is doing right now. */}
-      <RuntimeIndicatorsSection />
 
       <Section
         title="Subagents"
@@ -407,6 +319,7 @@ export function AgentPanel() {
           />
         </Field>
       </Section>
+
 
       <Section
         title="Hook Engine"

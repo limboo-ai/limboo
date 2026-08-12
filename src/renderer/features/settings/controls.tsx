@@ -342,25 +342,81 @@ export function Select<T extends string | number>({
   );
 }
 
-export function TextInput({
+/**
+ * A multi-line text field.
+ *
+ * Exists because four panels had hand-rolled `<textarea>` copies of the same
+ * class list — which is exactly how a radius or focus treatment drifts apart
+ * one file at a time. `mono` and `rows` are NAMED props, not a `className`
+ * escape hatch: a caller picks a shape, it does not restyle the control.
+ */
+export function TextArea({
   value,
   placeholder,
   onChange,
   onBlur,
+  rows = 3,
+  mono = false,
 }: {
   value: string;
   placeholder?: string;
   onChange: (value: string) => void;
   onBlur?: () => void;
+  rows?: number;
+  mono?: boolean;
+}) {
+  return (
+    <textarea
+      value={value}
+      rows={rows}
+      placeholder={placeholder}
+      spellCheck={false}
+      onChange={(e) => onChange(e.target.value)}
+      onBlur={onBlur}
+      className={cn(
+        'w-full resize-y rounded-md border border-line bg-surface-2 px-2 py-1 text-[12px] text-fg',
+        mono && 'font-mono',
+        'placeholder:text-faint focus:border-line-strong focus:outline-none',
+      )}
+    />
+  );
+}
+
+/**
+ * `widthClass` and `mono` are NAMED props rather than a `className` escape
+ * hatch, for the same reason {@link TextArea} exists: a caller can pick a width,
+ * not restyle the control.
+ */
+export function TextInput({
+  value,
+  placeholder,
+  onChange,
+  onBlur,
+  widthClass = 'w-48',
+  mono = false,
+  spellCheck,
+}: {
+  value: string;
+  placeholder?: string;
+  onChange: (value: string) => void;
+  onBlur?: () => void;
+  widthClass?: string;
+  mono?: boolean;
+  spellCheck?: boolean;
 }) {
   return (
     <input
       type="text"
       value={value}
       placeholder={placeholder}
+      spellCheck={spellCheck}
       onChange={(e) => onChange(e.target.value)}
       onBlur={onBlur}
-      className="w-48 rounded-md border border-line bg-surface-2 px-2 py-1 text-[12px] text-fg placeholder:text-faint focus:border-line-strong focus:outline-none"
+      className={cn(
+        widthClass,
+        mono && 'font-mono',
+        'rounded-md border border-line bg-surface-2 px-2 py-1 text-[12px] text-fg placeholder:text-faint focus:border-line-strong focus:outline-none',
+      )}
     />
   );
 }

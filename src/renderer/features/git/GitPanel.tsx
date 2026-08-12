@@ -26,7 +26,9 @@ import {
   X,
 } from 'lucide-react';
 import type { GitFileChange } from '@shared/types';
+import { providerForModel } from '@shared/constants';
 import { EmptyState, IconButton, Spinner } from '@/renderer/components/ui';
+import { agentDisplayName } from '@/renderer/features/agent/status';
 import { cn } from '@/renderer/lib/cn';
 import { useAgentStore } from '@/renderer/stores/useAgentStore';
 import { useGitStore, type GitView } from '@/renderer/stores/useGitStore';
@@ -326,7 +328,18 @@ function ChangesView() {
   const generating = useGitStore((s) => s.generatingMessage);
   const generateMessage = useGitStore((s) => s.generateCommitMessage);
   const cancelGenerate = useGitStore((s) => s.cancelCommitMessage);
-  const agentReady = useAgentStore((s) => s.install.installed);
+  // Follows the SELECTED provider, like the Composer's own gate: a Cursor
+  // session reconciles from the lifecycle, not from Claude's install state.
+  // Reading `install.installed` unconditionally disabled this button for every
+  // Cursor user, for a generation Cursor is perfectly able to run.
+  const agentInstalled = useAgentStore((s) => s.install.installed);
+  const agentLifecycle = useAgentStore((s) => s.lifecycle);
+  const agentModel = useSettingsStore((s) => s.settings.agent.model);
+  const agentName = agentDisplayName(agentModel);
+  const agentReady =
+    providerForModel(agentModel) === 'cursor'
+      ? agentLifecycle !== 'not-installed' && agentLifecycle !== 'auth-required'
+      : agentInstalled;
   const template = useSettingsStore((s) => s.settings.git.commitMessageTemplate);
   const addToast = useUIStore((s) => s.addToast);
   const [committing, setCommitting] = useState(false);
@@ -432,7 +445,7 @@ function ChangesView() {
                 label={
                   agentReady
                     ? 'Generate a commit message with the agent'
-                    : 'Claude Code is not available — sign in to generate commit messages'
+                    : `${agentName} is not available — sign in to generate commit messages`
                 }
                 size="sm"
                 disabled={staged.length === 0 || !agentReady || committing}
