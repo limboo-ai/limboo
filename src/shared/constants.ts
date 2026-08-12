@@ -255,6 +255,28 @@ export const AGENT_LIMITS = {
    * exceeding it is reported, never a silent stop.
    */
   maxApprovalRounds: 400,
+  /**
+   * Cap on the free-text feedback the user attaches to "Keep planning". It is
+   * relayed verbatim to the model, so it is bounded at the IPC boundary like
+   * every other renderer-supplied string.
+   */
+  planFeedbackMax: 8_000,
+} as const;
+
+/** Bounds for the Plan Mode state machine. */
+export const PLAN_LIMITS = {
+  /**
+   * How long a parked `ExitPlanMode` approval holds the provider run open.
+   *
+   * The SDK permits blocking indefinitely (permission prompts have no park
+   * deadline), so this is not a protocol requirement — it exists because a
+   * forgotten plan would otherwise pin a provider session and its context for
+   * as long as the app runs. On expiry the park releases and the plan becomes
+   * `detached`: still decidable, just no longer resumable in-turn.
+   */
+  parkTimeoutMs: { min: 60_000, max: 24 * 60 * 60_000, default: 30 * 60_000 },
+  /** Cap on entries in each capped JSON column of `plan_state`. */
+  stateListMax: 200,
 } as const;
 
 /**
@@ -1082,6 +1104,9 @@ export const DEFAULT_SETTINGS: AppSettings = {
       savePlansToMemory: false,
       allowManualReorder: false,
       notifyOnPhaseComplete: false,
+      parkTimeoutMs: PLAN_LIMITS.parkTimeoutMs.default,
+      restateInMessage: true,
+      redactSecrets: true,
     },
     terminal: {
       shell: '',
@@ -1375,7 +1400,7 @@ export function clamp(value: number, min: number, max: number): number {
 /* ------------------------------------------------------------------ */
 
 /** Bumped whenever the workspace DB schema changes incompatibly. */
-export const WORKSPACE_SCHEMA_VERSION = 18;
+export const WORKSPACE_SCHEMA_VERSION = 19;
 
 /** Input caps the main process enforces on renderer-supplied session values. */
 export const SESSION_LIMITS = {

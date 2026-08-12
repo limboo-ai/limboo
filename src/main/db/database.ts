@@ -267,6 +267,41 @@ function migrate(database: Database.Database): void {
     CREATE INDEX IF NOT EXISTS idx_plan_revisions_session
       ON plan_revisions (session_id, rev DESC);
 
+    -- Plan resumption state — everything needed to reopen a pending plan after
+    -- an app restart with the approval decision still live and implementation
+    -- still locked. A SIBLING of agent_plans, not more columns on it, because
+    -- these are resumption INPUTS (which repo, which conversation, which
+    -- retrieval) rather than plan identity, and they are rewritten on a
+    -- different cadence. Modelled on session_snapshots.
+    --
+    -- attachment_ids / memory_ids / search_refs / settings_snapshot /
+    -- orchestration are capped JSON, all bound. head/branch/worktree_id are
+    -- NULL when the effective root is not a git repo or has no worktree.
+    CREATE TABLE IF NOT EXISTS plan_state (
+      session_id          TEXT PRIMARY KEY,
+      plan_rev            INTEGER NOT NULL,
+      approval_path       TEXT NOT NULL,
+      exec_mode           TEXT,
+      provider            TEXT NOT NULL,
+      provider_session_id TEXT,
+      workspace_id        TEXT NOT NULL,
+      worktree_id         TEXT,
+      branch              TEXT,
+      root                TEXT NOT NULL,
+      head                TEXT,
+      dirty_hash          TEXT NOT NULL DEFAULT '',
+      checkpoint_id       TEXT,
+      attachment_ids      TEXT NOT NULL DEFAULT '[]',
+      memory_ids          TEXT NOT NULL DEFAULT '[]',
+      search_refs         TEXT NOT NULL DEFAULT '[]',
+      settings_snapshot   TEXT NOT NULL DEFAULT '{}',
+      orchestration       TEXT NOT NULL DEFAULT '{}',
+      created_at          INTEGER NOT NULL,
+      updated_at          INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_plan_state_updated
+      ON plan_state (updated_at DESC);
+
     -- Git checkpoints — lightweight, session-scoped recovery points stored as
     -- dedicated git refs (refs/limboo/checkpoints/<sessionId>/<ts>); this table
     -- holds only the metadata + which ref to restore. Never on a branch, never
@@ -772,6 +807,55 @@ function migrate(database: Database.Database): void {
   // and without this the raw prompt reappeared in the transcript on every
   // reload. NULL for every ordinary prompt, which is the overwhelming majority.
   addColumnIfMissing(database, 'agent_messages', 'display', { type: 'TEXT' });
+
+  // Plan Mode state machine (schema v19). `rev` is the concurrency token: every
+  // mutating plan IPC carries the rev it believes it is acting on, and the
+  // single writer updates `WHERE session_id = ? AND rev = ?`, so a stale window
+  // cannot approve a plan that has since been replaced. NOT NULL DEFAULT 1 is
+  // the only legal shape for a NOT NULL ADD COLUMN in SQLite.
+  addColumnIfMissing(database, 'agent_plans', 'rev', {
+    type: 'INTEGER',
+    notNull: true,
+    default: 1,
+  });
+  // Whether a pending plan can still be released in-turn. Existing rows have no
+  // parked callback (the process that owned it is gone), so they are 'detached'.
+  addColumnIfMissing(database, 'agent_plans', 'approval_path', {
+    type: 'TEXT',
+    notNull: true,
+    default: 'detached',
+  });
+  // When the CURRENT planning pass began. Distinct from created_at, which
+  // survives re-captures — milestone derivation needs this pass's boundary or a
+  // regenerated plan replays the previous pass's tool calls.
+  addColumnIfMissing(database, 'agent_plans', 'run_started_at', { type: 'INTEGER' });
+  addColumnIfMissing(database, 'agent_plans', 'captured_at', { type: 'INTEGER' });
+  // Basename of the plan file inside Limboo's own plans directory. A BASENAME,
+  // never a path: the directory is chosen by main, so storing the full path
+  // would let a restored row point anywhere.
+  addColumnIfMissing(database, 'agent_plans', 'plan_file', { type: 'TEXT' });
+  addColumnIfMissing(database, 'plan_revisions', 'reason', { type: 'TEXT' });
+
+  // Backfill (idempotent, safe to re-run every boot).
+  //
+  // 'ready' is the pre-state-machine name for 'waiting-approval'. Rows are
+  // rewritten here AND normalized on read (normalizePlanStatus), because a
+  // database restored from a backup can reintroduce them at any time.
+  database.exec(`
+    UPDATE agent_plans    SET status = 'waiting-approval' WHERE status = 'ready';
+    UPDATE plan_revisions SET status = 'waiting-approval' WHERE status = 'ready';
+    UPDATE agent_plans    SET run_started_at = created_at WHERE run_started_at IS NULL;
+    UPDATE agent_plans    SET captured_at = COALESCE(approved_at, created_at)
+      WHERE captured_at IS NULL;
+  `);
+  // clearSession used to delete agent_plans without plan_revisions, so existing
+  // databases carry revisions for sessions that no longer exist.
+  database.exec(`
+    DELETE FROM plan_revisions
+      WHERE session_id NOT IN (SELECT id FROM sessions);
+    DELETE FROM plan_state
+      WHERE session_id NOT IN (SELECT id FROM sessions);
+  `);
 
   const current = database
     .prepare('SELECT value FROM meta WHERE key = ?')

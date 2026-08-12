@@ -39,7 +39,19 @@ import type {
   WorkGraphNodeStatus,
   WorkGraphRef,
 } from '@shared/types';
+import { isPlanBlocking } from '@shared/plan';
 import { clean, cleanRequired } from './redact';
+
+/**
+ * The graph status for a settled plan, or null while it is still live.
+ * 'archived' reads as denied because the plan did not complete — the reason it
+ * did not is carried by `planEndReason`, not by the colour.
+ */
+function settledPlanStatus(status: SessionPlan['status']): WorkGraphNodeStatus | null {
+  if (status === 'completed') return 'done';
+  if (status === 'rejected' || status === 'archived') return 'denied';
+  return null;
+}
 
 /** Files ingested from one File Writer mutation burst. */
 const MAX_FILES_PER_MUTATION = 25;
@@ -901,7 +913,7 @@ export class WorkGraphBuilder {
 
     // The planning node is created once, when the plan first becomes readable,
     // then patched in place as the plan advances through its lifecycle.
-    if (!s.planNodeId && (plan.status === 'ready' || plan.status === 'implementing')) {
+    if (!s.planNodeId && (isPlanBlocking(plan.status) || plan.status === 'implementing')) {
       const node = this.mkNode(s, sessionId, 'planning', plan.title || 'Implementation plan', at, {
         planTitle: cleanRequired(plan.title || 'Plan', GRAPH_LIMITS.titleMax),
         taskCount: plan.meta.taskCount ?? 0,
@@ -933,15 +945,26 @@ export class WorkGraphBuilder {
     // Patch the planning node's lifecycle in place (an upsert, not a new node).
     const patched: WorkGraphNode = {
       ...existing,
-      status: plan.status === 'rejected' ? 'denied' : plan.status === 'completed' ? 'done' : 'running',
-      endedAt: plan.status === 'completed' || plan.status === 'rejected' ? at : existing.endedAt,
-      meta: { ...existing.meta, planStatus: plan.status, taskCount: plan.meta.taskCount ?? 0 },
+      // 'archived' joins 'rejected' as a terminal non-success. They are drawn
+      // the same way but MEAN different things — a human declined vs something
+      // else ended it — which is why `endReason` rides in the meta below.
+      status: settledPlanStatus(plan.status) ?? 'running',
+      endedAt: settledPlanStatus(plan.status) ? at : existing.endedAt,
+      meta: {
+        ...existing.meta,
+        planStatus: plan.status,
+        taskCount: plan.meta.taskCount ?? 0,
+        ...(plan.meta.endReason ? { planEndReason: plan.meta.endReason } : {}),
+      },
     };
     s.nodes.set(patched.id, patched);
     out.nodes.push(patched);
 
-    // An approve/reject is a real human decision — a first-class approval node.
-    if (plan.status === 'implementing' || plan.status === 'rejected') {
+    // An approve/reject is a real HUMAN decision — a first-class approval node.
+    // 'archived' is deliberately excluded: a run that errored or a plan the
+    // shutdown ended is not a verdict, and recording it as one would put a
+    // decision in the audit trail that nobody made.
+    if (plan.status === 'approved' || plan.status === 'rejected') {
       const decided = plan.status === 'rejected' ? 'deny' : 'allow';
       const approval = this.mkNode(s, sessionId, 'approval', `Plan ${decided === 'deny' ? 'rejected' : 'approved'}`, at, {
         subject: 'plan' as const,

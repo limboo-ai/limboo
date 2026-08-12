@@ -29,6 +29,10 @@ import { ProxyServer } from './managers/services/ProxyServer';
 import { MemoryManager } from './managers/memory/MemoryManager';
 import { SearchManager } from './managers/search/SearchManager';
 import { ResumeManager } from './managers/resume/ResumeManager';
+import {
+  createActivationPipeline,
+  type ActivationPipeline,
+} from './managers/session/activation';
 import { HookEngine } from './managers/hooks/HookEngine';
 import { GhManager } from './managers/gh/GhManager';
 import { AutoUpdateManager, isQuittingForUpdate } from './managers/AutoUpdateManager';
@@ -48,6 +52,7 @@ import { RuntimeTelemetryManager } from './managers/telemetry/RuntimeTelemetryMa
 import { setMcpObserver } from './managers/graph/instrument';
 import { configureCursorExec } from './managers/cursor/exec';
 import { registerCursorModels } from '@shared/constants';
+import { IpcEvents } from '@shared/ipc-channels';
 import { getDb, closeDb } from './db/database';
 import { registerAllIpc } from './ipc';
 
@@ -117,6 +122,11 @@ function bootstrap(): void {
   let mcp: McpManager;
   let workGraph: WorkGraphManager;
   let runtime: RuntimeTelemetryManager;
+  /**
+   * The ordered, cancellable rebinding of every root-bound service after a
+   * session/workspace switch. Undefined until the composition root builds it.
+   */
+  let activation: ActivationPipeline | undefined;
   let memorySweepTimer: ReturnType<typeof setInterval> | undefined;
   let graphSweepTimer: ReturnType<typeof setInterval> | undefined;
   let runtimeSweepTimer: ReturnType<typeof setInterval> | undefined;
@@ -503,74 +513,77 @@ function bootstrap(): void {
     // Begin the auto-update check + hourly poll (packaged builds only).
     updates.start();
 
-    // File System Layer: watch + index the *effective root* — the workspace
-    // path, or the active session's worktree checkout when it owns one — and
-    // follow every active-workspace AND active-session change. The retarget is
-    // guarded by the last effective root so unrelated session broadcasts (and
-    // switches between plain sessions) never churn the watcher or the index.
-    let lastEffectiveRoot: string | null = null;
-    const retargetEffectiveRoot = (): void => {
-      const ws = workspace.getActive();
-      if (!ws) {
-        lastEffectiveRoot = null;
-        void fileSystem.stopWatching();
-        return;
-      }
-      const active = sessions.getActive();
-      const root = worktrees.resolveActiveRoot(ws.id) ?? ws.path;
-      const owner =
-        active && active.workspaceId === ws.id && active.worktreePath && root !== ws.path
-          ? active.id
-          : null;
-      fileSystem.setActiveTarget(ws, root, owner);
-      if (root !== lastEffectiveRoot) {
-        lastEffectiveRoot = root;
-        git.invalidate(ws.id);
-        gh.invalidate();
-        void search.indexWorkspace(ws.id).catch((err) => logger.warn('search index failed', err));
-        // Recovery/activation: start the session's autoStart services (only
-        // when the workspace already acknowledged the repo's limboo.json).
-        if (owner) services.autoStartForSession(owner);
-      }
+    // File System Layer: ONE ordered, cancellable activation pipeline replaces
+    // what used to be a synchronous
+    // `void` retarget fanned out from several independent listeners with the
+    // slow parts discarded. See `managers/session/activation.ts` for why the
+    // ordering (and the generation counter) is load-bearing. It owns the
+    // effective-root rebind, git/GitHub invalidation, search indexing, service
+    // auto-start, resume handoff, and agent session activation together.
+    activation = createActivationPipeline({
+      workspace,
+      sessions,
+      worktrees,
+      fileSystem,
+      git,
+      gh,
+      search,
+      memory,
+      mcp,
+      services,
+      resume,
+      agent,
+      broadcast: (state) => {
+        for (const win of BrowserWindow.getAllWindows()) {
+          if (!win.isDestroyed()) win.webContents.send(IpcEvents.sessionActivationChanged, state);
+        }
+      },
+    });
+    const retargetEffectiveRoot = (reason: 'boot' | 'session' | 'workspace' | 'worktree'): void => {
+      void activation?.activate(reason);
     };
+
     workspace.onActiveChanged((ws) => {
-      retargetEffectiveRoot();
-      if (ws) memory.seedDefaults(ws.id);
-      // Re-scope the MCP registry to the new workspace and, on first activation,
-      // discover servers already configured in that repo's provider config files
-      // (read-only import; new servers land disabled for the user to review).
+      // The MCP repo import is workspace-scoped and one-shot, so it stays here;
+      // the pipeline owns the re-scope (`mcp.refresh`) that every activation needs.
       if (ws) mcp.importActive();
-      mcp.refresh();
+      retargetEffectiveRoot('workspace');
     });
     // Session switches (and worktree create/remove/missing on the active
-    // session) retarget the same way — the SessionManager only emits when the
-    // active session's execution root could actually differ.
-    sessions.onActiveChanged(() => retargetEffectiveRoot());
-    // Resume Pipeline: a SEPARATE, additive listener — anchor the session being
-    // left, revalidate the one being entered. Fire-and-forget; the retarget
-    // path above is untouched and never waits on git.
-    sessions.onActiveChanged((active) => resume.onActiveSessionChanged(active));
+    // session) activate the same way — the SessionManager only emits when the
+    // active session's execution root could actually differ. The Resume
+    // Pipeline used to ride a second, independent listener whose ordering was a
+    // function of registration order; it is now a step inside the pipeline.
+    sessions.onActiveChanged(() => retargetEffectiveRoot('session'));
     // Before a worktree directory is removed, fully release the watcher handles
-    // inside it (Windows EBUSY) — the post-removal broadcast retargets afresh.
+    // inside it (Windows EBUSY) — the post-removal broadcast activates afresh.
     worktrees.setReleaseRootHook(async () => {
-      lastEffectiveRoot = null;
+      // The path may be reused by a recreated worktree, so forget it explicitly
+      // — everything bound to the old directory is stale regardless.
+      activation?.invalidateRoot();
       await fileSystem.stopWatching();
     });
 
-    const initialWs = workspace.getActive();
-    // Boot-time worktree recovery (repair/prune + flag missing directories)
-    // runs before the first retarget so a vanished worktree never gets watched.
-    void worktrees
-      .recover()
-      .catch((err) => logger.warn('worktree recovery failed', err))
-      .finally(() => {
-        retargetEffectiveRoot();
-        // Boot-time revalidation of the session that comes back active — only
-        // after worktree recovery settled so a repaired/missing worktree never
-        // produces a bogus delta. Async, best-effort, never awaited.
-        resume.onBoot();
-      });
-    if (initialWs) memory.seedDefaults(initialWs.id);
+    // Boot is one ordered sequence, for the same reason activation is: each step
+    // reads state the previous one establishes. Worktree recovery first (so a
+    // vanished worktree is never watched), then the first activation, then plan
+    // reconciliation — which reads each session's effective root and so cannot
+    // run before that root is trustworthy — then resume revalidation.
+    void (async () => {
+      try {
+        await worktrees.recover();
+      } catch (err) {
+        logger.warn('worktree recovery failed', err);
+      }
+      try {
+        await activation?.activate('boot');
+      } catch (err) {
+        logger.warn('initial activation failed', err);
+      }
+      agent.reconcilePlans();
+      // Best-effort revalidation of the session that comes back active.
+      resume.onBoot();
+    })();
 
     // Low-frequency memory maintenance (decay/flag stale entries). Off the hot
     // path; runs hourly and once shortly after boot.
@@ -674,6 +687,9 @@ function bootstrap(): void {
     // tell an intentional quit from a hide-to-tray close, and Electron closes
     // windows only after this handler returns.
     isQuitting = true;
+    // First: an in-flight activation must stop broadcasting into windows that
+    // are about to be destroyed, and must not re-bind services being torn down.
+    safeDispose('activation', () => activation?.dispose());
     safeDispose('agent', () => agent?.cleanup());
     safeDispose('cursorRuntime', () => cursorRuntime?.dispose());
     safeDispose('cursorAuth', () => cursorAuth?.dispose());

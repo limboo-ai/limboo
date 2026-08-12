@@ -25,6 +25,7 @@ import {
   LAYOUT_LIMITS,
   MCP_LIMITS,
   MEMORY_LIMITS,
+  PLAN_LIMITS,
   RESUME_LIMITS,
   SANDBOX_DOMAIN_RE,
   SANDBOX_LIMITS,
@@ -405,6 +406,18 @@ export class SettingsManager {
       plan.defaultMode = plan.defaultMode === ('implement' as unknown) ? 'default' : 'plan';
     }
     plan.historyLimit = Math.round(clamp(plan.historyLimit, 1, 100));
+    // How long a parked ExitPlanMode approval holds the provider run open. A
+    // renderer-supplied value reaches this, so it is clamped like every other
+    // numeric setting rather than trusted as a timer duration.
+    plan.parkTimeoutMs = Math.round(
+      clamp(
+        plan.parkTimeoutMs ?? PLAN_LIMITS.parkTimeoutMs.default,
+        PLAN_LIMITS.parkTimeoutMs.min,
+        PLAN_LIMITS.parkTimeoutMs.max,
+      ),
+    );
+    plan.restateInMessage = plan.restateInMessage !== false;
+    plan.redactSecrets = plan.redactSecrets !== false;
     // 22 -> 23: the Tasks panel dropped the derived phase/task outline, so the
     // knobs that only ever configured it have no surface left. `deepMerge` keeps
     // unknown keys from a persisted file, so drop them explicitly rather than
