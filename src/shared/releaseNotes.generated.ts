@@ -22,6 +22,135 @@ export interface ReleaseNotesEntry {
 /** Newest first. */
 export const RELEASE_NOTES: ReleaseNotesEntry[] = [
   {
+    version: '1.18.0',
+    date: '2026-08-13',
+    markdown: `Limboo 1.18.0 stabilizes the Cursor fixes from the beta, adds the swappable
+harness layer, opens Settings as a workspace tab, and ships the beta update
+channel as an opt-in path for future prereleases.
+
+### Fixed
+
+- **Cursor sessions denied every tool call.** The hook runner read the event name
+  from a single payload key that the CLI does not always send. With no event name
+  it could not identify what was being asked, so it failed closed — which is the
+  correct posture, but it meant every read, search, shell command and edit was
+  refused, and nothing on screen said why. The event name now travels in the
+  runner's own arguments, where Limboo writes it, with five payload spellings as
+  fallbacks, and a genuine failure now names the missing key in the timeline
+  instead of denying silently.
+- **Four more ways a Cursor run could stall.** The permission helper could boot as
+  a GUI process instead of a script and then hang for the full ten-minute hook
+  timeout on every single tool call; nothing timed out while it waited for input;
+  a successful approval could be truncated on its way out and be read as a
+  refusal; and the sandbox denied the helper access to its own communication
+  socket. Each is fixed, and each failure now reports what happened.
+- **"Prompt me for everything" meant "deny everything".** Tightening the approval
+  policy withdrew the rule that let Cursor read files at all. Because the only way
+  to ask for permission on that path is the hook bridge, a session with hooks
+  unavailable was left unable to read or to ask. Reads and inspection commands
+  now keep their floor regardless of the policy; the permission gate still runs
+  on top of it.
+- **A Cursor session could stream as Claude Code.** The model was checked for
+  character shape rather than for which provider serves it, and every Cursor
+  model id passes that check — so a mis-routed model was handed to the Claude
+  integration and ran there, with no error anywhere. Routing now has an explicit
+  "unknown" answer, dispatch is exhaustive, and a model nothing claims fails by
+  name instead of quietly running somewhere.
+- **Commit-message generation always used Claude.** A Cursor-only user pressing
+  the button started a Claude run and, with Claude not installed, was told to sign
+  in to a product they were not using. It now follows the agent you selected, and
+  the button is no longer disabled for Cursor users.
+- **Searching Settings missed several controls.** Some settings were never
+  registered in the search index, so typing their name found nothing. Fixed for
+  the Agent and Runtime categories, with a check that fails the build if it
+  happens again.
+- **Absolute paths inside your project were treated as escapes.** Cursor's CLI
+  writes full paths by default, and a full path to a file inside your own worktree
+  was classified as leaving it — so ordinary reads were refused during planning.
+
+### Added
+
+- **Agents can run through a harness layer.** Limboo now drives agents through
+  Vercel AI SDK 7's harness abstraction as well as its own integrations, so a new
+  agent runtime becomes an adapter rather than a new code path. Pi is available;
+  Claude Code runs through it behind an opt-in switch. Everything above the
+  adapter — the conversation, permissions, memory, search, the work graph, the
+  runtime panel — is unchanged, because they all sit on one seam.
+- **A sandbox that runs on your own worktree.** Every shipped sandbox for that
+  abstraction is either a cloud service or a private filesystem, and neither
+  fits: your repository must not leave the machine, and the agent has to edit the
+  actual files that git, the diff viewer and checkpoints are watching. Limboo has
+  its own, rooted at the session's worktree, with the same containment rules the
+  rest of the app enforces — nothing outside the worktree, and never the app's own
+  database, settings or secrets.
+- **Settings opens as a workspace tab.** An icon beside the close button promotes
+  the dialog into an editor tab, the way a diff opens. Both surfaces render the
+  same panels, so nothing drifts. The tab has no Cancel: settings apply as you
+  change them, exactly as they already did.
+- **An update channel you can choose.** Settings › Updates now offers Stable or
+  Beta. A beta is never downloaded in the background — you are shown its release
+  notes and decide.
+
+### Changed
+
+- **Settings panels are flat rows.** The Agent and MCP categories wrapped groups
+  of settings in bordered panels while every other category used plain labelled
+  rows, which made them look like a different application. The boxes are gone.
+  Every input, button and select now uses one corner radius.
+- **The Agent panel is reorganised.** Providers became Harnesses and now reads as
+  one list instead of two hand-built cards. Connection and reliability moved to
+  Runtime, where the rest of the supervision settings live. A section that
+  contained no settings at all was removed, and the remainder is ordered by the
+  decision you are making: which agent, which model, what it may do, what
+  contains it.
+- **The model hint stopped being wrong.** It named a default the app had not used
+  for several versions, because the text was typed by hand next to the value it
+  described. It is now derived from that value.
+
+### Security
+
+- **Built-in tools on the harness path are gated by Limboo.** The harness
+  abstraction has two separate approval surfaces, and the one Limboo had wired
+  covers only tools the host supplies — built-in file writes and shell commands
+  are governed by a different setting that defaults to allowing everything. On
+  that path an agent could have written files and run commands without Limboo's
+  permission gate. Every built-in tool call now suspends the turn and asks, using
+  the same authority, the same risk labels, the same dialogs and the same audit
+  trail as every other agent.
+- **A harness that cannot ask for permission is refused.** Rather than run it with
+  weaker enforcement, Limboo declines to start it and says so. This is not
+  theoretical: the Codex adapter reports that it cannot request approval for its
+  shell tool, so it is registered as unavailable with the reason shown rather than
+  offered and then failing.
+- **The harness setup step asks first.** Preparing a harness for its first run
+  downloads its agent CLI, which is the only time Limboo reaches the network
+  outside talking to your agent and fetching contributor avatars. The exact
+  commands are read from the adapter and shown to you for approval once, and the
+  approval is tied to those commands — if a later version changes them, you are
+  asked again. Without approval the run does not start.
+- **Credentials are passed through, never stored.** A harness receives an API key
+  only if your own environment already has one, from an explicitly named list.
+  Nothing is written to settings, accepted over the app's internal channels, put
+  on a command line, or logged. A gap in log redaction that could have printed
+  those variables is closed.
+- **Reads on the harness path cannot be gated, and the setting says so.** The
+  underlying runtime allows built-in file reads unconditionally, so
+  "auto-approve reads" has no effect there. Rather than leave a control that looks
+  like it works, the setting explains the limitation.
+
+### Known limitations
+
+- **The harness path is off by default.** Claude Code and Cursor continue to run
+  through their own integrations. Turn the harness on in Settings › Agent ›
+  Harnesses if you want to try it; you will be asked to approve its setup step
+  first.
+- **A harness conversation does not resume.** Each message starts a fresh
+  conversation with the underlying runtime. The alternative failed on every second
+  message, so this is deliberate until the resume format is handled properly.
+- **Codex is unavailable.** Its adapter cannot ask for permission before running
+  shell commands. It is listed with that reason rather than hidden.`,
+  },
+  {
     version: '1.18.0-beta.2',
     date: '2026-08-12',
     markdown: `The first beta. Two bugs that made Cursor sessions unusable are fixed, agents can
@@ -370,92 +499,6 @@ when the agent starts forgetting.
 - **Negative values were mangled in exported spreadsheets.** A guard against
   spreadsheet formula injection was also catching negative numbers and turning
   them into text.`,
-  },
-  {
-    version: '1.14.0',
-    date: '2026-07-29',
-    markdown: `When the agent hands work to a specialist, you can finally watch it happen.
-Delegated work used to arrive as an anonymous pile of tool calls mixed into the
-main reply; it now reads as one line you can open, follow live, and take apart
-afterwards — without ever leaving the conversation.
-
-### Added
-
-- **Delegated work reads as one activity.** When the agent hands a job to a
-  specialist — exploring the repository, reviewing code, running tests — the
-  conversation shows a single line naming the worker and what it was asked to do,
-  with its progress underneath. The worker's own tool calls no longer scatter
-  through the reply as if the main agent had run them. Opening the line shows how
-  long it took, which model it used, what it read and changed, which tools and
-  connected servers it reached, what it verified, and what it concluded.
-- **Live progress in the worker's own words.** While a specialist works, it
-  reports what it is doing in plain language — "Analyzing authentication module"
-  — refreshed as it goes. When that is unavailable the progress is worked out
-  from the tools it is using, so there is always something to read.
-- **Open a worker in its own tab.** Maximize a delegation and it opens beside
-  your files as a full-width tab: live progress, everything it ran, its notes and
-  its conclusion, following along as it works. Minimizing returns it to the
-  conversation exactly where you left it — same scroll position, same sections
-  open. If the worker pauses for permission while you are watching, you can
-  answer without going back.
-- **Actions on every delegation.** Copy the conclusion or the worker's notes,
-  export the whole record as Markdown, jump to it in the work graph, or open any
-  file it changed straight into a diff. Copying while it is still working
-  captures everything that has arrived.
-- **Delegated work in the task list.** Specialists running right now appear under
-  the task they belong to, with finished ones collected below it, so a long
-  execution can be followed from the Tasks panel without reading the whole
-  conversation.
-- **Settings for delegated work.** Under Agent › Subagents you can turn the
-  inline activity off, stop requesting live progress descriptions, or stop
-  keeping a worker's notes.
-
-### Fixed
-
-- **The plan was dumped into the conversation as raw text.** Approving a plan
-  sent it to the agent, and everything sent to the agent is shown — so the whole
-  plan appeared in a chat bubble as unformatted markup, tags and all, sometimes
-  thousands of characters of it. The approval now reads as one line with the plan
-  beneath it, properly formatted and collapsed by default. Nothing is hidden:
-  viewing the message raw still shows exactly what the agent received.
-- **Checklists in plans rendered twice over.** Every \`- [ ]\` item drew a tick box
-  *and* a bullet, on plans that are almost entirely checklists. Ticked items are
-  now also greyed, so a plan reads like a plan.
-- **The Tasks panel could go blank.** A specialist that failed or was denied took
-  the whole panel down with it.
-- **Long output was hard to read and hard to escape.** A worker's notes and
-  conclusion ran together with everything around them at a size that fought its
-  surroundings, inside a small scrolling box that trapped the page. They are now
-  properly separated, one consistent size, and clipped with a clear way to read
-  the rest.
-- **A worker's tool list could bury everything below it.** A specialist that
-  reads thirty files pushed its own conclusion off the screen. Long lists now
-  arrive folded, with the count and anything still running or failed still
-  visible.
-- **Delegated work went unrecognized on current agent versions.** The tool that
-  starts a specialist was renamed upstream, and Limboo only recognized the old
-  name — so on any recent version delegated work was recorded as ordinary tool
-  calls and never appeared as delegation at all. Both names are now recognized.
-- **A specialist's work vanished when you sent the next message.** A worker still
-  running when you typed again had the rest of its work spill into the new turn
-  as loose tool calls. Its record also now survives restarting the app.
-- **Sessions were named after approving a plan.** An untitled session took its
-  name from the approval instead of from what you had asked for.
-
-### Security
-
-- **"Always allow" no longer grants more than you agreed to.** Allowing an action
-  for the session applied to *every* later action, whatever its kind — approving a
-  file read also pre-approved writing files and running commands, and satisfied
-  the guard on secrets like \`.env\` files and private keys. It now applies only to
-  the kind of action you were actually shown, and access to secrets always asks
-  on its own.
-- **A specialist's notes are treated as untrusted.** What a worker writes is
-  stored and shown as text, with a size limit, and is never fed back to the agent
-  as instructions.
-- **Approvals name the worker that asked.** A permission request raised inside a
-  delegation says so — and when it cannot be attributed with certainty, it says
-  nothing rather than guessing.`,
   },
 ];
 
