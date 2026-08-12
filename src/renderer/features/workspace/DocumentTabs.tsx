@@ -18,7 +18,7 @@
  * filled/accented state plates for the same reason.
  */
 import { useState } from 'react';
-import { Bot, MessageSquare, Pin, X } from 'lucide-react';
+import { Bot, MessageSquare, Pin, Settings2, X } from 'lucide-react';
 import { cn } from '@/renderer/lib/cn';
 import { getFileIcon } from '@/renderer/lib/fileIcons';
 import {

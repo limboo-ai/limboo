@@ -22,6 +22,16 @@ export interface ReleaseNotesEntry {
 /** Newest first. */
 export const RELEASE_NOTES: ReleaseNotesEntry[] = [
   {
+    version: '1.18.1',
+    date: '2026-08-13',
+    markdown: `### Fixed
+
+- **Settings workspace tabs crashed on open.** The tab strip rendered the shared
+  Settings icon without importing it, so opening Settings as a workspace document
+  threw \`ReferenceError: Settings2 is not defined\`. The icon is now wired through
+  the same lucide import as the rest of the tab strip.`,
+  },
+  {
     version: '1.18.0',
     date: '2026-08-13',
     markdown: `Limboo 1.18.0 stabilizes the Cursor fixes from the beta, adds the swappable
@@ -408,97 +418,6 @@ again rather than a stack of cards.
   now covers the whole exchange — what you asked, what came back, and what was
   run in between. Copy and Copy as Markdown are unchanged and still copy the one
   message, as their labels say.`,
-  },
-  {
-    version: '1.15.0',
-    date: '2026-07-29',
-    markdown: `You can now see what a long session is actually costing you. A small ring beside
-the composer status fills as the conversation consumes the model's context
-window, and hovering it opens a live breakdown of where that context went —
-which is the difference between noticing you are running out and finding out
-when the agent starts forgetting.
-
-### Added
-
-- **A live runtime ring beside the agent status.** It fills as the context
-  window fills, turns amber and then red as it runs low, and breathes while the
-  agent is working. It is there from the moment a session opens — before
-  anything has been measured it shows as unmeasured rather than as empty, which
-  are different things.
-- **Hover it for the full picture.** A floating panel shows how much of the
-  context window is used and left, how much is reserved for the reply, roughly
-  how many more exchanges fit before the conversation has to be compressed, and
-  when compression last happened.
-- **See what filled the context.** A single bar splits the window into who took
-  what: your conversation, results from tools, answers from connected servers,
-  recalled memories, retrieved project context, the repository delta, and staged
-  attachments. Hovering any band names the part of Limboo responsible for it.
-- **Nothing is guessed at.** The total, the window size and the reservation are
-  measured by the provider. The split beneath them is Limboo counting what it
-  composed, and is marked with a \`~\` everywhere it appears. When those estimates
-  would exceed what was actually measured — after a compression, or on a resumed
-  conversation — the split is dropped rather than quietly rescaled to fit.
-- **Rate limits before they stop you.** Rolling usage windows now come from the
-  provider's own updates as they arrive, with how much is consumed, when it
-  resets, and whether you are drawing on overage. Until now Limboo learned about
-  a limit by reading the error after you had already hit it.
-- **Usage over time.** Long-running windows keep a local trend so you can see a
-  week's consumption building rather than only today's number.
-- **Execution detail on demand.** Active model, mode, time to first token,
-  generation speed, run duration, cache reads, an estimated cost, retries, the
-  worktree, connected servers, index status and attachment count.
-- **It says what a provider cannot tell it.** Cursor's command-line interface
-  reports no token counts and no quotas, so those sections say exactly that,
-  naming the limitation instead of showing a zero that reads as "nothing used".
-  Every metric is something the running agent declares it can measure, so a
-  future agent lights up whatever it supports with no change to the interface.
-- **Run costs in the work graph.** A new Stats tab lists each run with its shape
-  and its cost side by side — nodes, tools, errors, duration, tokens, peak
-  context and estimated spend.
-- **More ways to export a work graph.** NDJSON, GraphML and PlantUML join the
-  existing formats, you can export just the selected part of a graph rather than
-  the whole session, optionally include run costs, and export every session at
-  once into a folder you pick.
-- **Settings under Agent › Runtime Indicators.** Turn the whole thing off, or
-  tune the ring's size, thickness, position and what it measures; choose
-  percentages or token counts; reorder or collapse panel sections; set the
-  thresholds that turn it amber, red, or raise a notification; and control how
-  long usage history is kept.
-
-### Security
-
-- **Nothing that identifies your machine leaves the main process.** Worktree
-  paths are reduced to a name rather than a full path to your home directory,
-  the provider's conversation id is shown truncated with no way to reveal the
-  rest, and the one place a raw error message is surfaced has secrets and paths
-  stripped from it first.
-- **Stored usage cannot contain your work.** The tables behind the history have
-  no column that can hold a prompt, a message, a file path or a tool input, so
-  an export cannot leak them — and exports are assembled field by field rather
-  than dumped wholesale. Turning off "Store usage history" genuinely stops all
-  writing, for deployments that forbid keeping it.
-- **No new network access.** Every number comes from the stream Limboo already
-  receives to display the conversation. Nothing is polled and nothing is sent.
-
-### Fixed
-
-- **The work graph panel crashed the drawer.** Opening it threw immediately and
-  took the surrounding panel down with it.
-- **Threshold sliders were unusable.** Ring size, thickness and every warning
-  threshold were squeezed into a sliver at the edge of their row, so touching
-  one snapped it to its lowest value. They now use the same full-width slider as
-  the rest of settings.
-- **The runtime panel could be cut off.** It was allowed to grow taller than the
-  workspace it opens inside, which clipped the bottom of it on shorter windows.
-  It is now capped, with only the context section open by default.
-- **Injected memory and context counts were wrong.** The panel reported the
-  configured maximum rather than how many were actually recalled.
-- **Runtime updates could keep running after you closed the window.** Closing or
-  reloading a window while the panel was open left Limboo updating at full rate
-  for a window that no longer existed.
-- **Negative values were mangled in exported spreadsheets.** A guard against
-  spreadsheet formula injection was also catching negative numbers and turning
-  them into text.`,
   },
 ];
 

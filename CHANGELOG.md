@@ -7,6 +7,15 @@ All notable changes to Limboo are documented here. The format is based on
 
 ## [Unreleased]
 
+## [1.18.1] - 2026-08-13
+
+### Fixed
+
+- **Settings workspace tabs crashed on open.** The tab strip rendered the shared
+  Settings icon without importing it, so opening Settings as a workspace document
+  threw `ReferenceError: Settings2 is not defined`. The icon is now wired through
+  the same lucide import as the rest of the tab strip.
+
 ## [1.18.0] - 2026-08-13
 
 Limboo 1.18.0 stabilizes the Cursor fixes from the beta, adds the swappable
