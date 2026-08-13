@@ -7,6 +7,16 @@ All notable changes to Limboo are documented here. The format is based on
 
 ## [Unreleased]
 
+## [1.18.2] - 2026-08-13
+
+### Fixed
+
+- **Agent settings now show the selected harness correctly.** Choosing a Cursor
+  Composer model marks Cursor as active and Claude Code as available but not
+  selected, instead of showing Claude Code copy as though it were the running
+  agent. Unknown model ids now display as unknown and stay blocked rather than
+  falling back to Claude labels.
+
 ## [1.18.1] - 2026-08-13
 
 ### Fixed

@@ -24,6 +24,49 @@ import type { ReleaseIndexEntry, ReleaseManifestEntry } from './release';
 /** Newest first. */
 export const RELEASE_MANIFESTS: ReleaseManifestEntry[] = [
   {
+    "version": "1.18.2",
+    "date": "2026-08-13",
+    "channel": "stable",
+    "codename": null,
+    "gitTag": "v1.18.2",
+    "commit": null,
+    "buildNumber": null,
+    "summary": "",
+    "sections": [
+      {
+        "category": "fixed",
+        "title": "Fixed",
+        "items": [
+          {
+            "lead": "Agent settings now show the selected harness correctly",
+            "text": "Choosing a Cursor\n  Composer model marks Cursor as active and Claude Code as available but not\n  selected, instead of showing Claude Code copy as though it were the running\n  agent. Unknown model ids now display as unknown and stay blocked rather than\n  falling back to Claude labels."
+          }
+        ],
+        "markdown": "- **Agent settings now show the selected harness correctly.** Choosing a Cursor\n  Composer model marks Cursor as active and Claude Code as available but not\n  selected, instead of showing Claude Code copy as though it were the running\n  agent. Unknown model ids now display as unknown and stay blocked rather than\n  falling back to Claude labels."
+      }
+    ],
+    "contributors": [],
+    "pullRequests": [],
+    "mergedBranches": [],
+    "assets": [],
+    "signing": [],
+    "stats": {
+      "commits": null,
+      "filesChanged": null,
+      "additions": null,
+      "deletions": null
+    },
+    "links": {
+      "release": "https://github.com/limboo-ai/limboo/releases/tag/v1.18.2",
+      "compare": null,
+      "tag": "https://github.com/limboo-ai/limboo/releases/tag/v1.18.2",
+      "milestone": null
+    },
+    "checksumManifest": "SHA256SUMS",
+    "provenanceRepo": "limboo-ai/limboo",
+    "markdown": "### Fixed\n\n- **Agent settings now show the selected harness correctly.** Choosing a Cursor\n  Composer model marks Cursor as active and Claude Code as available but not\n  selected, instead of showing Claude Code copy as though it were the running\n  agent. Unknown model ids now display as unknown and stay blocked rather than\n  falling back to Claude labels."
+  },
+  {
     "version": "1.18.1",
     "date": "2026-08-13",
     "channel": "stable",
@@ -504,81 +547,18 @@ export const RELEASE_MANIFESTS: ReleaseManifestEntry[] = [
     "checksumManifest": "SHA256SUMS",
     "provenanceRepo": "limboo-ai/limboo",
     "markdown": "Plan Mode now stops. A plan waits for your decision instead of sliding into\nimplementation, and the plan you are shown is the plan the agent actually wrote —\nwhich, until this release, it very often was not. Git also becomes a platform\nservice in its own right, so repository work reads as part of the conversation\nrather than something that happened in a side panel.\n\n### Added\n\n- **Plan approval is a real stop, not a prompt.** When the agent presents a plan,\n  execution halts: no further model calls, no new prompts, no background work,\n  and every tool is refused until you decide. Approving continues the same turn\n  rather than starting a new one, so the agent keeps everything it had learned\n  while planning. Approve, Approve & accept edits, Keep planning, Reject and\n  Archive are the only things that move it forward.\n- **Keep planning now sends feedback.** Instead of discarding the plan and\n  starting over, it hands your notes to the agent, which revises and presents\n  again — same conversation, same context.\n- **Plans are versioned.** A session has one plan; refinements replace it and the\n  previous text moves into History. Two windows on the same session can no longer\n  approve different plans, and a plan that changed while you were reading it says\n  so rather than acting on the stale copy.\n- **A pending plan survives a restart.** Quit with a plan awaiting approval and it\n  is still there on relaunch, with its buttons live and implementation still\n  locked. Approving after a restart starts a fresh run carrying the plan text,\n  because the paused conversation cannot outlive the process.\n- **Git is a platform service.** Repository actions post structured entries into\n  the conversation carrying the paths, commit and checkpoint behind them, with\n  Open Diff, View Commit, Restore Checkpoint and Copy Command on each.\n- **Optional GitHub CLI integration.** If `gh` is installed and signed in, a\n  GitHub sub-tab lists pull requests and issues, and the agent can read them\n  through the tools it already has. Limboo stores no GitHub credential —\n  authentication stays the CLI's. Posting a comment is gated and shows the exact\n  body first.\n- **Contributor avatars in history**, fetched in the main process and embedded so\n  no page ever requests a remote image. Behind `git.avatars.enabled`, which is\n  off-limits by default in the sense that turning it on is the thing that tells\n  GitHub which repository you are browsing — the setting says so.\n\n### Changed\n\n- **The integrated terminal is its own column** between the conversation and the\n  drawer, instead of competing for the drawer with Files and Changes.\n- **The Activity and Hooks drawer panels are gone.** The Hook Engine, its audit\n  log and every hook setting are untouched — only the two panels and the IPC they\n  were the sole consumers of were removed.\n- **Switching sessions is now an ordered handover.** Worktree, file watcher, git\n  status, search index, memory scope, MCP and the agent are rebound in sequence,\n  and a thin ribbon says so while it happens. Switching quickly between sessions\n  cancels the stale work rather than letting it finish over the newer session.\n\n### Fixed\n\n- **The plan you approved was usually empty.** Current Claude releases write the\n  plan to a file and pass no plan text to the tool Limboo was reading, so almost\n  every captured plan was blank — and because the tool was blocked, no plan file\n  was produced either. Approving then sent an empty plan, the agent re-derived\n  the work from scratch, and the empty plan was filed as completed. Limboo now\n  tells the agent where to write its plan and reads it from there, with the\n  agent's own copy taking over once the plan is approved.\n- **Starting a new plan could silently destroy the one you were reviewing** when\n  plan history was turned off. A pending plan is never discarded without being\n  filed first, and starting a second plan while one awaits approval is refused.\n- **A failed or cancelled planning run reported itself as \"rejected\"**, which is\n  what the app says when a person declines a plan. Those now read as ended, with\n  the reason recorded, so declining and crashing no longer look identical.\n- **An unrelated prompt could mark a stalled plan complete.** Only the run that\n  was actually released to implement a plan can finish it.\n- **Live planning progress replayed the previous attempt's steps** after asking\n  for a new plan, because it measured from when the plan first existed rather\n  than when the current attempt started.\n- **Deleting a session left its plan revisions behind** in the database.\n- **A machine without git looked like a folder without a repository**, and the app\n  offered to initialise one — an action that could never succeed. Limboo now\n  detects the missing binary and names the install command for your platform.\n- **Settings could be hand-edited into a dead drawer tab or an unbounded panel\n  width**; both are now validated and clamped on load."
-  },
-  {
-    "version": "1.16.0",
-    "date": "2026-07-30",
-    "channel": "stable",
-    "codename": null,
-    "gitTag": "v1.16.0",
-    "commit": null,
-    "buildNumber": null,
-    "summary": "A tighter follow-up to the runtime ring. The panel it opens now answers one\nquestion instead of four, and the conversation beneath it reads as one reply\nagain rather than a stack of cards.",
-    "sections": [
-      {
-        "category": "changed",
-        "title": "Changed",
-        "items": [
-          {
-            "lead": "The runtime panel is the context window, and nothing else",
-            "text": "It opened with\n  four collapsible sections, and three of them earned their space only\n  occasionally: request usage and long-term usage said \"not reported\" on any\n  agent that does not publish quotas, and execution detail was a nineteen-row\n  list behind a header that was folded shut by default. Together they pushed the\n  panel past the height it is allowed inside the workspace, where the bottom of\n  it was cut off rather than scrollable. The context breakdown is now the whole\n  panel — no section headers, no folding, no order to remember, and nothing\n  clipped."
-          },
-          {
-            "lead": "Settings match what the panel now shows",
-            "text": "Show estimated cost, the quota\n  warning threshold, show usage history and the section ordering controls are\n  gone rather than left on screen doing nothing, and \"Ring measures\" now offers\n  the two context options it can actually draw. If you had it set to quota, it\n  falls back on its own."
-          },
-          {
-            "lead": "Nothing stopped being measured",
-            "text": "Quota windows, usage samples and run\n  rollups are still collected and still stored. The Work Graph's Stats tab and\n  the JSON and CSV exports carry every field they did before — only the hover\n  panel got smaller."
-          }
-        ],
-        "markdown": "- **The runtime panel is the context window, and nothing else.** It opened with\n  four collapsible sections, and three of them earned their space only\n  occasionally: request usage and long-term usage said \"not reported\" on any\n  agent that does not publish quotas, and execution detail was a nineteen-row\n  list behind a header that was folded shut by default. Together they pushed the\n  panel past the height it is allowed inside the workspace, where the bottom of\n  it was cut off rather than scrollable. The context breakdown is now the whole\n  panel — no section headers, no folding, no order to remember, and nothing\n  clipped.\n- **Settings match what the panel now shows.** Show estimated cost, the quota\n  warning threshold, show usage history and the section ordering controls are\n  gone rather than left on screen doing nothing, and \"Ring measures\" now offers\n  the two context options it can actually draw. If you had it set to quota, it\n  falls back on its own.\n- **Nothing stopped being measured.** Quota windows, usage samples and run\n  rollups are still collected and still stored. The Work Graph's Stats tab and\n  the JSON and CSV exports carry every field they did before — only the hover\n  panel got smaller."
-      },
-      {
-        "category": "fixed",
-        "title": "Fixed",
-        "items": [
-          {
-            "lead": "A reply broken up by tool calls sprouted a toolbar per fragment",
-            "text": "Message\n  actions rendered on every block of an answer rather than once for the\n  exchange, so a reply interrupted three times showed three sets of buttons.\n  Actions now sit with the message you sent, which is the one stable anchor a\n  turn has."
-          },
-          {
-            "lead": "The conversation read as a stack of cards",
-            "text": "Hidden toolbars still occupied\n  their full height, and consecutive parts of a single answer sat about forty\n  pixels apart. An answer now reads as one continuous reply, with the wider\n  spacing kept for the boundary between exchanges."
-          },
-          {
-            "lead": "Exporting from a message gave you the question without the answer",
-            "text": "Export\n  now covers the whole exchange — what you asked, what came back, and what was\n  run in between. Copy and Copy as Markdown are unchanged and still copy the one\n  message, as their labels say."
-          }
-        ],
-        "markdown": "- **A reply broken up by tool calls sprouted a toolbar per fragment.** Message\n  actions rendered on every block of an answer rather than once for the\n  exchange, so a reply interrupted three times showed three sets of buttons.\n  Actions now sit with the message you sent, which is the one stable anchor a\n  turn has.\n- **The conversation read as a stack of cards.** Hidden toolbars still occupied\n  their full height, and consecutive parts of a single answer sat about forty\n  pixels apart. An answer now reads as one continuous reply, with the wider\n  spacing kept for the boundary between exchanges.\n- **Exporting from a message gave you the question without the answer.** Export\n  now covers the whole exchange — what you asked, what came back, and what was\n  run in between. Copy and Copy as Markdown are unchanged and still copy the one\n  message, as their labels say."
-      }
-    ],
-    "contributors": [],
-    "pullRequests": [],
-    "mergedBranches": [],
-    "assets": [],
-    "signing": [],
-    "stats": {
-      "commits": null,
-      "filesChanged": null,
-      "additions": null,
-      "deletions": null
-    },
-    "links": {
-      "release": "https://github.com/limboo-ai/limboo/releases/tag/v1.16.0",
-      "compare": "https://github.com/limboo-ai/limboo/compare/v1.15.0...v1.16.0",
-      "tag": "https://github.com/limboo-ai/limboo/releases/tag/v1.16.0",
-      "milestone": null
-    },
-    "checksumManifest": "SHA256SUMS",
-    "provenanceRepo": "limboo-ai/limboo",
-    "markdown": "A tighter follow-up to the runtime ring. The panel it opens now answers one\nquestion instead of four, and the conversation beneath it reads as one reply\nagain rather than a stack of cards.\n\n### Changed\n\n- **The runtime panel is the context window, and nothing else.** It opened with\n  four collapsible sections, and three of them earned their space only\n  occasionally: request usage and long-term usage said \"not reported\" on any\n  agent that does not publish quotas, and execution detail was a nineteen-row\n  list behind a header that was folded shut by default. Together they pushed the\n  panel past the height it is allowed inside the workspace, where the bottom of\n  it was cut off rather than scrollable. The context breakdown is now the whole\n  panel — no section headers, no folding, no order to remember, and nothing\n  clipped.\n- **Settings match what the panel now shows.** Show estimated cost, the quota\n  warning threshold, show usage history and the section ordering controls are\n  gone rather than left on screen doing nothing, and \"Ring measures\" now offers\n  the two context options it can actually draw. If you had it set to quota, it\n  falls back on its own.\n- **Nothing stopped being measured.** Quota windows, usage samples and run\n  rollups are still collected and still stored. The Work Graph's Stats tab and\n  the JSON and CSV exports carry every field they did before — only the hover\n  panel got smaller.\n\n### Fixed\n\n- **A reply broken up by tool calls sprouted a toolbar per fragment.** Message\n  actions rendered on every block of an answer rather than once for the\n  exchange, so a reply interrupted three times showed three sets of buttons.\n  Actions now sit with the message you sent, which is the one stable anchor a\n  turn has.\n- **The conversation read as a stack of cards.** Hidden toolbars still occupied\n  their full height, and consecutive parts of a single answer sat about forty\n  pixels apart. An answer now reads as one continuous reply, with the wider\n  spacing kept for the boundary between exchanges.\n- **Exporting from a message gave you the question without the answer.** Export\n  now covers the whole exchange — what you asked, what came back, and what was\n  run in between. Copy and Copy as Markdown are unchanged and still copy the one\n  message, as their labels say."
   }
 ];
 
 /** Every released version, newest first. */
 export const RELEASE_INDEX: ReleaseIndexEntry[] = [
+  {
+    "version": "1.18.2",
+    "date": "2026-08-13",
+    "channel": "stable",
+    "summary": "",
+    "detailed": true
+  },
   {
     "version": "1.18.1",
     "date": "2026-08-13",
@@ -612,7 +592,7 @@ export const RELEASE_INDEX: ReleaseIndexEntry[] = [
     "date": "2026-07-30",
     "channel": "stable",
     "summary": "A tighter follow-up to the runtime ring. The panel it opens now answers one\nquestion instead of four, and the conversation beneath it reads as one reply\nagain rather than a stack of cards.",
-    "detailed": true
+    "detailed": false
   },
   {
     "version": "1.15.0",

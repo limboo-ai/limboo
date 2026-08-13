@@ -22,6 +22,17 @@ export interface ReleaseNotesEntry {
 /** Newest first. */
 export const RELEASE_NOTES: ReleaseNotesEntry[] = [
   {
+    version: '1.18.2',
+    date: '2026-08-13',
+    markdown: `### Fixed
+
+- **Agent settings now show the selected harness correctly.** Choosing a Cursor
+  Composer model marks Cursor as active and Claude Code as available but not
+  selected, instead of showing Claude Code copy as though it were the running
+  agent. Unknown model ids now display as unknown and stay blocked rather than
+  falling back to Claude labels.`,
+  },
+  {
     version: '1.18.1',
     date: '2026-08-13',
     markdown: `### Fixed
@@ -374,50 +385,6 @@ rather than something that happened in a side panel.
   detects the missing binary and names the install command for your platform.
 - **Settings could be hand-edited into a dead drawer tab or an unbounded panel
   width**; both are now validated and clamped on load.`,
-  },
-  {
-    version: '1.16.0',
-    date: '2026-07-30',
-    markdown: `A tighter follow-up to the runtime ring. The panel it opens now answers one
-question instead of four, and the conversation beneath it reads as one reply
-again rather than a stack of cards.
-
-### Changed
-
-- **The runtime panel is the context window, and nothing else.** It opened with
-  four collapsible sections, and three of them earned their space only
-  occasionally: request usage and long-term usage said "not reported" on any
-  agent that does not publish quotas, and execution detail was a nineteen-row
-  list behind a header that was folded shut by default. Together they pushed the
-  panel past the height it is allowed inside the workspace, where the bottom of
-  it was cut off rather than scrollable. The context breakdown is now the whole
-  panel — no section headers, no folding, no order to remember, and nothing
-  clipped.
-- **Settings match what the panel now shows.** Show estimated cost, the quota
-  warning threshold, show usage history and the section ordering controls are
-  gone rather than left on screen doing nothing, and "Ring measures" now offers
-  the two context options it can actually draw. If you had it set to quota, it
-  falls back on its own.
-- **Nothing stopped being measured.** Quota windows, usage samples and run
-  rollups are still collected and still stored. The Work Graph's Stats tab and
-  the JSON and CSV exports carry every field they did before — only the hover
-  panel got smaller.
-
-### Fixed
-
-- **A reply broken up by tool calls sprouted a toolbar per fragment.** Message
-  actions rendered on every block of an answer rather than once for the
-  exchange, so a reply interrupted three times showed three sets of buttons.
-  Actions now sit with the message you sent, which is the one stable anchor a
-  turn has.
-- **The conversation read as a stack of cards.** Hidden toolbars still occupied
-  their full height, and consecutive parts of a single answer sat about forty
-  pixels apart. An answer now reads as one continuous reply, with the wider
-  spacing kept for the boundary between exchanges.
-- **Exporting from a message gave you the question without the answer.** Export
-  now covers the whole exchange — what you asked, what came back, and what was
-  run in between. Copy and Copy as Markdown are unchanged and still copy the one
-  message, as their labels say.`,
   },
 ];
 
