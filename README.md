@@ -44,7 +44,7 @@ terminal, owns the database, holds durable project memory, and enforces a strict
 security boundary, while the agent focuses exclusively on writing software.
 
 It works with **more than one agent**. Claude (through the Claude Agent SDK) and
-Cursor (through the `cursor-agent` CLI) both run as first-class providers behind a
+Cursor (through the `cursor-agent` CLI) And more both run as first-class providers behind a
 narrow adapter seam — picking a model picks the provider, and everything above that
 seam behaves identically either way.
 
@@ -334,7 +334,7 @@ in the main process and crosses a single typed IPC bridge. See
 | Database         | better-sqlite3 (WAL, FTS5 + trigram)            |
 | Terminal         | node-pty (Node-API) + xterm                     |
 | File watching    | chokidar                                        |
-| Coding agents    | `@anthropic-ai/claude-agent-sdk` (Claude) · `cursor-agent` CLI (Cursor) |
+| Coding agents    | support AI harness |
 | Highlighting     | Shiki (JS RegExp engine — CSP-safe, no WASM)    |
 | Packaging        | electron-builder (NSIS, dmg, AppImage, deb, rpm) |
 | Icons            | lucide-react                                    |
