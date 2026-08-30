@@ -16,7 +16,7 @@
  * runtime behind the same {@link ProviderRunBridge} seam rather than being
  * migrated or dropped.
  */
-import type { AgentProvider } from '@shared/constants';
+import { PROVIDER_HARNESS, providerForModel, type AgentProvider } from '@shared/constants';
 import type { HarnessSettingsShape } from '../harness/adapterSettings';
 
 /** How a harness executes, which decides what infrastructure it needs. */
@@ -232,4 +232,24 @@ export function harnessesForProvider(provider: AgentProvider): HarnessDescriptor
 export function harnessForProvider(provider: AgentProvider | null): HarnessDescriptor | undefined {
   if (!provider) return undefined;
   return HARNESSES.find((h) => h.provider === provider);
+}
+
+/**
+ * The harness that a run WILL use, resolved the way `AgentManager.runHarnessOnce`
+ * resolves it.
+ *
+ * The harness follows the MODEL, not `settings.agent.harness.id`. That field is
+ * only the choice for Anthropic models — the one provider where a harness and
+ * Limboo's direct Claude Agent SDK path both exist; a Codex or Pi model can run
+ * on nothing but its own harness. Reading the stored id for those would try to
+ * run them on Claude Code.
+ *
+ * Extracted so every caller that needs "which harness is this run" agrees. The
+ * sandbox provider's credential-env-key resolver read the stored id directly and
+ * therefore handed a Codex or Pi run Claude's `ANTHROPIC_*` names and none of
+ * its own — a run that could not authenticate, for a reason nothing surfaced.
+ */
+export function harnessIdForRun(agent: { model: string; harness: { id: string } }): string {
+  const provider = providerForModel(agent.model);
+  return provider === 'anthropic' ? agent.harness.id : PROVIDER_HARNESS[provider];
 }

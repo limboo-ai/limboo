@@ -28,7 +28,7 @@ import {
   assertBootstrapPossible,
   readBootstrapPlan,
 } from './bootstrap';
-import { HarnessBootstrapUnreadableError, HarnessUngatedError } from './errors';
+import { asBootstrapFailure, HarnessBootstrapUnreadableError, HarnessUngatedError } from './errors';
 import { harnessPermissionMode } from './permissions';
 import { newTranslateContext, translatePart, type HarnessApprovalRequest } from './translate';
 import type { HarnessAdapterFlags, HarnessSession, HarnessToolApproval } from './types';
@@ -95,6 +95,15 @@ export interface HarnessRunSpec {
 export interface HarnessRunOutcome {
   /** Provider session id captured from the stream, for resume storage. */
   sessionToken?: string;
+  /**
+   * Opaque resume state from `session.detach()`, for the NEXT turn.
+   *
+   * Structured (`{ type: 'resume-session', specificationVersion, harnessId,
+   * data }`) and produced only by the lifecycle methods — nothing in the stream
+   * carries it, which is why the `onInit` bridge callback is inert on this path.
+   * The caller persists it verbatim and hands it back as `resumeFrom`.
+   */
+  resumeState?: unknown;
   result?: { ok: boolean; text: string };
 }
 
@@ -223,11 +232,21 @@ export class HarnessRuntime {
       onLog: (line) => bridge.diag('stream', 'debug', 'harness', safeLine(line)),
     });
 
-    const session = await agent.createSession(
-      spec.resumeFrom != null
-        ? { sessionId: spec.sessionId, resumeFrom: spec.resumeFrom }
-        : { sessionId: spec.sessionId },
-    );
+    // `createSession` is where the framework applies the bootstrap recipe — it
+    // writes the adapter's files and runs the approved commands, throwing an
+    // anonymous Error if one exits non-zero. Rename it here, at the only seam
+    // that knows which harness this is, so the failure is reported with its own
+    // stderr and is never retried as though it were a dropped connection.
+    let session: HarnessSession;
+    try {
+      session = await agent.createSession(
+        spec.resumeFrom != null
+          ? { sessionId: spec.sessionId, resumeFrom: spec.resumeFrom }
+          : { sessionId: spec.sessionId },
+      );
+    } catch (err) {
+      throw asBootstrapFailure(err, label) ?? err;
+    }
     this.live.add(session);
     bridge.onSandboxStatus?.('ready', 'Workspace boundary established.');
 
@@ -303,7 +322,38 @@ export class HarnessRuntime {
           bridge.finishStreaming();
           bridge.onResult(true, ctx.text);
         }
-        return { result: { ok: ctx.ok, text: ctx.text } };
+        // PARK THE TURN. Nothing did this before, on any path but abort, and
+        // both consequences were real: the adapter's bridge child kept running
+        // until the app quit (one more `node bridge.mjs` per prompt, since each
+        // run opens its own session), and with no resume state stored the next
+        // prompt started a brand-new conversation.
+        //
+        // `detach()` rather than `stop()`: it parks the runtime while leaving
+        // the bridge listening, which is precisely what the adapter's attach
+        // path is built for — the next turn reopens the existing socket instead
+        // of respawning and re-checking the bootstrap marker. `stop()` remains
+        // the right call when the SESSION ends, and `dispose()` still makes it.
+        //
+        // Best-effort by design: a failure here costs the resume, and a run
+        // that produced real work must not be reported as failed because its
+        // bookkeeping did not settle.
+        //
+        // Skipped on abort: `close()` already called `suspendTurn()` there,
+        // which is the stronger claim (it preserves the UNFINISHED turn so the
+        // next send continues it — what makes plan-approve-then-implement
+        // work), and detaching on top of it would fight that.
+        let resumeState: unknown;
+        try {
+          if (!spec.abort.signal.aborted) resumeState = await session.detach?.();
+        } catch (err) {
+          bridge.diag(
+            'lifecycle',
+            'warning',
+            'Could not park the harness session; the next prompt will start a fresh conversation',
+            err instanceof Error ? err.message.slice(0, 300) : undefined,
+          );
+        }
+        return { resumeState, result: { ok: ctx.ok, text: ctx.text } };
       } finally {
         this.live.delete(session);
         spec.abort.signal.removeEventListener('abort', close);

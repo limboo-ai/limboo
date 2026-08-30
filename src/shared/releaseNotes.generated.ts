@@ -22,6 +22,59 @@ export interface ReleaseNotesEntry {
 /** Newest first. */
 export const RELEASE_NOTES: ReleaseNotesEntry[] = [
   {
+    version: '1.20.0',
+    date: '2026-08-31',
+    markdown: `Limboo 1.20.0 makes the agent harness actually run. 1.19.0 repaired its
+packaging; this release fixes the three separate reasons a run still could not
+start, gives harness conversations memory between prompts, and moves the
+harness runtime somewhere it belongs.
+
+### Fixed
+
+- **The harness could not start a run at all — for three independent reasons.**
+  Its one-time setup was refused by Limboo's own path guard on its very first
+  command, so the install could never begin. No network port was ever handed to
+  the agent bridge, which the harness requires and refuses to start without. And
+  the method the adapter uses to reach that bridge was missing, so a run that got
+  past the first two failed the moment the bridge came up. Each of these was
+  enough on its own; all three are fixed, and the setup now completes.
+- **Setup failures were retried forever instead of being reported.** A refusal
+  that mentioned the network — such as the sandbox network policy blocking the
+  download — was mistaken for a dropped connection and retried, though the same
+  setting would produce it again immediately. Refusals are now recognised for
+  what they are and reported once, with the reason.
+- **A failed setup command said nothing useful.** If one of the approved commands
+  ran and failed — a large download timing out is enough — it surfaced as a
+  generic failed run. It now reports what failed and what the tool itself said to
+  do about it, and is not retried: the package manager records the install as
+  complete even when part of it failed, so re-running it fails identically.
+- **Every prompt started a new conversation, and left a process behind.** Each
+  turn opened a fresh harness session without ending the previous one, so the
+  agent forgot the turn before and one background process accumulated per prompt.
+- **Non-Anthropic harnesses could never authenticate.** They were handed
+  Anthropic's credential variable names instead of their own, because the
+  credential lookup read the configured harness rather than the one the selected
+  model actually runs on.
+
+### Changed
+
+- **The harness keeps its runtime inside Limboo's own data directory.** It used
+  to be placed next to your worktree, which is Limboo-owned for a session with a
+  worktree — but a session without one is rooted at your repository, so its
+  runtime landed beside your project folder. It now always lives under Limboo's
+  application data, never in your repository and never next to it. Existing
+  installs will re-run the one-time setup once, in the new location.
+- **The setup panel says where the commands run.** It listed the two commands and
+  nothing else, so copying them into a terminal was the obvious thing to try —
+  and it fails, because the lockfile they install from is written into the setup
+  directory first. The panel now names that directory and the files placed in it.
+  Your existing approval still stands: the commands themselves have not changed.
+- **The agent harness packages were updated** (\`@ai-sdk/harness\` 1.0.91,
+  \`@ai-sdk/harness-claude-code\` 1.0.94). Every assumption Limboo makes about
+  their internals — where the runtime is installed, how the bridge binds, which
+  harnesses can be permission-gated — was re-checked against the new versions.`,
+  },
+  {
     version: '1.19.0',
     date: '2026-08-30',
     markdown: `Limboo 1.19.0 repairs the agent harness, which could not install itself in any
@@ -218,141 +271,6 @@ channel as an opt-in path for future prereleases.
 
 ### Known limitations
 
-- **The harness path is off by default.** Claude Code and Cursor continue to run
-  through their own integrations. Turn the harness on in Settings › Agent ›
-  Harnesses if you want to try it; you will be asked to approve its setup step
-  first.
-- **A harness conversation does not resume.** Each message starts a fresh
-  conversation with the underlying runtime. The alternative failed on every second
-  message, so this is deliberate until the resume format is handled properly.
-- **Codex is unavailable.** Its adapter cannot ask for permission before running
-  shell commands. It is listed with that reason rather than hidden.`,
-  },
-  {
-    version: '1.18.0-beta.2',
-    date: '2026-08-12',
-    markdown: `The first beta. Two bugs that made Cursor sessions unusable are fixed, agents can
-now run through a swappable harness layer instead of one hardcoded integration,
-and Settings opens as a workspace tab. This build is published for testing ahead
-of a stable release — read the warning at the top of these notes before
-installing it over a working copy.
-
-### Fixed
-
-- **Cursor sessions denied every tool call.** The hook runner read the event name
-  from a single payload key that the CLI does not always send. With no event name
-  it could not identify what was being asked, so it failed closed — which is the
-  correct posture, but it meant every read, search, shell command and edit was
-  refused, and nothing on screen said why. The event name now travels in the
-  runner's own arguments, where Limboo writes it, with five payload spellings as
-  fallbacks, and a genuine failure now names the missing key in the timeline
-  instead of denying silently.
-- **Four more ways a Cursor run could stall.** The permission helper could boot as
-  a GUI process instead of a script and then hang for the full ten-minute hook
-  timeout on every single tool call; nothing timed out while it waited for input;
-  a successful approval could be truncated on its way out and be read as a
-  refusal; and the sandbox denied the helper access to its own communication
-  socket. Each is fixed, and each failure now reports what happened.
-- **"Prompt me for everything" meant "deny everything".** Tightening the approval
-  policy withdrew the rule that let Cursor read files at all. Because the only way
-  to ask for permission on that path is the hook bridge, a session with hooks
-  unavailable was left unable to read or to ask. Reads and inspection commands
-  now keep their floor regardless of the policy; the permission gate still runs
-  on top of it.
-- **A Cursor session could stream as Claude Code.** The model was checked for
-  character shape rather than for which provider serves it, and every Cursor
-  model id passes that check — so a mis-routed model was handed to the Claude
-  integration and ran there, with no error anywhere. Routing now has an explicit
-  "unknown" answer, dispatch is exhaustive, and a model nothing claims fails by
-  name instead of quietly running somewhere.
-- **Commit-message generation always used Claude.** A Cursor-only user pressing
-  the button started a Claude run and, with Claude not installed, was told to sign
-  in to a product they were not using. It now follows the agent you selected, and
-  the button is no longer disabled for Cursor users.
-- **Searching Settings missed several controls.** Some settings were never
-  registered in the search index, so typing their name found nothing. Fixed for
-  the Agent and Runtime categories, with a check that fails the build if it
-  happens again.
-- **Absolute paths inside your project were treated as escapes.** Cursor's CLI
-  writes full paths by default, and a full path to a file inside your own worktree
-  was classified as leaving it — so ordinary reads were refused during planning.
-
-### Added
-
-- **Agents can run through a harness layer.** Limboo now drives agents through
-  Vercel AI SDK 7's harness abstraction as well as its own integrations, so a new
-  agent runtime becomes an adapter rather than a new code path. Pi is available;
-  Claude Code runs through it behind an opt-in switch. Everything above the
-  adapter — the conversation, permissions, memory, search, the work graph, the
-  runtime panel — is unchanged, because they all sit on one seam.
-- **A sandbox that runs on your own worktree.** Every shipped sandbox for that
-  abstraction is either a cloud service or a private filesystem, and neither
-  fits: your repository must not leave the machine, and the agent has to edit the
-  actual files that git, the diff viewer and checkpoints are watching. Limboo has
-  its own, rooted at the session's worktree, with the same containment rules the
-  rest of the app enforces — nothing outside the worktree, and never the app's own
-  database, settings or secrets.
-- **Settings opens as a workspace tab.** An icon beside the close button promotes
-  the dialog into an editor tab, the way a diff opens. Both surfaces render the
-  same panels, so nothing drifts. The tab has no Cancel: settings apply as you
-  change them, exactly as they already did.
-- **An update channel you can choose.** Settings › Updates now offers Stable or
-  Beta. A beta is never downloaded in the background — you are shown its release
-  notes and decide.
-
-### Changed
-
-- **Settings panels are flat rows.** The Agent and MCP categories wrapped groups
-  of settings in bordered panels while every other category used plain labelled
-  rows, which made them look like a different application. The boxes are gone.
-  Every input, button and select now uses one corner radius.
-- **The Agent panel is reorganised.** Providers became Harnesses and now reads as
-  one list instead of two hand-built cards. Connection and reliability moved to
-  Runtime, where the rest of the supervision settings live. A section that
-  contained no settings at all was removed, and the remainder is ordered by the
-  decision you are making: which agent, which model, what it may do, what
-  contains it.
-- **The model hint stopped being wrong.** It named a default the app had not used
-  for several versions, because the text was typed by hand next to the value it
-  described. It is now derived from that value.
-
-### Security
-
-- **Built-in tools on the harness path are gated by Limboo.** The harness
-  abstraction has two separate approval surfaces, and the one Limboo had wired
-  covers only tools the host supplies — built-in file writes and shell commands
-  are governed by a different setting that defaults to allowing everything. On
-  that path an agent could have written files and run commands without Limboo's
-  permission gate. Every built-in tool call now suspends the turn and asks, using
-  the same authority, the same risk labels, the same dialogs and the same audit
-  trail as every other agent.
-- **A harness that cannot ask for permission is refused.** Rather than run it with
-  weaker enforcement, Limboo declines to start it and says so. This is not
-  theoretical: the Codex adapter reports that it cannot request approval for its
-  shell tool, so it is registered as unavailable with the reason shown rather than
-  offered and then failing.
-- **The harness setup step asks first.** Preparing a harness for its first run
-  downloads its agent CLI, which is the only time Limboo reaches the network
-  outside talking to your agent and fetching contributor avatars. The exact
-  commands are read from the adapter and shown to you for approval once, and the
-  approval is tied to those commands — if a later version changes them, you are
-  asked again. Without approval the run does not start.
-- **Credentials are passed through, never stored.** A harness receives an API key
-  only if your own environment already has one, from an explicitly named list.
-  Nothing is written to settings, accepted over the app's internal channels, put
-  on a command line, or logged. A gap in log redaction that could have printed
-  those variables is closed.
-- **Reads on the harness path cannot be gated, and the setting says so.** The
-  underlying runtime allows built-in file reads unconditionally, so
-  "auto-approve reads" has no effect there. Rather than leave a control that looks
-  like it works, the setting explains the limitation.
-
-### Known limitations
-
-- **Beta builds are not released builds.** Features may change or be removed
-  before release. Settings and session data move forward but not back, so a build
-  made after this one may not read data this one wrote. Keep a stable install for
-  work you cannot repeat.
 - **The harness path is off by default.** Claude Code and Cursor continue to run
   through their own integrations. Turn the harness on in Settings › Agent ›
   Harnesses if you want to try it; you will be asked to approve its setup step

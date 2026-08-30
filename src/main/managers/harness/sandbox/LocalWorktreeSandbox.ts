@@ -21,11 +21,14 @@
  * would therefore put the agent in `<worktree>/claude-code-<id>/` — an empty
  * folder inside the repo, not the repo.
  *
- * Hence `defaultWorkingDirectory` is the worktree's PARENT and the caller
- * passes `workDir = basename(worktree)`, so the join lands exactly on the
- * worktree root. A pleasant side effect: the adapter's bootstrap directory is
- * placed under the parent, i.e. a SIBLING of the worktree, so the bridge's
- * own files never appear in `git status`.
+ * Hence `defaultWorkingDirectory` is a Limboo-owned STATE ROOT under userData
+ * and the caller passes `workDir = basename(worktree)`, which that root holds
+ * as a link to the real worktree — so the join lands exactly on the worktree
+ * while the adapter's own `.harness-bootstrap` / `.agent-runs` directories
+ * stay inside userData and never appear in `git status`. See `stateRoot.ts`
+ * for why the link has to be real on disk and why the worktree's plain PARENT
+ * is not good enough (a non-worktree session's parent is the user's own
+ * projects directory).
  *
  * ── What is guarded, and why each guard exists ───────────────────────────
  *  - Every path resolves through {@link resolvePath}: canonicalized, confined
@@ -50,6 +53,7 @@ import { augmentedPath } from '../toolchain';
 import { resolveJail } from './jail';
 import { patchBootstrapFile } from './patchBridge';
 import { assertLoopbackOnly, reserveLoopbackPort, type PortReservation } from './ports';
+import { canFallBackToParent, prepareStateRoot } from './stateRoot';
 
 /** Everything the provider needs, injected — never a manager reference. */
 export interface LocalSandboxDeps {
@@ -60,14 +64,29 @@ export interface LocalSandboxDeps {
   /** This session's attachment staging dir, mounted read-only when present. */
   attachmentsDirFor?(sessionId: string): string | undefined;
   /**
-   * Credential env var NAMES the active harness needs (never values).
+   * Credential env var NAMES the harness that will actually run needs (never
+   * values).
    *
    * Each is forwarded to the child only when already present in the host
    * environment. Limboo stores no provider credential — this exists so a user
    * whose shell has `ANTHROPIC_API_KEY` can authenticate, without the app ever
    * holding, echoing or persisting the value.
+   *
+   * Takes the SESSION, because the harness follows the MODEL rather than
+   * `settings.agent.harness.id` — that field is only the choice for Anthropic
+   * models, where a harness and the direct SDK path both exist. Reading it
+   * unconditionally handed a Codex or Pi run Claude's key names and none of
+   * its own, so those runs could never authenticate.
    */
-  envKeysFor?(): readonly string[];
+  envKeysFor?(sessionId: string): readonly string[];
+  /**
+   * Limboo's worktree root (`{userData}/worktrees` by default).
+   *
+   * Consulted only to decide whether a session may fall back to
+   * `path.dirname(root)` when the state-root link cannot be created — see
+   * `stateRoot.ts` `canFallBackToParent`.
+   */
+  worktreeRoot(): string;
   /** Structured diagnostics (already-redacted detail only). */
   diag?(severity: 'debug' | 'info' | 'warning' | 'error', label: string, detail?: string): void;
 }
@@ -75,7 +94,7 @@ export interface LocalSandboxDeps {
 /**
  * The adapter state directories permitted as SIBLINGS of the worktree.
  *
- * Third-party constants, verified in @ai-sdk/harness-claude-code@1.0.80:
+ * Third-party constants, re-verified in @ai-sdk/harness-claude-code@1.0.94:
  * `BOOTSTRAP_DIR = ".harness-bootstrap/claude-code"` and the per-session
  * `.agent-runs/<sessionId>/bridge`, both resolved against the sandbox's
  * `defaultWorkingDirectory`. Kept as literals rather than a prefix rule so a
@@ -211,7 +230,7 @@ class LocalSandboxSession {
     // worktree (slugs come from `sanitizeBranchName`, which cannot emit a
     // leading dot). The crown-jewel loop above already ran unconditionally, so
     // nothing here can reach a protected file. Both names are third-party
-    // constants verified in @ai-sdk/harness-claude-code@1.0.80 — an upgrade
+    // constants re-verified in @ai-sdk/harness-claude-code@1.0.94 — an upgrade
     // that renames them fails loudly at the first write rather than silently
     // writing somewhere else.
     const realState = realpathNearest(this.defaultWorkingDirectory);
@@ -233,6 +252,39 @@ class LocalSandboxSession {
       }
     }
     throw new Error('Refused: path is outside the session workspace.');
+  }
+
+  /**
+   * Resolve a WORKING DIRECTORY for a spawned command.
+   *
+   * Everything {@link resolvePath} permits, plus the state root itself. That
+   * one addition is what makes the harness bootstrap possible at all: the
+   * framework's `applyBootstrapRecipe` runs `mkdir -p "$BOOTSTRAP_DIR"` with
+   * `workingDirectory` set to `defaultWorkingDirectory`, and `resolvePath`
+   * refused it — its state-dir carve-out admits `<state>/.harness-bootstrap/…`
+   * but not `<state>`, because `path.relative(state, state)` is `''` and an
+   * empty first segment is in no allow-list. So the very first command of the
+   * one-time setup failed, every time, with "path is outside the session
+   * workspace" — which is how a harness that had been "installed" for months
+   * had never once completed its install.
+   *
+   * Kept SEPARATE from `resolvePath` rather than widening it: file I/O must go
+   * on refusing this directory, so the harness cannot read or write the state
+   * root's own entries (a sibling session's `.agent-runs`, say) through the
+   * file API.
+   *
+   * It grants no reach that did not already exist. A cwd is not file access,
+   * and these guards cover the file-I/O API rather than shell commands — a
+   * command already launched with `cwd = worktree` can `cd ..` on its own. The
+   * layer that would contain a shell command is the OS jail, which `jail.ts`
+   * documents as a deliberate no-op today.
+   */
+  private resolveCwd(p: string): string {
+    const abs = path.isAbsolute(p) ? path.resolve(p) : path.resolve(this.worktree, p);
+    if (realpathNearest(abs) === realpathNearest(this.defaultWorkingDirectory)) {
+      return this.defaultWorkingDirectory;
+    }
+    return this.resolvePath(p, false);
   }
 
   /* ---------------------------------------------------------------- */
@@ -320,7 +372,17 @@ class LocalSandboxSession {
     workingDirectory?: string;
     env?: Record<string, string>;
   }): ReturnType<typeof spawn> {
-    const cwd = o.workingDirectory ? this.resolvePath(o.workingDirectory, false) : this.worktree;
+    const cwd = o.workingDirectory ? this.resolveCwd(o.workingDirectory) : this.worktree;
+    // Hand the reserved bridge port over to whatever is about to run.
+    //
+    // `reserveLoopbackPort` HOLDS its listener open on purpose — that is what
+    // closes the probe-then-race window a plain "find a free port" helper
+    // leaves. But the harness bridge binds that same port itself, so the hold
+    // has to end before any child starts or the bridge dies with EADDRINUSE
+    // (see the third rejected option in patchBridge.ts's header). Releasing
+    // here, at the last instant before `spawn`, keeps the window as narrow as
+    // it can be while still letting the bridge bind.
+    this.releasePortReservations();
     const [shellCmd, shellFlag] =
       process.platform === 'win32' ? [process.env.COMSPEC || 'cmd.exe', '/d/s/c'] : ['/bin/sh', '-c'];
     const argv = [...this.jail.argv, shellCmd, shellFlag, o.command];
@@ -390,18 +452,55 @@ class LocalSandboxSession {
   /* Ports / lifecycle                                                 */
   /* ---------------------------------------------------------------- */
 
-  readonly getPortUrl = async (o: {
-    port: number;
-    protocol?: 'http' | 'https' | 'ws';
-  }): Promise<string> => {
-    // ALWAYS loopback. This is the URL the adapter opens its control channel
-    // on, so it is also the last place a non-local host could sneak in.
+  /**
+   * ALWAYS loopback. This is the URL the adapter opens its control channel on,
+   * so it is also the last place a non-local host could sneak in — hence the
+   * exposure check AND the runtime `assertLoopbackOnly` assertion, both of
+   * which every port accessor shares by going through here.
+   *
+   * `https` deliberately resolves to `http`: there is no certificate for
+   * 127.0.0.1 and nothing to protect in transit on a loopback socket the
+   * bridge token already authenticates.
+   */
+  private async loopbackUrl(o: { port: number; protocol?: 'http' | 'https' | 'ws' }): Promise<string> {
     if (!this.ports.includes(o.port)) {
       throw new Error(`Port ${o.port} is not exposed by this sandbox.`);
     }
     await assertLoopbackOnly(o.port);
-    return `${o.protocol === 'ws' ? 'ws' : o.protocol === 'https' ? 'http' : 'http'}://127.0.0.1:${o.port}`;
-  };
+    return `${o.protocol === 'ws' ? 'ws' : 'http'}://127.0.0.1:${o.port}`;
+  }
+
+  /**
+   * The port accessor the adapter actually calls.
+   *
+   * The adapter reaches for `getPortEndpoint` — not the deprecated
+   * `getPortUrl` — at both its attach and its fresh-spawn paths. At 1.0.80 it
+   * called it UNCONDITIONALLY and had no fallback, so implementing only
+   * `getPortUrl` meant every claude-code run died with a TypeError the moment
+   * its bridge came up. 1.0.94 feature-detects instead
+   * (`'getPortEndpoint' in sandboxSession`), which turns that crash into a
+   * silent downgrade to the deprecated path — so this is still the method that
+   * decides which branch a run takes, and it is now the one that keeps the
+   * provider on the supported side of a deprecation.
+   *
+   * Both stay: the interface still declares `getPortUrl`, and a future adapter
+   * may call either.
+   *
+   * `headers` is deliberately absent. It exists on the interface for providers
+   * that gate a public tunnel with an auth header; a loopback socket has
+   * nothing to add, and inventing one would be a claim about a protection that
+   * is not there.
+   */
+  readonly getPortEndpoint = async (o: {
+    port: number;
+    protocol?: 'http' | 'https' | 'ws';
+  }): Promise<{ url: string }> => ({ url: await this.loopbackUrl(o) });
+
+  /** @deprecated by the framework; kept because the interface still declares it. */
+  readonly getPortUrl = async (o: {
+    port: number;
+    protocol?: 'http' | 'https' | 'ws';
+  }): Promise<string> => this.loopbackUrl(o);
 
   readonly setPorts = async (ports: readonly number[]): Promise<void> => {
     // Full-replacement semantics per the interface contract.
@@ -424,12 +523,33 @@ class LocalSandboxSession {
     }
   };
 
-  /** Reserve a loopback port for the bridge and expose it. */
+  /**
+   * Reserve a loopback port for the bridge and EXPOSE it.
+   *
+   * The exposure half is the point. A bridge-backed adapter reads
+   * `sandboxSession.ports[0]` to decide where its bridge should listen, and
+   * refuses the whole run when the array is empty
+   * (`HarnessCapabilityUnsupportedError: "The claude-code harness needs a TCP
+   * port exposed by the sandbox."`). This method existed and had no caller, so
+   * `ports` was always `[]` and no bridge-backed harness could ever start.
+   */
   async allocatePort(): Promise<PortReservation> {
     const res = await reserveLoopbackPort();
     this.reservations.set(res.port, res);
     this.ports.push(res.port);
     return res;
+  }
+
+  /**
+   * Drop the holding listeners while KEEPING the ports exposed.
+   *
+   * `ports` is what the adapter reads; `reservations` is only how we held them
+   * against the rest of the machine until something was ready to bind. See the
+   * call site in {@link launch}.
+   */
+  private releasePortReservations(): void {
+    for (const res of this.reservations.values()) res.release();
+    this.reservations.clear();
   }
 
   readonly setNetworkPolicy = async (policy: unknown): Promise<void> => {
@@ -465,8 +585,7 @@ class LocalSandboxSession {
     this.stopped = true;
     for (const child of this.children) killTree(child, KILL_GRACE_MS);
     this.children.clear();
-    for (const res of this.reservations.values()) res.release();
-    this.reservations.clear();
+    this.releasePortReservations();
     this.ports.length = 0;
   };
 
@@ -519,18 +638,57 @@ export class LocalWorktreeSandboxProvider {
 
     const session = new LocalSandboxSession(
       sessionId,
-      // The worktree's PARENT — the framework appends a subdirectory. See the
-      // working-directory note in the module header.
-      path.dirname(root),
+      // A Limboo-owned state root under userData that holds a link to the
+      // worktree — the framework appends a subdirectory to this. See the
+      // working-directory note in the module header and `stateRoot.ts`.
+      this.stateRootFor(root),
       root,
       this.deps.resolveSandbox(sessionId, root),
       this.deps.attachmentsDirFor?.(sessionId),
-      this.deps.envKeysFor?.() ?? [],
+      this.deps.envKeysFor?.(sessionId) ?? [],
       this.deps.diag ?? ((): void => undefined),
     );
+    // Expose a loopback port BEFORE the adapter reads `ports`. A bridge-backed
+    // harness refuses the run outright when the array is empty, so this is not
+    // an optimisation — it is what makes such a harness startable at all.
+    await session.allocatePort();
     this.sessions.set(sessionId, session);
     return session;
   };
+
+  /**
+   * The directory this provider reports as `defaultWorkingDirectory`.
+   *
+   * Normally `{userData}/harness-state/<bucket>`, with a link to the execution
+   * root inside it (see `stateRoot.ts`). If the link cannot be created, fall
+   * back to the worktree's parent ONLY when that parent is already inside
+   * Limboo's worktree root — which is what shipped before and is still under
+   * userData. For a plain session the parent is the user's own projects
+   * directory, so writing adapter state there is refused instead: littering
+   * `.harness-bootstrap/` beside somebody's repository is not a degraded mode,
+   * it is the failure this whole arrangement exists to prevent.
+   */
+  private stateRootFor(root: string): string {
+    try {
+      return prepareStateRoot(root).stateRoot;
+    } catch (err) {
+      const detail = err instanceof Error ? err.message : String(err);
+      if (canFallBackToParent(root, this.deps.worktreeRoot())) {
+        this.deps.diag?.(
+          'warning',
+          'Harness state root unavailable; using the worktree parent',
+          detail,
+        );
+        return path.dirname(root);
+      }
+      throw new Error(
+        'Limboo could not prepare a private directory for the agent harness, and ' +
+          'this session is not worktree-backed — so the harness would have to write ' +
+          'its runtime beside your repository. Create a worktree for this session, ' +
+          `or fix the state directory. Reason: ${detail}`,
+      );
+    }
+  }
 
   readonly resumeSession = async (options: { sessionId: string }): Promise<LocalSandboxSession> => {
     const found = this.sessions.get(options.sessionId);

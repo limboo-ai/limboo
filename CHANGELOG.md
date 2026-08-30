@@ -7,6 +7,58 @@ All notable changes to Limboo are documented here. The format is based on
 
 ## [Unreleased]
 
+## [1.20.0] - 2026-08-31
+
+Limboo 1.20.0 makes the agent harness actually run. 1.19.0 repaired its
+packaging; this release fixes the three separate reasons a run still could not
+start, gives harness conversations memory between prompts, and moves the
+harness runtime somewhere it belongs.
+
+### Fixed
+
+- **The harness could not start a run at all — for three independent reasons.**
+  Its one-time setup was refused by Limboo's own path guard on its very first
+  command, so the install could never begin. No network port was ever handed to
+  the agent bridge, which the harness requires and refuses to start without. And
+  the method the adapter uses to reach that bridge was missing, so a run that got
+  past the first two failed the moment the bridge came up. Each of these was
+  enough on its own; all three are fixed, and the setup now completes.
+- **Setup failures were retried forever instead of being reported.** A refusal
+  that mentioned the network — such as the sandbox network policy blocking the
+  download — was mistaken for a dropped connection and retried, though the same
+  setting would produce it again immediately. Refusals are now recognised for
+  what they are and reported once, with the reason.
+- **A failed setup command said nothing useful.** If one of the approved commands
+  ran and failed — a large download timing out is enough — it surfaced as a
+  generic failed run. It now reports what failed and what the tool itself said to
+  do about it, and is not retried: the package manager records the install as
+  complete even when part of it failed, so re-running it fails identically.
+- **Every prompt started a new conversation, and left a process behind.** Each
+  turn opened a fresh harness session without ending the previous one, so the
+  agent forgot the turn before and one background process accumulated per prompt.
+- **Non-Anthropic harnesses could never authenticate.** They were handed
+  Anthropic's credential variable names instead of their own, because the
+  credential lookup read the configured harness rather than the one the selected
+  model actually runs on.
+
+### Changed
+
+- **The harness keeps its runtime inside Limboo's own data directory.** It used
+  to be placed next to your worktree, which is Limboo-owned for a session with a
+  worktree — but a session without one is rooted at your repository, so its
+  runtime landed beside your project folder. It now always lives under Limboo's
+  application data, never in your repository and never next to it. Existing
+  installs will re-run the one-time setup once, in the new location.
+- **The setup panel says where the commands run.** It listed the two commands and
+  nothing else, so copying them into a terminal was the obvious thing to try —
+  and it fails, because the lockfile they install from is written into the setup
+  directory first. The panel now names that directory and the files placed in it.
+  Your existing approval still stands: the commands themselves have not changed.
+- **The agent harness packages were updated** (`@ai-sdk/harness` 1.0.91,
+  `@ai-sdk/harness-claude-code` 1.0.94). Every assumption Limboo makes about
+  their internals — where the runtime is installed, how the bridge binds, which
+  harnesses can be permission-gated — was re-checked against the new versions.
+
 ## [1.19.0] - 2026-08-30
 
 Limboo 1.19.0 repairs the agent harness, which could not install itself in any

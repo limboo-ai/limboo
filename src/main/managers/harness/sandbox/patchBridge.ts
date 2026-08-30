@@ -31,7 +31,7 @@
  * either one into a warning.
  */
 
-/** The exact literal the adapter ships. Verified in 1.0.80 (exactly one site). */
+/** The exact literal the adapter ships. Re-verified in 1.0.94 (exactly one site). */
 const BIND_ALL = /host:\s*(["'])0\.0\.0\.0\1/g;
 const LOOPBACK = 'host: "127.0.0.1"';
 
