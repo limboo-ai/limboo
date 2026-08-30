@@ -11,6 +11,12 @@ import { WORKSPACE_LIMITS } from '@shared/constants';
 import type { DeepPartial, Workspace, WorkspaceConfig, WorkspaceStats } from '@shared/types';
 import { handle } from './registry';
 import { WorkspaceManager, WorkspaceValidationError } from '../managers/WorkspaceManager';
+import type { SessionManager } from '../managers/SessionManager';
+import type { WorktreeManager } from '../managers/worktree/WorktreeManager';
+import type { ServiceManager } from '../managers/services/ServiceManager';
+import type { TerminalManager } from '../managers/TerminalManager';
+import type { AttachmentManager } from '../managers/attachments/AttachmentManager';
+import { purgeSessionCompletely } from './sessionTeardown';
 import { logger } from '../logger';
 
 const FORBIDDEN_KEYS = ['__proto__', 'constructor', 'prototype'];
@@ -126,7 +132,14 @@ function rethrow(err: unknown): never {
 /** True while a native directory picker is open (see the pickDirectory handler). */
 let pickerOpen = false;
 
-export function registerWorkspaceHandlers(workspace: WorkspaceManager): void {
+export function registerWorkspaceHandlers(
+  workspace: WorkspaceManager,
+  sessions: SessionManager,
+  worktrees: WorktreeManager,
+  services: ServiceManager,
+  terminals: TerminalManager,
+  attachments: AttachmentManager,
+): void {
   handle<[], Workspace[]>(IpcChannels.workspaceList, () => workspace.list());
 
   handle<[], Workspace | null>(IpcChannels.workspaceGet, () => workspace.getActive());
@@ -207,8 +220,42 @@ export function registerWorkspaceHandlers(workspace: WorkspaceManager): void {
     return workspace.switch(id);
   });
 
-  handle<[string, boolean?], void>(IpcChannels.workspaceRemove, (_e, id, deleteFiles) => {
+  /**
+   * Remove a workspace and everything scoped to it.
+   *
+   * The cross-manager choreography lives HERE rather than inside
+   * `WorkspaceManager`, which owns only its own tables — the same split
+   * `session:delete` / `session:purge` already use. Sessions come down first
+   * through the shared teardown (worktree, services, PTYs, attachments, rows),
+   * because a PTY holding a cwd inside a worktree keeps `git worktree remove`
+   * failing with EBUSY on Windows. Only then are the workspace's own rows swept.
+   *
+   * A session that will not tear down is logged and skipped, not fatal: one
+   * stuck worktree must not make an entire workspace permanently unremovable.
+   * `WorkspaceManager.remove` sweeps `sessions` last as the backstop.
+   */
+  handle<[string, boolean?], void>(IpcChannels.workspaceRemove, async (_e, id, deleteFiles) => {
     assertValidId(id);
+    if (!workspace.getById(id)) return;
+    const deps = { sessions, worktrees, services, terminals, attachments };
+    // Trashed sessions own worktrees and staged files too — a recoverable
+    // session whose workspace is gone is not recoverable, so it purges as well.
+    const owned = [...sessions.list(id), ...sessions.listTrash(id)];
+    for (const session of owned) {
+      try {
+        await purgeSessionCompletely(deps, session.id);
+      } catch (err) {
+        logger.warn(`workspace:remove could not purge session ${session.id}`, err);
+      }
+    }
+    // Terminals not owned by any session (workspace-scoped shells) outlive the
+    // loop above. `disposeWorkspace` has existed for exactly this and was never
+    // called by anything.
+    try {
+      terminals.disposeWorkspace(id);
+    } catch (err) {
+      logger.warn('workspace:remove terminal cleanup failed', err);
+    }
     workspace.remove(id, deleteFiles === true);
   });
 

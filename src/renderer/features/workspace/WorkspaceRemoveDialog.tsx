@@ -8,11 +8,12 @@
  * Matches the app modal idiom (centered overlay, `bg-elevated`, pop-in). Dark
  * only — no theme toggle, no gradients.
  */
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { AlertTriangle, X } from 'lucide-react';
 import type { Workspace } from '@shared/types';
 import { WorkspaceIconBadge } from './WorkspaceIconBadge';
 import { useWorkspaceStore } from '@/renderer/stores/useWorkspaceStore';
+import { useUIStore } from '@/renderer/stores/useUIStore';
 
 export function WorkspaceRemoveDialog({
   workspace,
@@ -22,25 +23,44 @@ export function WorkspaceRemoveDialog({
   onClose: () => void;
 }) {
   const remove = useWorkspaceStore((s) => s.remove);
+  const addToast = useUIStore((s) => s.addToast);
+  // Removal is genuinely slow now: it tears down each session's worktree,
+  // services and PTYs before touching the database. Without a pending state the
+  // dialog looks frozen and invites a second click on a destructive action.
+  const [removing, setRemoving] = useState(false);
 
-  // Close on Escape for keyboard parity with the rest of the app.
+  // Close on Escape for keyboard parity with the rest of the app — but not
+  // mid-removal, when there is nothing to cancel.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
+      if (e.key === 'Escape' && !removing) onClose();
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [onClose]);
+  }, [onClose, removing]);
 
   const confirm = async () => {
-    await remove(workspace.id);
-    onClose();
+    if (removing) return;
+    setRemoving(true);
+    try {
+      await remove(workspace.id);
+      onClose();
+    } catch (err) {
+      setRemoving(false);
+      addToast({
+        title: 'Could not remove workspace',
+        description: err instanceof Error ? err.message : String(err),
+        tone: 'danger',
+      });
+    }
   };
 
   return (
     <div
       className="animate-fade-in fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-6"
-      onMouseDown={onClose}
+      onMouseDown={() => {
+        if (!removing) onClose();
+      }}
     >
       <div
         className="animate-pop-in flex w-full max-w-md flex-col overflow-hidden rounded-md border border-line-strong bg-elevated shadow-2xl"
@@ -84,16 +104,18 @@ export function WorkspaceRemoveDialog({
           <button
             type="button"
             onClick={onClose}
-            className="rounded-md border border-line bg-surface-2 px-3 py-1.5 text-[12px] font-medium text-fg transition-colors hover:border-line-strong"
+            disabled={removing}
+            className="rounded-md border border-line bg-surface-2 px-3 py-1.5 text-[12px] font-medium text-fg transition-colors hover:border-line-strong disabled:opacity-40"
           >
             Cancel
           </button>
           <button
             type="button"
             onClick={confirm}
-            className="rounded-md bg-danger px-3 py-1.5 text-[12px] font-semibold text-base transition-opacity hover:opacity-90"
+            disabled={removing}
+            className="rounded-md bg-danger px-3 py-1.5 text-[12px] font-semibold text-base transition-opacity hover:opacity-90 disabled:opacity-60"
           >
-            Remove from Limboo
+            {removing ? 'Removing…' : 'Remove from Limboo'}
           </button>
         </div>
       </div>

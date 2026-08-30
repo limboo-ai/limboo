@@ -22,6 +22,63 @@ export interface ReleaseNotesEntry {
 /** Newest first. */
 export const RELEASE_NOTES: ReleaseNotesEntry[] = [
   {
+    version: '1.19.0',
+    date: '2026-08-30',
+    markdown: `Limboo 1.19.0 repairs the agent harness, which could not install itself in any
+packaged build, and gives workspaces a way out of the app.
+
+### Fixed
+
+- **The harness could never complete its one-time setup.** Packaging stripped
+  every \`pnpm-lock.yaml\` in the tree — a rule meant for the project's own
+  lockfile that also removed one the harness adapter reads at runtime. Without
+  it the adapter could not describe its setup step, so runs died with
+  \`ENOENT … not found in app.asar\` and Settings reported the harness needed no
+  setup at all. The adapters' bridge assets now ship, and the project's own
+  lockfiles are still excluded.
+- **A harness that could not describe its setup ran anyway, ungated.** "This
+  adapter installs nothing" and "this adapter could not say what it installs"
+  were the same value internally, and the second silently skipped the approval
+  gate, the sandbox network check and the prerequisite check along with it. They
+  are now different states: the run is refused, and Settings says why instead of
+  claiming there is nothing to approve.
+- **The setup panel contradicted itself.** It described an install that needed
+  your approval and, immediately below, said no setup was needed. Five different
+  conditions — including a request still in flight and an outright failure —
+  collapsed into that one sentence. Each now reports itself, and a failed request
+  no longer reads as an absence of work.
+- **Removing a workspace left almost everything behind.** Only the workspace's
+  own record was deleted; its sessions, memories, search index, checkpoints,
+  work-graph nodes and MCP entries stayed in the database permanently, since a
+  re-added folder is issued a new id and can never reclaim them. Removal now
+  clears all of it in one transaction, after tearing down each session's
+  worktree, services and terminals — which is what the confirmation dialog had
+  been promising all along. Global, non-workspace data is untouched.
+
+### Added
+
+- **Workspaces can be removed from the title-bar switcher.** Removal existed only
+  in the launcher, which appears when no workspace is open — so once you opened
+  one there was no way to remove any. Each row in the dropdown now has a remove
+  control, with the same confirmation dialog and the same guarantee that your
+  project folder on disk is never touched.
+- **Missing setup prerequisites are named before you approve, not after a run
+  fails.** The check also stopped assuming pnpm: it reads whichever tools the
+  adapter's own commands invoke, so an adapter that bootstraps with yarn, bun or
+  corepack is checked just as precisely. Limboo still never substitutes one tool
+  for another — the commands you approve are the commands that run.
+- **Tools installed in a user directory are found again.** An app started from a
+  desktop launcher inherits a much smaller \`PATH\` than a shell, so an installed
+  pnpm, bun or nvm-managed Node could be reported missing. Setup now also looks
+  where those install themselves.
+
+### Changed
+
+- **The title bar shows the workspace name alone.** The initials badge in front
+  of it repeated what the name already said. It remains in the launcher and the
+  remove dialog, where a workspace has to be picked out of a set at a glance.`,
+  },
+  {
     version: '1.18.2',
     date: '2026-08-13',
     markdown: `### Fixed
@@ -305,86 +362,6 @@ installing it over a working copy.
   message, so this is deliberate until the resume format is handled properly.
 - **Codex is unavailable.** Its adapter cannot ask for permission before running
   shell commands. It is listed with that reason rather than hidden.`,
-  },
-  {
-    version: '1.17.0',
-    date: '2026-08-01',
-    markdown: `Plan Mode now stops. A plan waits for your decision instead of sliding into
-implementation, and the plan you are shown is the plan the agent actually wrote —
-which, until this release, it very often was not. Git also becomes a platform
-service in its own right, so repository work reads as part of the conversation
-rather than something that happened in a side panel.
-
-### Added
-
-- **Plan approval is a real stop, not a prompt.** When the agent presents a plan,
-  execution halts: no further model calls, no new prompts, no background work,
-  and every tool is refused until you decide. Approving continues the same turn
-  rather than starting a new one, so the agent keeps everything it had learned
-  while planning. Approve, Approve & accept edits, Keep planning, Reject and
-  Archive are the only things that move it forward.
-- **Keep planning now sends feedback.** Instead of discarding the plan and
-  starting over, it hands your notes to the agent, which revises and presents
-  again — same conversation, same context.
-- **Plans are versioned.** A session has one plan; refinements replace it and the
-  previous text moves into History. Two windows on the same session can no longer
-  approve different plans, and a plan that changed while you were reading it says
-  so rather than acting on the stale copy.
-- **A pending plan survives a restart.** Quit with a plan awaiting approval and it
-  is still there on relaunch, with its buttons live and implementation still
-  locked. Approving after a restart starts a fresh run carrying the plan text,
-  because the paused conversation cannot outlive the process.
-- **Git is a platform service.** Repository actions post structured entries into
-  the conversation carrying the paths, commit and checkpoint behind them, with
-  Open Diff, View Commit, Restore Checkpoint and Copy Command on each.
-- **Optional GitHub CLI integration.** If \`gh\` is installed and signed in, a
-  GitHub sub-tab lists pull requests and issues, and the agent can read them
-  through the tools it already has. Limboo stores no GitHub credential —
-  authentication stays the CLI's. Posting a comment is gated and shows the exact
-  body first.
-- **Contributor avatars in history**, fetched in the main process and embedded so
-  no page ever requests a remote image. Behind \`git.avatars.enabled\`, which is
-  off-limits by default in the sense that turning it on is the thing that tells
-  GitHub which repository you are browsing — the setting says so.
-
-### Changed
-
-- **The integrated terminal is its own column** between the conversation and the
-  drawer, instead of competing for the drawer with Files and Changes.
-- **The Activity and Hooks drawer panels are gone.** The Hook Engine, its audit
-  log and every hook setting are untouched — only the two panels and the IPC they
-  were the sole consumers of were removed.
-- **Switching sessions is now an ordered handover.** Worktree, file watcher, git
-  status, search index, memory scope, MCP and the agent are rebound in sequence,
-  and a thin ribbon says so while it happens. Switching quickly between sessions
-  cancels the stale work rather than letting it finish over the newer session.
-
-### Fixed
-
-- **The plan you approved was usually empty.** Current Claude releases write the
-  plan to a file and pass no plan text to the tool Limboo was reading, so almost
-  every captured plan was blank — and because the tool was blocked, no plan file
-  was produced either. Approving then sent an empty plan, the agent re-derived
-  the work from scratch, and the empty plan was filed as completed. Limboo now
-  tells the agent where to write its plan and reads it from there, with the
-  agent's own copy taking over once the plan is approved.
-- **Starting a new plan could silently destroy the one you were reviewing** when
-  plan history was turned off. A pending plan is never discarded without being
-  filed first, and starting a second plan while one awaits approval is refused.
-- **A failed or cancelled planning run reported itself as "rejected"**, which is
-  what the app says when a person declines a plan. Those now read as ended, with
-  the reason recorded, so declining and crashing no longer look identical.
-- **An unrelated prompt could mark a stalled plan complete.** Only the run that
-  was actually released to implement a plan can finish it.
-- **Live planning progress replayed the previous attempt's steps** after asking
-  for a new plan, because it measured from when the plan first existed rather
-  than when the current attempt started.
-- **Deleting a session left its plan revisions behind** in the database.
-- **A machine without git looked like a folder without a repository**, and the app
-  offered to initialise one — an action that could never succeed. Limboo now
-  detects the missing binary and names the install command for your platform.
-- **Settings could be hand-edited into a dead drawer tab or an unbounded panel
-  width**; both are now validated and clamped on load.`,
   },
 ];
 

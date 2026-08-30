@@ -24,6 +24,7 @@ import type {
 import type { PlanDecisionKind } from '@shared/plan';
 import { isPlanDecisionKind } from '@shared/plan';
 import type { AgentManager } from '../managers/AgentManager';
+import { harnessById } from '../managers/agent/harnessRegistry';
 import { handle } from './registry';
 
 const FORBIDDEN_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
@@ -102,14 +103,26 @@ export function registerAgentHandlers(agent: AgentManager): void {
   handle<[], AgentInstall>(IpcChannels.agentGetInstall, () => agent.getInstall());
 
   /**
-   * The active harness's one-time setup plan, for the consent dialog.
+   * A harness's one-time setup plan, for the consent dialog.
    *
-   * Read-only and secret-free: command strings and file names the adapter
-   * itself declares. Approving is an ordinary settings write of the returned
-   * fingerprint, so no channel here can grant anything.
+   * Read-only and secret-free: command strings, file names and prerequisite tool
+   * names the adapter itself declares. Approving is an ordinary settings write
+   * of the returned fingerprint, so no channel here can grant anything.
+   *
+   * `harnessId` is optional and validated against the registry before it reaches
+   * the manager — a renderer must not be able to name an arbitrary module
+   * specifier for `loadHarness` to dynamic-import.
    */
-  handle<[], HarnessBootstrapInfo>(IpcChannels.agentHarnessBootstrapPlan, () =>
-    agent.harnessBootstrapPlan(),
+  handle<[string?], HarnessBootstrapInfo>(
+    IpcChannels.agentHarnessBootstrapPlan,
+    (_event, harnessId) => {
+      if (harnessId !== undefined) {
+        if (typeof harnessId !== 'string' || !harnessById(harnessId)) {
+          throw new Error('agent:harnessBootstrapPlan: unknown harness id');
+        }
+      }
+      return agent.harnessBootstrapPlan(harnessId);
+    },
   );
 
   handle<[], AgentState>(IpcChannels.agentGetState, () => agent.getState());

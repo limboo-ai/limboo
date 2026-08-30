@@ -147,7 +147,7 @@ export const HARNESSES: readonly HarnessDescriptor[] = [
       'AI_GATEWAY_BASE_URL',
     ],
     capabilities: {
-      // VERIFIED FALSE in @ai-sdk/harness-codex@1.0.67: the adapter declares
+      // VERIFIED FALSE in @ai-sdk/harness-codex@1.0.79: the adapter declares
       // `supportsBuiltinToolApprovals: false`, so its `bash` tool would run with
       // Limboo's permission gate bypassed. It is therefore refused at preflight
       // and given no selectable model. Flip this — and add a model — only after

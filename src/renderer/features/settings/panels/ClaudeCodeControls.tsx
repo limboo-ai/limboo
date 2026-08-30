@@ -11,11 +11,23 @@
  * consent surface that shows something other than what will run is worse than
  * no consent surface. Approving stores a fingerprint of those exact commands,
  * so an adapter upgrade that changes them asks again.
+ *
+ * EVERY BRANCH BELOW MAKES A DIFFERENT CLAIM, and they used to be one. The
+ * "installs nothing" line was the else-leg of a single ternary, so it also
+ * rendered for a request still in flight, a rejected IPC, a different harness
+ * being selected, and an adapter that threw while describing itself — the last
+ * of which shipped, and printed "This harness needs no setup step." directly
+ * under a paragraph describing the setup step. Keep the states apart.
  */
 import { useEffect, useState } from 'react';
 import type { HarnessBootstrapInfo } from '@shared/types';
 import { useSettingsStore } from '@/renderer/stores/useSettingsStore';
 import { ActionButton, Field, StackedField, Toggle } from '../controls';
+
+/** The harness this card describes. Never the globally-selected one. */
+const HARNESS_ID = 'claude-code';
+
+type LoadState = 'idle' | 'loading' | 'ready' | 'failed';
 
 export function ClaudeCodeControls() {
   const harness = useSettingsStore((s) => s.settings.agent.harness);
@@ -24,15 +36,31 @@ export function ClaudeCodeControls() {
     void update({ agent: { harness: { [key]: value } } });
 
   const [info, setInfo] = useState<HarnessBootstrapInfo | null>(null);
-  const [loading, setLoading] = useState(false);
+  const [state, setState] = useState<LoadState>('idle');
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   const load = async (): Promise<void> => {
-    setLoading(true);
+    setState('loading');
+    setLoadError(null);
     try {
-      const next = await window.limboo?.agent?.harnessBootstrapPlan?.();
+      const call = window.limboo?.agent?.harnessBootstrapPlan;
+      if (!call) {
+        // No bridge (a plain browser preview, or a preload that failed to load).
+        // Emphatically not "this harness installs nothing".
+        setInfo(null);
+        setLoadError('The app bridge is unavailable, so the setup step cannot be read.');
+        setState('failed');
+        return;
+      }
+      const next = await call(HARNESS_ID);
       setInfo(next ?? null);
-    } finally {
-      setLoading(false);
+      setState('ready');
+    } catch (err) {
+      // Without this the rejection was unhandled AND the panel fell through to
+      // the "needs no setup step" line — the worst possible reading of a failure.
+      setInfo(null);
+      setLoadError(err instanceof Error ? err.message : String(err));
+      setState('failed');
     }
   };
 
@@ -42,14 +70,21 @@ export function ClaudeCodeControls() {
   useEffect(() => {
     if (harness.legacyClaudeSdk) {
       setInfo(null);
+      setState('idle');
+      setLoadError(null);
       return;
     }
     void load();
     // Re-reads when the stored ack changes so the state reflects an approval.
-  }, [harness.legacyClaudeSdk, harness.bootstrapAck, harness.id]);
+  }, [harness.legacyClaudeSdk, harness.bootstrapAck]);
 
   const plan = info?.plan ?? null;
   const needsAck = !!plan && !info?.acked;
+  const missing = (info?.prerequisites ?? []).filter((p) => !p.found);
+  const busy = state === 'loading';
+  // `planError` is the adapter failing to describe its setup; `error` is the
+  // adapter failing to load; `loadError` is the IPC itself failing.
+  const failure = info?.planError ?? (info && !info.available ? info.error : null) ?? loadError;
 
   return (
     <div className="flex flex-col gap-1">
@@ -69,17 +104,53 @@ export function ClaudeCodeControls() {
         <StackedField
           id="harnessBootstrap"
           label="One-time setup"
-          hint="Before its first session the harness installs the Claude Code CLI into its own directory beside your worktree — never into your repository. This reaches the npm registry from this machine, so it needs your approval once. Review the exact commands below."
+          // The hint renders unconditionally (see StackedField), so it must stay
+          // true in every state below. The sentence describing the npm install
+          // belongs to the plan branch, which is the only place that install is
+          // a fact — putting it here is what made the panel contradict itself.
+          hint="What this harness does once, before its first session — read from the adapter itself, never hardcoded here."
         >
-          {info && !info.available ? (
-            <p className="text-[12px] text-danger">
-              {info.error ?? 'The harness adapter could not be loaded.'}
-            </p>
+          {failure ? (
+            <div className="flex flex-col gap-2">
+              <p className="text-[12px] leading-relaxed text-danger">
+                {info?.planError
+                  ? 'This harness has a setup step but could not describe it, so runs are refused ' +
+                    'until it can. Approving commands Limboo cannot read is not something it will ' +
+                    'ask you to do.'
+                  : 'The harness adapter could not be loaded.'}
+              </p>
+              <p className="break-words font-mono text-[11px] leading-relaxed text-faint">
+                {failure}
+              </p>
+              <div>
+                <ActionButton label={busy ? 'Checking…' : 'Retry'} onClick={() => void load()} />
+              </div>
+            </div>
           ) : plan ? (
             <div className="flex flex-col gap-2">
+              <p className="text-[11px] leading-relaxed text-faint">
+                Before its first session the harness installs the Claude Code CLI into its own
+                directory beside your worktree — never into your repository. This reaches the npm
+                registry from this machine, so it needs your approval once. These are the exact
+                commands that will run.
+              </p>
               <pre className="overflow-x-auto whitespace-pre-wrap break-all rounded-md border border-line bg-surface-2 px-2 py-1.5 font-mono text-[11px] leading-relaxed text-fg">
                 {plan.commands.join('\n\n')}
               </pre>
+              {missing.length > 0 && (
+                <div className="flex flex-col gap-1 rounded-md border border-line bg-surface-2 px-2 py-1.5">
+                  {missing.map((p) => (
+                    <p key={p.tool} className="text-[11px] leading-relaxed text-warning">
+                      <span className="font-mono">{p.tool}</span> is not installed or not on PATH.{' '}
+                      <span className="text-faint">{p.hint}</span>
+                    </p>
+                  ))}
+                  <p className="text-[11px] leading-relaxed text-faint">
+                    You can still approve these commands — approval is consent, not capability —
+                    but the run will be refused until the tool is present.
+                  </p>
+                </div>
+              )}
               <div className="flex items-center gap-1.5">
                 {needsAck ? (
                   <ActionButton
@@ -93,7 +164,7 @@ export function ClaudeCodeControls() {
                     <ActionButton label="Revoke" danger onClick={() => set('bootstrapAck', '')} />
                   </>
                 )}
-                <ActionButton label={loading ? 'Checking…' : 'Recheck'} onClick={() => void load()} />
+                <ActionButton label={busy ? 'Checking…' : 'Recheck'} onClick={() => void load()} />
               </div>
               {needsAck && harness.bootstrapAck !== '' && (
                 <p className="text-[11px] text-warning">
@@ -103,7 +174,9 @@ export function ClaudeCodeControls() {
             </div>
           ) : (
             <p className="text-[12px] text-faint">
-              {loading ? 'Checking…' : 'This harness needs no setup step.'}
+              {state === 'ready'
+                ? 'This harness installs nothing — there is nothing to approve.'
+                : 'Reading the adapter’s setup step…'}
             </p>
           )}
         </StackedField>

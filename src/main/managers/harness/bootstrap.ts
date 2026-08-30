@@ -21,8 +21,9 @@
  */
 import crypto from 'node:crypto';
 import type { EffectiveSandbox } from '../sandbox/policy';
+import { logger } from '../../logger';
 import { HarnessBootstrapBlockedError, HarnessConsentRequiredError } from './errors';
-import { probeCommand } from './probe';
+import { resolveTools } from './toolchain';
 
 /** What the adapter says it will do before the first session. */
 export interface BootstrapPlan {
@@ -41,36 +42,75 @@ interface RawBootstrap {
 }
 
 /**
- * Read the adapter's bootstrap plan, or `null` when it has none.
+ * The outcome of asking an adapter to describe its setup step.
+ *
+ * Three distinct states, deliberately NOT collapsed into `BootstrapPlan | null`.
+ * They used to be: a `getBootstrap()` that threw was caught and reported as
+ * "no plan", which is a different claim entirely, and the `if (plan)` guard in
+ * HarnessRuntime then skipped consent, the network check and the toolchain probe
+ * — a broken adapter ran with every guard disabled while Settings said "this
+ * harness needs no setup step". "Not measured" and "empty" are opposite claims
+ * and must not look alike.
+ */
+export type BootstrapRead =
+  /** The adapter has no setup step at all (Pi exposes no `getBootstrap`). */
+  | { kind: 'none' }
+  /** The adapter described a setup step. */
+  | { kind: 'plan'; plan: BootstrapPlan }
+  /** The adapter HAS a setup step but could not describe it. Fail closed. */
+  | { kind: 'unreadable'; error: string };
+
+/**
+ * Read the adapter's bootstrap plan.
  *
  * A host-process adapter (Pi) may not install anything, in which case there is
- * nothing to consent to and nothing to block on.
+ * nothing to consent to and nothing to block on — that is `none`. An adapter
+ * that HAS a `getBootstrap` but throws from it is `unreadable`, and the caller
+ * must refuse the run: approving commands nobody can read is not something
+ * Limboo can ask a user to do.
  */
-export async function readBootstrapPlan(adapter: unknown): Promise<BootstrapPlan | null> {
+export async function readBootstrapPlan(adapter: unknown): Promise<BootstrapRead> {
   const get = (adapter as { getBootstrap?: () => Promise<RawBootstrap> } | null)?.getBootstrap;
-  if (typeof get !== 'function') return null;
+  if (typeof get !== 'function') return { kind: 'none' };
   let raw: RawBootstrap;
   try {
     raw = await get.call(adapter);
-  } catch {
-    // An adapter that cannot describe its own setup is not one we can ask the
-    // user to approve. Treat as "no plan" and let the run proceed — the
-    // sandbox's own containment is unaffected either way.
-    return null;
+  } catch (err) {
+    // The real-world trigger for this was a packaging bug: the adapter reads its
+    // bridge assets off disk here, and they were being stripped from the asar.
+    // Surfacing the adapter's own message is what makes that diagnosable.
+    return { kind: 'unreadable', error: err instanceof Error ? err.message : String(err) };
   }
   const commands = (raw?.commands ?? [])
     .map((c) => (typeof c?.command === 'string' ? c.command : ''))
     .filter((c) => c.length > 0);
-  if (commands.length === 0) return null;
+  if (commands.length === 0) {
+    // An adapter may legitimately declare files and no commands, so this is not
+    // an error — but it is also how silent shape drift after an upgrade would
+    // present, and that must not pass unnoticed.
+    if ((raw?.commands ?? []).length > 0) {
+      logger.warn(
+        'Harness adapter declared bootstrap commands in an unrecognised shape; treating as no setup step.',
+      );
+    }
+    return { kind: 'none' };
+  }
   const files = (raw?.files ?? [])
     .map((f) => (typeof f?.path === 'string' ? f.path : ''))
     .filter((f) => f.length > 0);
   return {
-    commands,
-    files,
-    // Only the COMMANDS are fingerprinted. File contents change on every
-    // adapter patch release; what the user is consenting to is what executes.
-    fingerprint: crypto.createHash('sha256').update(commands.join('\n')).digest('hex').slice(0, 16),
+    kind: 'plan',
+    plan: {
+      commands,
+      files,
+      // Only the COMMANDS are fingerprinted. File contents change on every
+      // adapter patch release; what the user is consenting to is what executes.
+      fingerprint: crypto
+        .createHash('sha256')
+        .update(commands.join('\n'))
+        .digest('hex')
+        .slice(0, 16),
+    },
   };
 }
 
@@ -114,23 +154,18 @@ export function assertBootstrapPossible(plan: BootstrapPlan, eff: EffectiveSandb
       );
     }
   }
-  // Only assert on a tool the plan actually invokes, so this stays true for a
-  // future adapter with a different setup.
-  for (const [tool, hint] of REQUIRED_TOOLS) {
-    if (!plan.commands.some((c) => c.startsWith(`${tool} `) || c.includes(` ${tool} `))) continue;
-    if (!probeCommand(tool)) {
-      throw new HarnessBootstrapBlockedError(
-        `it runs \`${tool}\`, which is not installed or not on PATH. ${hint}`,
-      );
-    }
+  // Only ever assert on tools the plan ITSELF invokes, derived from the command
+  // strings rather than a hardcoded package-manager list — so an adapter that
+  // bootstraps with yarn, bun or corepack is checked just as precisely. Limboo
+  // never substitutes one tool for another: the approved string is the executed
+  // string, so a missing tool is reported, not worked around.
+  for (const { tool, found, hint } of resolveTools(plan)) {
+    if (found) continue;
+    throw new HarnessBootstrapBlockedError(
+      `it runs \`${tool}\`, which is not installed or not on PATH. ${hint}`,
+    );
   }
 }
-
-/** Command → how the user fixes its absence. */
-const REQUIRED_TOOLS: readonly [string, string][] = [
-  ['pnpm', 'Install pnpm (https://pnpm.io/installation) and restart Limboo.'],
-  ['npm', 'Install Node.js, which provides npm, and restart Limboo.'],
-];
 
 /** Hosts the npm client needs. Matched permissively — wildcards are allowed. */
 const REGISTRY_HOSTS = ['registry.npmjs.org', 'npmjs.org', 'npmjs.com'];

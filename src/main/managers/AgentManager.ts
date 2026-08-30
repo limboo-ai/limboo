@@ -156,6 +156,7 @@ import type { HarnessRuntime, HarnessRunHandle } from './harness/HarnessRuntime'
 import type { LocalWorktreeSandboxProvider } from './harness/sandbox/LocalWorktreeSandbox';
 import { buildToolApprovalMap } from './harness/approval';
 import { readBootstrapPlan } from './harness/bootstrap';
+import { resolveTools } from './harness/toolchain';
 import { loadHarness } from './harness';
 import { harnessById } from './agent/harnessRegistry';
 import { isSubagentTool } from '@shared/subagents';
@@ -2331,32 +2332,57 @@ export class AgentManager {
   }
 
   /**
-   * The active harness's one-time setup plan, for the consent surface.
+   * A harness's one-time setup plan, for the consent surface.
    *
    * Loads the adapter to ask it — which is also a useful availability probe —
    * and reports `available: false` with the reason when it cannot be loaded, so
    * the UI can distinguish "nothing to approve" from "this harness is broken".
+   *
+   * `harnessId` is a PARAMETER, not read from settings, because the consent
+   * surface is per-harness: `ClaudeCodeControls` is mounted as the body of the
+   * Claude Code card regardless of which harness is currently selected. Reading
+   * the global setting made that card describe — and claim "no setup step" for —
+   * a harness it was not showing. Defaults to the selected harness for callers
+   * that genuinely mean "the active one".
    */
-  async harnessBootstrapPlan(): Promise<HarnessBootstrapInfo> {
+  async harnessBootstrapPlan(harnessId?: string): Promise<HarnessBootstrapInfo> {
     const agent = this.settings.getAll().agent;
-    const descriptor = harnessById(agent.harness.id);
+    const id = harnessId ?? agent.harness.id;
+    const descriptor = harnessById(id);
     if (!descriptor || !descriptor.module) {
-      return { available: true, harnessId: agent.harness.id, plan: null, acked: true };
+      return { available: true, harnessId: id, plan: null, acked: true };
     }
     try {
-      const { adapter, createAdapter } = await loadHarness(agent.harness.id);
+      const { adapter, createAdapter } = await loadHarness(id);
       const built = createAdapter ? createAdapter({}) : adapter;
-      const plan = await readBootstrapPlan(built);
+      const read = await readBootstrapPlan(built);
+      if (read.kind === 'unreadable') {
+        // NOT `plan: null` — that is the "installs nothing" claim, and reporting
+        // it here is what made the panel contradict its own copy.
+        return {
+          available: false,
+          harnessId: id,
+          plan: null,
+          acked: false,
+          planError: redact(read.error).slice(0, 300),
+        };
+      }
+      if (read.kind === 'none') {
+        return { available: true, harnessId: id, plan: null, acked: true };
+      }
       return {
         available: true,
-        harnessId: agent.harness.id,
-        plan,
-        acked: plan == null || plan.fingerprint === agent.harness.bootstrapAck,
+        harnessId: id,
+        plan: read.plan,
+        acked: read.plan.fingerprint === agent.harness.bootstrapAck,
+        // Surfaced BEFORE approval. Previously the only way to learn a required
+        // tool was missing was a run that failed after you had already approved.
+        prerequisites: resolveTools(read.plan),
       };
     } catch (err) {
       return {
         available: false,
-        harnessId: agent.harness.id,
+        harnessId: id,
         plan: null,
         acked: false,
         error: redact(err instanceof Error ? err.message : String(err)).slice(0, 300),

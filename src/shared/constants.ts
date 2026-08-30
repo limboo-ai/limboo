@@ -66,7 +66,7 @@ export const AGENT_MODELS = [
   // Pi publishes no discoverable default model id, so rather than invent one
   // this selects "whatever the adapter picks" — see HARNESS_DEFAULT_MODEL_SUFFIX.
   { value: 'pi:default', label: 'Pi (default model)', provider: 'pi' },
-  // NO CODEX MODEL, deliberately. `@ai-sdk/harness-codex@1.0.67` declares
+  // NO CODEX MODEL, deliberately. `@ai-sdk/harness-codex@1.0.79` declares
   // `supportsBuiltinToolApprovals: false`, so its `bash` tool cannot be routed
   // through Limboo's permission gate and the harness is refused at preflight.
   // A picker entry that can only ever fail is worse than an absent one. The

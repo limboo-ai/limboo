@@ -30,6 +30,35 @@ import { detectWorkspace } from './workspace/detect';
 import { computeStats } from './workspace/stats';
 import { validateWorkspacePath, isInsideRoot } from './workspace/validate';
 
+/**
+ * Every table carrying a `workspace_id`, swept when a workspace is removed.
+ *
+ * `sessions` is LAST on purpose: the caller purges each session properly first
+ * (worktree, services, PTYs, attachments, child rows), and this is the backstop
+ * that guarantees no invisible row survives if one of those purges failed. A
+ * failure is logged there, so a leftover worktree directory is discoverable
+ * rather than merely absent from a query nobody will ever run again.
+ *
+ * A NULL `workspace_id` means global scope (user preferences, global memories,
+ * global saved searches). SQL never matches NULL with `=`, so those rows are
+ * untouched by construction — do not "fix" this with `IS NOT DISTINCT FROM`.
+ */
+const WORKSPACE_SCOPED_TABLES = [
+  'plan_state',
+  'git_checkpoints',
+  'session_snapshots',
+  'attachments',
+  'work_graph_nodes',
+  'memories',
+  'search_files',
+  'search_symbols',
+  'search_refs',
+  'search_history',
+  'saved_searches',
+  'mcp_servers',
+  'sessions',
+] as const;
+
 interface WorkspaceRow {
   id: string;
   name: string;
@@ -201,6 +230,25 @@ export class WorkspaceManager {
     return this.requireById(id);
   }
 
+  /**
+   * Delete a workspace and every row scoped to it.
+   *
+   * This used to be `DELETE FROM workspaces` alone, which orphaned every
+   * session, memory, search-index entry, checkpoint and MCP row that named the
+   * workspace — permanently, since a re-added folder is issued a NEW id and can
+   * never reclaim them. `WorkspaceRemoveDialog` told the user all of it was
+   * cleaned up, so the fix is here rather than in the copy.
+   *
+   * SESSIONS ARE NOT PURGED HERE. They own worktrees on disk, PTYs and services,
+   * and this manager owns none of those — the caller purges each session through
+   * `purgeSessionCompletely` FIRST, then calls this. The sweep below is by
+   * `workspace_id`, so it also catches whatever that purge leaves behind rather
+   * than depending on an audit of every foreign key.
+   *
+   * One transaction: a half-removed workspace is worse than a failed removal.
+   * The FTS mirrors (`memories_fts`, `search_*_fts`, `work_graph_nodes_fts`) are
+   * kept in sync by triggers, so deleting the base rows is sufficient.
+   */
   remove(id: string, deleteFiles = false): void {
     const ws = this.byId(id);
     if (!ws) return;
@@ -210,7 +258,14 @@ export class WorkspaceManager {
       // future, separate, audited path will handle on-disk removal.
       logger.warn('remove(deleteFiles=true) requested; files preserved by policy', ws.path);
     }
-    this.db.prepare('DELETE FROM workspaces WHERE id = ?').run(id);
+    const purge = this.db.transaction(() => {
+      for (const table of WORKSPACE_SCOPED_TABLES) {
+        this.db.prepare(`DELETE FROM ${table} WHERE workspace_id = ?`).run(id);
+      }
+      this.db.prepare('DELETE FROM workspaces WHERE id = ?').run(id);
+    });
+    purge();
+    logger.info(`Workspace removed: ${id}`);
     if (this.activeId() === id) this.clearActive();
     this.broadcast();
   }

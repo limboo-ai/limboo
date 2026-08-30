@@ -67,3 +67,30 @@ export class HarnessConsentRequiredError extends Error {
     );
   }
 }
+
+/**
+ * The adapter has a bootstrap step but could not describe it.
+ *
+ * FAIL CLOSED. This used to be indistinguishable from "this harness installs
+ * nothing": `readBootstrapPlan` swallowed the throw and returned `null`, and the
+ * `if (plan)` in HarnessRuntime then skipped the consent gate, the sandbox
+ * network check AND the toolchain probe — so a broken adapter ran with every
+ * guard the consent surface promises silently disabled, while Settings reported
+ * "no setup step".
+ *
+ * The real-world trigger was a packaging bug: the adapter reads its bridge
+ * assets (including `pnpm-lock.yaml`) off disk in `getBootstrap()`, and those
+ * files were being stripped from the packaged asar. An adapter that cannot say
+ * what it will do is not one we can ask the user to approve, so the run stops.
+ */
+export class HarnessBootstrapUnreadableError extends Error {
+  readonly name = 'HarnessBootstrapUnreadableError';
+
+  constructor(label: string, detail: string) {
+    super(
+      `${label} has a one-time setup step but could not describe it, so Limboo ` +
+        'will not run it — approving commands it cannot read is not something ' +
+        `Limboo can ask you to do. The adapter reported: ${detail}`,
+    );
+  }
+}
