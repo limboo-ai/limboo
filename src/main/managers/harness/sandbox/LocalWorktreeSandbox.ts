@@ -46,6 +46,7 @@ import path from 'node:path';
 import { Readable } from 'node:stream';
 import { crownJewelPaths, type EffectiveSandbox } from '../../sandbox/policy';
 import { killTree } from '../../agent/killTree';
+import { augmentedPath } from '../toolchain';
 import { resolveJail } from './jail';
 import { patchBootstrapFile } from './patchBridge';
 import { assertLoopbackOnly, reserveLoopbackPort, type PortReservation } from './ports';
@@ -74,7 +75,7 @@ export interface LocalSandboxDeps {
 /**
  * The adapter state directories permitted as SIBLINGS of the worktree.
  *
- * Third-party constants, verified in @ai-sdk/harness-claude-code@1.0.67:
+ * Third-party constants, verified in @ai-sdk/harness-claude-code@1.0.80:
  * `BOOTSTRAP_DIR = ".harness-bootstrap/claude-code"` and the per-session
  * `.agent-runs/<sessionId>/bridge`, both resolved against the sandbox's
  * `defaultWorkingDirectory`. Kept as literals rather than a prefix rule so a
@@ -106,6 +107,14 @@ const ENV_ALLOWLIST = [
  * only when it is already present on the host — Limboo stores no provider
  * credential, accepts none over IPC, and puts none in argv; this is pure
  * passthrough of what the user's own shell already has.
+ *
+ * PATH is the one key not passed through verbatim. An Electron app launched from
+ * a `.desktop` entry or the Dock inherits a much smaller PATH than the user's
+ * shell, so the bootstrap child would fail to find a pnpm/bun/nvm-node that IS
+ * installed. `augmentedPath()` prepends the user-local tool directories that
+ * exist — DISCOVERY of what is already there, never provisioning, so CLAUDE.md
+ * §1 is untouched. It must match what `probeCommand` resolves against, or the
+ * preflight check and the child would disagree about the same machine.
  */
 function baseEnv(extraKeys: readonly string[] = []): Record<string, string> {
   const out: Record<string, string> = {};
@@ -113,6 +122,7 @@ function baseEnv(extraKeys: readonly string[] = []): Record<string, string> {
     const v = process.env[key];
     if (typeof v === 'string') out[key] = v;
   }
+  out.PATH = augmentedPath();
   return out;
 }
 
@@ -201,7 +211,7 @@ class LocalSandboxSession {
     // worktree (slugs come from `sanitizeBranchName`, which cannot emit a
     // leading dot). The crown-jewel loop above already ran unconditionally, so
     // nothing here can reach a protected file. Both names are third-party
-    // constants verified in @ai-sdk/harness-claude-code@1.0.67 — an upgrade
+    // constants verified in @ai-sdk/harness-claude-code@1.0.80 — an upgrade
     // that renames them fails loudly at the first write rather than silently
     // writing somewhere else.
     const realState = realpathNearest(this.defaultWorkingDirectory);

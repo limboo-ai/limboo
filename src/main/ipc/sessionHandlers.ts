@@ -18,6 +18,7 @@ import type { WorktreeManager } from '../managers/worktree/WorktreeManager';
 import type { ServiceManager } from '../managers/services/ServiceManager';
 import type { TerminalManager } from '../managers/TerminalManager';
 import type { AttachmentManager } from '../managers/attachments/AttachmentManager';
+import { purgeSessionCompletely } from './sessionTeardown';
 import { logger } from '../logger';
 
 /** Bounds for session organization inputs (folder / tags). */
@@ -209,21 +210,10 @@ export function registerSessionHandlers(
 
   handle<[string], void>(IpcChannels.sessionPurge, async (_e, id) => {
     assertValidId(id);
-    // A purged session must not leak its worktree directory — force-remove it
-    // (keeping the branch: permanent data loss stays a separate, explicit act).
-    try {
-      await worktrees.removeForSession(id, { force: true, deleteBranch: false });
-    } catch (err) {
-      logger.warn('session:purge worktree removal failed', err);
-    }
-    // Purge is permanent: delete the session's staged attachments too (trash
-    // keeps them so a restored session still has its files).
-    try {
-      await attachments.purgeSession(id);
-    } catch (err) {
-      logger.warn('session:purge attachment cleanup failed', err);
-    }
-    sessions.purge(id);
+    // Shared with the workspace-removal cascade, so the two can never disagree
+    // about what "permanently deleted" means — see sessionTeardown.ts for why
+    // the order (processes → worktree → attachments → rows) matters.
+    await purgeSessionCompletely({ sessions, worktrees, services, terminals, attachments }, id);
   });
 
   handle<[string, { title?: string; baseRef?: string; branch?: string }?], Session>(

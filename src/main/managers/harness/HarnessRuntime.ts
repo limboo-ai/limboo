@@ -28,7 +28,7 @@ import {
   assertBootstrapPossible,
   readBootstrapPlan,
 } from './bootstrap';
-import { HarnessUngatedError } from './errors';
+import { HarnessBootstrapUnreadableError, HarnessUngatedError } from './errors';
 import { harnessPermissionMode } from './permissions';
 import { newTranslateContext, translatePart, type HarnessApprovalRequest } from './translate';
 import type { HarnessAdapterFlags, HarnessSession, HarnessToolApproval } from './types';
@@ -185,11 +185,19 @@ export class HarnessRuntime {
     // the sandbox network policy permits the download, and the tools the
     // commands invoke exist. Each failure is named — the alternative is a
     // bootstrap that times out inside the sandbox with nothing to act on.
-    const bootstrap = await readBootstrapPlan(harness);
-    if (bootstrap) {
-      const label = spec.harnessLabel ?? spec.harnessId;
-      assertBootstrapConsent(bootstrap, spec.bootstrapAck ?? '', label);
-      assertBootstrapPossible(bootstrap, spec.sandbox);
+    //
+    // `unreadable` REFUSES rather than falling through. It used to be
+    // indistinguishable from "this adapter installs nothing", and that single
+    // `null` disabled all three guards below — so an adapter broken by a
+    // packaging bug ran ungated while Settings reported "no setup step".
+    const read = await readBootstrapPlan(harness);
+    const label = spec.harnessLabel ?? spec.harnessId;
+    if (read.kind === 'unreadable') {
+      throw new HarnessBootstrapUnreadableError(label, read.error);
+    }
+    if (read.kind === 'plan') {
+      assertBootstrapConsent(read.plan, spec.bootstrapAck ?? '', label);
+      assertBootstrapPossible(read.plan, spec.sandbox);
       bridge.onSandboxStatus?.('preparing', 'Preparing the agent runtime…');
     }
 

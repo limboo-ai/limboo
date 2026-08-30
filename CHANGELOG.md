@@ -7,6 +7,62 @@ All notable changes to Limboo are documented here. The format is based on
 
 ## [Unreleased]
 
+## [1.19.0] - 2026-08-30
+
+Limboo 1.19.0 repairs the agent harness, which could not install itself in any
+packaged build, and gives workspaces a way out of the app.
+
+### Fixed
+
+- **The harness could never complete its one-time setup.** Packaging stripped
+  every `pnpm-lock.yaml` in the tree — a rule meant for the project's own
+  lockfile that also removed one the harness adapter reads at runtime. Without
+  it the adapter could not describe its setup step, so runs died with
+  `ENOENT … not found in app.asar` and Settings reported the harness needed no
+  setup at all. The adapters' bridge assets now ship, and the project's own
+  lockfiles are still excluded.
+- **A harness that could not describe its setup ran anyway, ungated.** "This
+  adapter installs nothing" and "this adapter could not say what it installs"
+  were the same value internally, and the second silently skipped the approval
+  gate, the sandbox network check and the prerequisite check along with it. They
+  are now different states: the run is refused, and Settings says why instead of
+  claiming there is nothing to approve.
+- **The setup panel contradicted itself.** It described an install that needed
+  your approval and, immediately below, said no setup was needed. Five different
+  conditions — including a request still in flight and an outright failure —
+  collapsed into that one sentence. Each now reports itself, and a failed request
+  no longer reads as an absence of work.
+- **Removing a workspace left almost everything behind.** Only the workspace's
+  own record was deleted; its sessions, memories, search index, checkpoints,
+  work-graph nodes and MCP entries stayed in the database permanently, since a
+  re-added folder is issued a new id and can never reclaim them. Removal now
+  clears all of it in one transaction, after tearing down each session's
+  worktree, services and terminals — which is what the confirmation dialog had
+  been promising all along. Global, non-workspace data is untouched.
+
+### Added
+
+- **Workspaces can be removed from the title-bar switcher.** Removal existed only
+  in the launcher, which appears when no workspace is open — so once you opened
+  one there was no way to remove any. Each row in the dropdown now has a remove
+  control, with the same confirmation dialog and the same guarantee that your
+  project folder on disk is never touched.
+- **Missing setup prerequisites are named before you approve, not after a run
+  fails.** The check also stopped assuming pnpm: it reads whichever tools the
+  adapter's own commands invoke, so an adapter that bootstraps with yarn, bun or
+  corepack is checked just as precisely. Limboo still never substitutes one tool
+  for another — the commands you approve are the commands that run.
+- **Tools installed in a user directory are found again.** An app started from a
+  desktop launcher inherits a much smaller `PATH` than a shell, so an installed
+  pnpm, bun or nvm-managed Node could be reported missing. Setup now also looks
+  where those install themselves.
+
+### Changed
+
+- **The title bar shows the workspace name alone.** The initials badge in front
+  of it repeated what the name already said. It remains in the launcher and the
+  remove dialog, where a workspace has to be picked out of a set at a glance.
+
 ## [1.18.2] - 2026-08-13
 
 ### Fixed

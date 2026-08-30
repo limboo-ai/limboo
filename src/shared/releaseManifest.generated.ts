@@ -24,6 +24,91 @@ import type { ReleaseIndexEntry, ReleaseManifestEntry } from './release';
 /** Newest first. */
 export const RELEASE_MANIFESTS: ReleaseManifestEntry[] = [
   {
+    "version": "1.19.0",
+    "date": "2026-08-30",
+    "channel": "stable",
+    "codename": null,
+    "gitTag": "v1.19.0",
+    "commit": null,
+    "buildNumber": null,
+    "summary": "Limboo 1.19.0 repairs the agent harness, which could not install itself in any\npackaged build, and gives workspaces a way out of the app.",
+    "sections": [
+      {
+        "category": "fixed",
+        "title": "Fixed",
+        "items": [
+          {
+            "lead": "The harness could never complete its one-time setup",
+            "text": "Packaging stripped\n  every `pnpm-lock.yaml` in the tree — a rule meant for the project's own\n  lockfile that also removed one the harness adapter reads at runtime. Without\n  it the adapter could not describe its setup step, so runs died with\n  `ENOENT … not found in app.asar` and Settings reported the harness needed no\n  setup at all. The adapters' bridge assets now ship, and the project's own\n  lockfiles are still excluded."
+          },
+          {
+            "lead": "A harness that could not describe its setup ran anyway, ungated",
+            "text": "\"This\n  adapter installs nothing\" and \"this adapter could not say what it installs\"\n  were the same value internally, and the second silently skipped the approval\n  gate, the sandbox network check and the prerequisite check along with it. They\n  are now different states: the run is refused, and Settings says why instead of\n  claiming there is nothing to approve."
+          },
+          {
+            "lead": "The setup panel contradicted itself",
+            "text": "It described an install that needed\n  your approval and, immediately below, said no setup was needed. Five different\n  conditions — including a request still in flight and an outright failure —\n  collapsed into that one sentence. Each now reports itself, and a failed request\n  no longer reads as an absence of work."
+          },
+          {
+            "lead": "Removing a workspace left almost everything behind",
+            "text": "Only the workspace's\n  own record was deleted; its sessions, memories, search index, checkpoints,\n  work-graph nodes and MCP entries stayed in the database permanently, since a\n  re-added folder is issued a new id and can never reclaim them. Removal now\n  clears all of it in one transaction, after tearing down each session's\n  worktree, services and terminals — which is what the confirmation dialog had\n  been promising all along. Global, non-workspace data is untouched."
+          }
+        ],
+        "markdown": "- **The harness could never complete its one-time setup.** Packaging stripped\n  every `pnpm-lock.yaml` in the tree — a rule meant for the project's own\n  lockfile that also removed one the harness adapter reads at runtime. Without\n  it the adapter could not describe its setup step, so runs died with\n  `ENOENT … not found in app.asar` and Settings reported the harness needed no\n  setup at all. The adapters' bridge assets now ship, and the project's own\n  lockfiles are still excluded.\n- **A harness that could not describe its setup ran anyway, ungated.** \"This\n  adapter installs nothing\" and \"this adapter could not say what it installs\"\n  were the same value internally, and the second silently skipped the approval\n  gate, the sandbox network check and the prerequisite check along with it. They\n  are now different states: the run is refused, and Settings says why instead of\n  claiming there is nothing to approve.\n- **The setup panel contradicted itself.** It described an install that needed\n  your approval and, immediately below, said no setup was needed. Five different\n  conditions — including a request still in flight and an outright failure —\n  collapsed into that one sentence. Each now reports itself, and a failed request\n  no longer reads as an absence of work.\n- **Removing a workspace left almost everything behind.** Only the workspace's\n  own record was deleted; its sessions, memories, search index, checkpoints,\n  work-graph nodes and MCP entries stayed in the database permanently, since a\n  re-added folder is issued a new id and can never reclaim them. Removal now\n  clears all of it in one transaction, after tearing down each session's\n  worktree, services and terminals — which is what the confirmation dialog had\n  been promising all along. Global, non-workspace data is untouched."
+      },
+      {
+        "category": "added",
+        "title": "Added",
+        "items": [
+          {
+            "lead": "Workspaces can be removed from the title-bar switcher",
+            "text": "Removal existed only\n  in the launcher, which appears when no workspace is open — so once you opened\n  one there was no way to remove any. Each row in the dropdown now has a remove\n  control, with the same confirmation dialog and the same guarantee that your\n  project folder on disk is never touched."
+          },
+          {
+            "lead": "Missing setup prerequisites are named before you approve, not after a run\n  fails",
+            "text": "The check also stopped assuming pnpm: it reads whichever tools the\n  adapter's own commands invoke, so an adapter that bootstraps with yarn, bun or\n  corepack is checked just as precisely. Limboo still never substitutes one tool\n  for another — the commands you approve are the commands that run."
+          },
+          {
+            "lead": "Tools installed in a user directory are found again",
+            "text": "An app started from a\n  desktop launcher inherits a much smaller `PATH` than a shell, so an installed\n  pnpm, bun or nvm-managed Node could be reported missing. Setup now also looks\n  where those install themselves."
+          }
+        ],
+        "markdown": "- **Workspaces can be removed from the title-bar switcher.** Removal existed only\n  in the launcher, which appears when no workspace is open — so once you opened\n  one there was no way to remove any. Each row in the dropdown now has a remove\n  control, with the same confirmation dialog and the same guarantee that your\n  project folder on disk is never touched.\n- **Missing setup prerequisites are named before you approve, not after a run\n  fails.** The check also stopped assuming pnpm: it reads whichever tools the\n  adapter's own commands invoke, so an adapter that bootstraps with yarn, bun or\n  corepack is checked just as precisely. Limboo still never substitutes one tool\n  for another — the commands you approve are the commands that run.\n- **Tools installed in a user directory are found again.** An app started from a\n  desktop launcher inherits a much smaller `PATH` than a shell, so an installed\n  pnpm, bun or nvm-managed Node could be reported missing. Setup now also looks\n  where those install themselves."
+      },
+      {
+        "category": "changed",
+        "title": "Changed",
+        "items": [
+          {
+            "lead": "The title bar shows the workspace name alone",
+            "text": "The initials badge in front\n  of it repeated what the name already said. It remains in the launcher and the\n  remove dialog, where a workspace has to be picked out of a set at a glance."
+          }
+        ],
+        "markdown": "- **The title bar shows the workspace name alone.** The initials badge in front\n  of it repeated what the name already said. It remains in the launcher and the\n  remove dialog, where a workspace has to be picked out of a set at a glance."
+      }
+    ],
+    "contributors": [],
+    "pullRequests": [],
+    "mergedBranches": [],
+    "assets": [],
+    "signing": [],
+    "stats": {
+      "commits": null,
+      "filesChanged": null,
+      "additions": null,
+      "deletions": null
+    },
+    "links": {
+      "release": "https://github.com/limboo-ai/limboo/releases/tag/v1.19.0",
+      "compare": null,
+      "tag": "https://github.com/limboo-ai/limboo/releases/tag/v1.19.0",
+      "milestone": null
+    },
+    "checksumManifest": "SHA256SUMS",
+    "provenanceRepo": "limboo-ai/limboo",
+    "markdown": "Limboo 1.19.0 repairs the agent harness, which could not install itself in any\npackaged build, and gives workspaces a way out of the app.\n\n### Fixed\n\n- **The harness could never complete its one-time setup.** Packaging stripped\n  every `pnpm-lock.yaml` in the tree — a rule meant for the project's own\n  lockfile that also removed one the harness adapter reads at runtime. Without\n  it the adapter could not describe its setup step, so runs died with\n  `ENOENT … not found in app.asar` and Settings reported the harness needed no\n  setup at all. The adapters' bridge assets now ship, and the project's own\n  lockfiles are still excluded.\n- **A harness that could not describe its setup ran anyway, ungated.** \"This\n  adapter installs nothing\" and \"this adapter could not say what it installs\"\n  were the same value internally, and the second silently skipped the approval\n  gate, the sandbox network check and the prerequisite check along with it. They\n  are now different states: the run is refused, and Settings says why instead of\n  claiming there is nothing to approve.\n- **The setup panel contradicted itself.** It described an install that needed\n  your approval and, immediately below, said no setup was needed. Five different\n  conditions — including a request still in flight and an outright failure —\n  collapsed into that one sentence. Each now reports itself, and a failed request\n  no longer reads as an absence of work.\n- **Removing a workspace left almost everything behind.** Only the workspace's\n  own record was deleted; its sessions, memories, search index, checkpoints,\n  work-graph nodes and MCP entries stayed in the database permanently, since a\n  re-added folder is issued a new id and can never reclaim them. Removal now\n  clears all of it in one transaction, after tearing down each session's\n  worktree, services and terminals — which is what the confirmation dialog had\n  been promising all along. Global, non-workspace data is untouched.\n\n### Added\n\n- **Workspaces can be removed from the title-bar switcher.** Removal existed only\n  in the launcher, which appears when no workspace is open — so once you opened\n  one there was no way to remove any. Each row in the dropdown now has a remove\n  control, with the same confirmation dialog and the same guarantee that your\n  project folder on disk is never touched.\n- **Missing setup prerequisites are named before you approve, not after a run\n  fails.** The check also stopped assuming pnpm: it reads whichever tools the\n  adapter's own commands invoke, so an adapter that bootstraps with yarn, bun or\n  corepack is checked just as precisely. Limboo still never substitutes one tool\n  for another — the commands you approve are the commands that run.\n- **Tools installed in a user directory are found again.** An app started from a\n  desktop launcher inherits a much smaller `PATH` than a shell, so an installed\n  pnpm, bun or nvm-managed Node could be reported missing. Setup now also looks\n  where those install themselves.\n\n### Changed\n\n- **The title bar shows the workspace name alone.** The initials badge in front\n  of it repeated what the name already said. It remains in the launcher and the\n  remove dialog, where a workspace has to be picked out of a set at a glance."
+  },
+  {
     "version": "1.18.2",
     "date": "2026-08-13",
     "channel": "stable",
@@ -422,136 +507,18 @@ export const RELEASE_MANIFESTS: ReleaseManifestEntry[] = [
     "checksumManifest": "SHA256SUMS",
     "provenanceRepo": "limboo-ai/limboo",
     "markdown": "The first beta. Two bugs that made Cursor sessions unusable are fixed, agents can\nnow run through a swappable harness layer instead of one hardcoded integration,\nand Settings opens as a workspace tab. This build is published for testing ahead\nof a stable release — read the warning at the top of these notes before\ninstalling it over a working copy.\n\n### Fixed\n\n- **Cursor sessions denied every tool call.** The hook runner read the event name\n  from a single payload key that the CLI does not always send. With no event name\n  it could not identify what was being asked, so it failed closed — which is the\n  correct posture, but it meant every read, search, shell command and edit was\n  refused, and nothing on screen said why. The event name now travels in the\n  runner's own arguments, where Limboo writes it, with five payload spellings as\n  fallbacks, and a genuine failure now names the missing key in the timeline\n  instead of denying silently.\n- **Four more ways a Cursor run could stall.** The permission helper could boot as\n  a GUI process instead of a script and then hang for the full ten-minute hook\n  timeout on every single tool call; nothing timed out while it waited for input;\n  a successful approval could be truncated on its way out and be read as a\n  refusal; and the sandbox denied the helper access to its own communication\n  socket. Each is fixed, and each failure now reports what happened.\n- **\"Prompt me for everything\" meant \"deny everything\".** Tightening the approval\n  policy withdrew the rule that let Cursor read files at all. Because the only way\n  to ask for permission on that path is the hook bridge, a session with hooks\n  unavailable was left unable to read or to ask. Reads and inspection commands\n  now keep their floor regardless of the policy; the permission gate still runs\n  on top of it.\n- **A Cursor session could stream as Claude Code.** The model was checked for\n  character shape rather than for which provider serves it, and every Cursor\n  model id passes that check — so a mis-routed model was handed to the Claude\n  integration and ran there, with no error anywhere. Routing now has an explicit\n  \"unknown\" answer, dispatch is exhaustive, and a model nothing claims fails by\n  name instead of quietly running somewhere.\n- **Commit-message generation always used Claude.** A Cursor-only user pressing\n  the button started a Claude run and, with Claude not installed, was told to sign\n  in to a product they were not using. It now follows the agent you selected, and\n  the button is no longer disabled for Cursor users.\n- **Searching Settings missed several controls.** Some settings were never\n  registered in the search index, so typing their name found nothing. Fixed for\n  the Agent and Runtime categories, with a check that fails the build if it\n  happens again.\n- **Absolute paths inside your project were treated as escapes.** Cursor's CLI\n  writes full paths by default, and a full path to a file inside your own worktree\n  was classified as leaving it — so ordinary reads were refused during planning.\n\n### Added\n\n- **Agents can run through a harness layer.** Limboo now drives agents through\n  Vercel AI SDK 7's harness abstraction as well as its own integrations, so a new\n  agent runtime becomes an adapter rather than a new code path. Pi is available;\n  Claude Code runs through it behind an opt-in switch. Everything above the\n  adapter — the conversation, permissions, memory, search, the work graph, the\n  runtime panel — is unchanged, because they all sit on one seam.\n- **A sandbox that runs on your own worktree.** Every shipped sandbox for that\n  abstraction is either a cloud service or a private filesystem, and neither\n  fits: your repository must not leave the machine, and the agent has to edit the\n  actual files that git, the diff viewer and checkpoints are watching. Limboo has\n  its own, rooted at the session's worktree, with the same containment rules the\n  rest of the app enforces — nothing outside the worktree, and never the app's own\n  database, settings or secrets.\n- **Settings opens as a workspace tab.** An icon beside the close button promotes\n  the dialog into an editor tab, the way a diff opens. Both surfaces render the\n  same panels, so nothing drifts. The tab has no Cancel: settings apply as you\n  change them, exactly as they already did.\n- **An update channel you can choose.** Settings › Updates now offers Stable or\n  Beta. A beta is never downloaded in the background — you are shown its release\n  notes and decide.\n\n### Changed\n\n- **Settings panels are flat rows.** The Agent and MCP categories wrapped groups\n  of settings in bordered panels while every other category used plain labelled\n  rows, which made them look like a different application. The boxes are gone.\n  Every input, button and select now uses one corner radius.\n- **The Agent panel is reorganised.** Providers became Harnesses and now reads as\n  one list instead of two hand-built cards. Connection and reliability moved to\n  Runtime, where the rest of the supervision settings live. A section that\n  contained no settings at all was removed, and the remainder is ordered by the\n  decision you are making: which agent, which model, what it may do, what\n  contains it.\n- **The model hint stopped being wrong.** It named a default the app had not used\n  for several versions, because the text was typed by hand next to the value it\n  described. It is now derived from that value.\n\n### Security\n\n- **Built-in tools on the harness path are gated by Limboo.** The harness\n  abstraction has two separate approval surfaces, and the one Limboo had wired\n  covers only tools the host supplies — built-in file writes and shell commands\n  are governed by a different setting that defaults to allowing everything. On\n  that path an agent could have written files and run commands without Limboo's\n  permission gate. Every built-in tool call now suspends the turn and asks, using\n  the same authority, the same risk labels, the same dialogs and the same audit\n  trail as every other agent.\n- **A harness that cannot ask for permission is refused.** Rather than run it with\n  weaker enforcement, Limboo declines to start it and says so. This is not\n  theoretical: the Codex adapter reports that it cannot request approval for its\n  shell tool, so it is registered as unavailable with the reason shown rather than\n  offered and then failing.\n- **The harness setup step asks first.** Preparing a harness for its first run\n  downloads its agent CLI, which is the only time Limboo reaches the network\n  outside talking to your agent and fetching contributor avatars. The exact\n  commands are read from the adapter and shown to you for approval once, and the\n  approval is tied to those commands — if a later version changes them, you are\n  asked again. Without approval the run does not start.\n- **Credentials are passed through, never stored.** A harness receives an API key\n  only if your own environment already has one, from an explicitly named list.\n  Nothing is written to settings, accepted over the app's internal channels, put\n  on a command line, or logged. A gap in log redaction that could have printed\n  those variables is closed.\n- **Reads on the harness path cannot be gated, and the setting says so.** The\n  underlying runtime allows built-in file reads unconditionally, so\n  \"auto-approve reads\" has no effect there. Rather than leave a control that looks\n  like it works, the setting explains the limitation.\n\n### Known limitations\n\n- **Beta builds are not released builds.** Features may change or be removed\n  before release. Settings and session data move forward but not back, so a build\n  made after this one may not read data this one wrote. Keep a stable install for\n  work you cannot repeat.\n- **The harness path is off by default.** Claude Code and Cursor continue to run\n  through their own integrations. Turn the harness on in Settings › Agent ›\n  Harnesses if you want to try it; you will be asked to approve its setup step\n  first.\n- **A harness conversation does not resume.** Each message starts a fresh\n  conversation with the underlying runtime. The alternative failed on every second\n  message, so this is deliberate until the resume format is handled properly.\n- **Codex is unavailable.** Its adapter cannot ask for permission before running\n  shell commands. It is listed with that reason rather than hidden."
-  },
-  {
-    "version": "1.17.0",
-    "date": "2026-08-01",
-    "channel": "stable",
-    "codename": null,
-    "gitTag": "v1.17.0",
-    "commit": null,
-    "buildNumber": null,
-    "summary": "Plan Mode now stops. A plan waits for your decision instead of sliding into\nimplementation, and the plan you are shown is the plan the agent actually wrote —\nwhich, until this release, it very often was not. Git also becomes a platform\nservice in its own right, so repository work reads as part of the conversation\nrather than something that happened in a side panel.",
-    "sections": [
-      {
-        "category": "added",
-        "title": "Added",
-        "items": [
-          {
-            "lead": "Plan approval is a real stop, not a prompt",
-            "text": "When the agent presents a plan,\n  execution halts: no further model calls, no new prompts, no background work,\n  and every tool is refused until you decide. Approving continues the same turn\n  rather than starting a new one, so the agent keeps everything it had learned\n  while planning. Approve, Approve & accept edits, Keep planning, Reject and\n  Archive are the only things that move it forward."
-          },
-          {
-            "lead": "Keep planning now sends feedback",
-            "text": "Instead of discarding the plan and\n  starting over, it hands your notes to the agent, which revises and presents\n  again — same conversation, same context."
-          },
-          {
-            "lead": "Plans are versioned",
-            "text": "A session has one plan; refinements replace it and the\n  previous text moves into History. Two windows on the same session can no longer\n  approve different plans, and a plan that changed while you were reading it says\n  so rather than acting on the stale copy."
-          },
-          {
-            "lead": "A pending plan survives a restart",
-            "text": "Quit with a plan awaiting approval and it\n  is still there on relaunch, with its buttons live and implementation still\n  locked. Approving after a restart starts a fresh run carrying the plan text,\n  because the paused conversation cannot outlive the process."
-          },
-          {
-            "lead": "Git is a platform service",
-            "text": "Repository actions post structured entries into\n  the conversation carrying the paths, commit and checkpoint behind them, with\n  Open Diff, View Commit, Restore Checkpoint and Copy Command on each."
-          },
-          {
-            "lead": "Optional GitHub CLI integration",
-            "text": "If `gh` is installed and signed in, a\n  GitHub sub-tab lists pull requests and issues, and the agent can read them\n  through the tools it already has. Limboo stores no GitHub credential —\n  authentication stays the CLI's. Posting a comment is gated and shows the exact\n  body first."
-          },
-          {
-            "lead": "Contributor avatars in history",
-            "text": ", fetched in the main process and embedded so\n  no page ever requests a remote image. Behind `git.avatars.enabled`, which is\n  off-limits by default in the sense that turning it on is the thing that tells\n  GitHub which repository you are browsing — the setting says so."
-          }
-        ],
-        "markdown": "- **Plan approval is a real stop, not a prompt.** When the agent presents a plan,\n  execution halts: no further model calls, no new prompts, no background work,\n  and every tool is refused until you decide. Approving continues the same turn\n  rather than starting a new one, so the agent keeps everything it had learned\n  while planning. Approve, Approve & accept edits, Keep planning, Reject and\n  Archive are the only things that move it forward.\n- **Keep planning now sends feedback.** Instead of discarding the plan and\n  starting over, it hands your notes to the agent, which revises and presents\n  again — same conversation, same context.\n- **Plans are versioned.** A session has one plan; refinements replace it and the\n  previous text moves into History. Two windows on the same session can no longer\n  approve different plans, and a plan that changed while you were reading it says\n  so rather than acting on the stale copy.\n- **A pending plan survives a restart.** Quit with a plan awaiting approval and it\n  is still there on relaunch, with its buttons live and implementation still\n  locked. Approving after a restart starts a fresh run carrying the plan text,\n  because the paused conversation cannot outlive the process.\n- **Git is a platform service.** Repository actions post structured entries into\n  the conversation carrying the paths, commit and checkpoint behind them, with\n  Open Diff, View Commit, Restore Checkpoint and Copy Command on each.\n- **Optional GitHub CLI integration.** If `gh` is installed and signed in, a\n  GitHub sub-tab lists pull requests and issues, and the agent can read them\n  through the tools it already has. Limboo stores no GitHub credential —\n  authentication stays the CLI's. Posting a comment is gated and shows the exact\n  body first.\n- **Contributor avatars in history**, fetched in the main process and embedded so\n  no page ever requests a remote image. Behind `git.avatars.enabled`, which is\n  off-limits by default in the sense that turning it on is the thing that tells\n  GitHub which repository you are browsing — the setting says so."
-      },
-      {
-        "category": "changed",
-        "title": "Changed",
-        "items": [
-          {
-            "lead": "The integrated terminal is its own column",
-            "text": "between the conversation and the\n  drawer, instead of competing for the drawer with Files and Changes."
-          },
-          {
-            "lead": "The Activity and Hooks drawer panels are gone",
-            "text": "The Hook Engine, its audit\n  log and every hook setting are untouched — only the two panels and the IPC they\n  were the sole consumers of were removed."
-          },
-          {
-            "lead": "Switching sessions is now an ordered handover",
-            "text": "Worktree, file watcher, git\n  status, search index, memory scope, MCP and the agent are rebound in sequence,\n  and a thin ribbon says so while it happens. Switching quickly between sessions\n  cancels the stale work rather than letting it finish over the newer session."
-          }
-        ],
-        "markdown": "- **The integrated terminal is its own column** between the conversation and the\n  drawer, instead of competing for the drawer with Files and Changes.\n- **The Activity and Hooks drawer panels are gone.** The Hook Engine, its audit\n  log and every hook setting are untouched — only the two panels and the IPC they\n  were the sole consumers of were removed.\n- **Switching sessions is now an ordered handover.** Worktree, file watcher, git\n  status, search index, memory scope, MCP and the agent are rebound in sequence,\n  and a thin ribbon says so while it happens. Switching quickly between sessions\n  cancels the stale work rather than letting it finish over the newer session."
-      },
-      {
-        "category": "fixed",
-        "title": "Fixed",
-        "items": [
-          {
-            "lead": "The plan you approved was usually empty",
-            "text": "Current Claude releases write the\n  plan to a file and pass no plan text to the tool Limboo was reading, so almost\n  every captured plan was blank — and because the tool was blocked, no plan file\n  was produced either. Approving then sent an empty plan, the agent re-derived\n  the work from scratch, and the empty plan was filed as completed. Limboo now\n  tells the agent where to write its plan and reads it from there, with the\n  agent's own copy taking over once the plan is approved."
-          },
-          {
-            "lead": "Starting a new plan could silently destroy the one you were reviewing",
-            "text": "when\n  plan history was turned off. A pending plan is never discarded without being\n  filed first, and starting a second plan while one awaits approval is refused."
-          },
-          {
-            "lead": "A failed or cancelled planning run reported itself as \"rejected\"",
-            "text": ", which is\n  what the app says when a person declines a plan. Those now read as ended, with\n  the reason recorded, so declining and crashing no longer look identical."
-          },
-          {
-            "lead": "An unrelated prompt could mark a stalled plan complete",
-            "text": "Only the run that\n  was actually released to implement a plan can finish it."
-          },
-          {
-            "lead": "Live planning progress replayed the previous attempt's steps",
-            "text": "after asking\n  for a new plan, because it measured from when the plan first existed rather\n  than when the current attempt started."
-          },
-          {
-            "lead": "Deleting a session left its plan revisions behind",
-            "text": "in the database."
-          },
-          {
-            "lead": "A machine without git looked like a folder without a repository",
-            "text": ", and the app\n  offered to initialise one — an action that could never succeed. Limboo now\n  detects the missing binary and names the install command for your platform."
-          },
-          {
-            "lead": "Settings could be hand-edited into a dead drawer tab or an unbounded panel\n  width",
-            "text": "; both are now validated and clamped on load."
-          }
-        ],
-        "markdown": "- **The plan you approved was usually empty.** Current Claude releases write the\n  plan to a file and pass no plan text to the tool Limboo was reading, so almost\n  every captured plan was blank — and because the tool was blocked, no plan file\n  was produced either. Approving then sent an empty plan, the agent re-derived\n  the work from scratch, and the empty plan was filed as completed. Limboo now\n  tells the agent where to write its plan and reads it from there, with the\n  agent's own copy taking over once the plan is approved.\n- **Starting a new plan could silently destroy the one you were reviewing** when\n  plan history was turned off. A pending plan is never discarded without being\n  filed first, and starting a second plan while one awaits approval is refused.\n- **A failed or cancelled planning run reported itself as \"rejected\"**, which is\n  what the app says when a person declines a plan. Those now read as ended, with\n  the reason recorded, so declining and crashing no longer look identical.\n- **An unrelated prompt could mark a stalled plan complete.** Only the run that\n  was actually released to implement a plan can finish it.\n- **Live planning progress replayed the previous attempt's steps** after asking\n  for a new plan, because it measured from when the plan first existed rather\n  than when the current attempt started.\n- **Deleting a session left its plan revisions behind** in the database.\n- **A machine without git looked like a folder without a repository**, and the app\n  offered to initialise one — an action that could never succeed. Limboo now\n  detects the missing binary and names the install command for your platform.\n- **Settings could be hand-edited into a dead drawer tab or an unbounded panel\n  width**; both are now validated and clamped on load."
-      }
-    ],
-    "contributors": [],
-    "pullRequests": [],
-    "mergedBranches": [],
-    "assets": [],
-    "signing": [],
-    "stats": {
-      "commits": null,
-      "filesChanged": null,
-      "additions": null,
-      "deletions": null
-    },
-    "links": {
-      "release": "https://github.com/limboo-ai/limboo/releases/tag/v1.17.0",
-      "compare": null,
-      "tag": "https://github.com/limboo-ai/limboo/releases/tag/v1.17.0",
-      "milestone": null
-    },
-    "checksumManifest": "SHA256SUMS",
-    "provenanceRepo": "limboo-ai/limboo",
-    "markdown": "Plan Mode now stops. A plan waits for your decision instead of sliding into\nimplementation, and the plan you are shown is the plan the agent actually wrote —\nwhich, until this release, it very often was not. Git also becomes a platform\nservice in its own right, so repository work reads as part of the conversation\nrather than something that happened in a side panel.\n\n### Added\n\n- **Plan approval is a real stop, not a prompt.** When the agent presents a plan,\n  execution halts: no further model calls, no new prompts, no background work,\n  and every tool is refused until you decide. Approving continues the same turn\n  rather than starting a new one, so the agent keeps everything it had learned\n  while planning. Approve, Approve & accept edits, Keep planning, Reject and\n  Archive are the only things that move it forward.\n- **Keep planning now sends feedback.** Instead of discarding the plan and\n  starting over, it hands your notes to the agent, which revises and presents\n  again — same conversation, same context.\n- **Plans are versioned.** A session has one plan; refinements replace it and the\n  previous text moves into History. Two windows on the same session can no longer\n  approve different plans, and a plan that changed while you were reading it says\n  so rather than acting on the stale copy.\n- **A pending plan survives a restart.** Quit with a plan awaiting approval and it\n  is still there on relaunch, with its buttons live and implementation still\n  locked. Approving after a restart starts a fresh run carrying the plan text,\n  because the paused conversation cannot outlive the process.\n- **Git is a platform service.** Repository actions post structured entries into\n  the conversation carrying the paths, commit and checkpoint behind them, with\n  Open Diff, View Commit, Restore Checkpoint and Copy Command on each.\n- **Optional GitHub CLI integration.** If `gh` is installed and signed in, a\n  GitHub sub-tab lists pull requests and issues, and the agent can read them\n  through the tools it already has. Limboo stores no GitHub credential —\n  authentication stays the CLI's. Posting a comment is gated and shows the exact\n  body first.\n- **Contributor avatars in history**, fetched in the main process and embedded so\n  no page ever requests a remote image. Behind `git.avatars.enabled`, which is\n  off-limits by default in the sense that turning it on is the thing that tells\n  GitHub which repository you are browsing — the setting says so.\n\n### Changed\n\n- **The integrated terminal is its own column** between the conversation and the\n  drawer, instead of competing for the drawer with Files and Changes.\n- **The Activity and Hooks drawer panels are gone.** The Hook Engine, its audit\n  log and every hook setting are untouched — only the two panels and the IPC they\n  were the sole consumers of were removed.\n- **Switching sessions is now an ordered handover.** Worktree, file watcher, git\n  status, search index, memory scope, MCP and the agent are rebound in sequence,\n  and a thin ribbon says so while it happens. Switching quickly between sessions\n  cancels the stale work rather than letting it finish over the newer session.\n\n### Fixed\n\n- **The plan you approved was usually empty.** Current Claude releases write the\n  plan to a file and pass no plan text to the tool Limboo was reading, so almost\n  every captured plan was blank — and because the tool was blocked, no plan file\n  was produced either. Approving then sent an empty plan, the agent re-derived\n  the work from scratch, and the empty plan was filed as completed. Limboo now\n  tells the agent where to write its plan and reads it from there, with the\n  agent's own copy taking over once the plan is approved.\n- **Starting a new plan could silently destroy the one you were reviewing** when\n  plan history was turned off. A pending plan is never discarded without being\n  filed first, and starting a second plan while one awaits approval is refused.\n- **A failed or cancelled planning run reported itself as \"rejected\"**, which is\n  what the app says when a person declines a plan. Those now read as ended, with\n  the reason recorded, so declining and crashing no longer look identical.\n- **An unrelated prompt could mark a stalled plan complete.** Only the run that\n  was actually released to implement a plan can finish it.\n- **Live planning progress replayed the previous attempt's steps** after asking\n  for a new plan, because it measured from when the plan first existed rather\n  than when the current attempt started.\n- **Deleting a session left its plan revisions behind** in the database.\n- **A machine without git looked like a folder without a repository**, and the app\n  offered to initialise one — an action that could never succeed. Limboo now\n  detects the missing binary and names the install command for your platform.\n- **Settings could be hand-edited into a dead drawer tab or an unbounded panel\n  width**; both are now validated and clamped on load."
   }
 ];
 
 /** Every released version, newest first. */
 export const RELEASE_INDEX: ReleaseIndexEntry[] = [
+  {
+    "version": "1.19.0",
+    "date": "2026-08-30",
+    "channel": "stable",
+    "summary": "Limboo 1.19.0 repairs the agent harness, which could not install itself in any\npackaged build, and gives workspaces a way out of the app.",
+    "detailed": true
+  },
   {
     "version": "1.18.2",
     "date": "2026-08-13",
@@ -585,7 +552,7 @@ export const RELEASE_INDEX: ReleaseIndexEntry[] = [
     "date": "2026-08-01",
     "channel": "stable",
     "summary": "Plan Mode now stops. A plan waits for your decision instead of sliding into\nimplementation, and the plan you are shown is the plan the agent actually wrote —\nwhich, until this release, it very often was not. Git also becomes a platform\nservice in its own right, so repository work reads as part of the conversation\nrather than something that happened in a side panel.",
-    "detailed": true
+    "detailed": false
   },
   {
     "version": "1.16.0",

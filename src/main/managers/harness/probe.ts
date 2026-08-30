@@ -6,8 +6,14 @@
  * only, no shell, bounded, and memoised for the process lifetime — a prereq
  * appearing mid-session is not worth re-probing on every run, and the user is
  * told to restart when one is missing.
+ *
+ * Resolution runs against `augmentedPath()`, not the raw `process.env.PATH`: an
+ * Electron app launched from a `.desktop` entry or the Dock inherits a much
+ * smaller PATH than the user's shell, so an installed pnpm/bun/nvm-node would
+ * otherwise be reported as missing. See `toolchain.ts`.
  */
 import { spawnSync } from 'node:child_process';
+import { augmentedPath } from './toolchain';
 
 const cache = new Map<string, boolean>();
 
@@ -26,6 +32,9 @@ export function probeCommand(name: string): boolean {
       timeout: 3_000,
       shell: false,
       windowsHide: true,
+      // Only PATH is overridden — the finder needs the rest of the environment
+      // (COMSPEC/PATHEXT on Windows) exactly as it is.
+      env: { ...process.env, PATH: augmentedPath() },
     });
     found = r.status === 0 && typeof r.stdout === 'string' && r.stdout.trim().length > 0;
   } catch {

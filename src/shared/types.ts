@@ -61,6 +61,21 @@ export interface HarnessBootstrapInfo {
   plan: { commands: string[]; files: string[]; fingerprint: string } | null;
   /** True when the current plan's fingerprint matches the stored approval. */
   acked: boolean;
+  /**
+   * Set when the adapter HAS a setup step but could not describe it.
+   *
+   * A different claim from `plan: null`, and deliberately its own field: the two
+   * used to be the same value, so a broken adapter rendered as "this harness
+   * needs no setup step" while runs silently lost the consent gate.
+   */
+  planError?: string;
+  /**
+   * Per-tool prerequisite status for this plan's commands, in invocation order.
+   *
+   * Tool names and code-supplied remedies only — never a resolved path, which
+   * would leak the home directory into the renderer.
+   */
+  prerequisites?: { tool: string; found: boolean; hint: string }[];
   error?: string;
 }
 

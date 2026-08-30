@@ -283,9 +283,14 @@ const servicesApi = {
 
 const agentApi = {
   getInstall: (): Promise<AgentInstall> => ipcRenderer.invoke(IpcChannels.agentGetInstall),
-  /** The active harness's setup plan, for the one-time consent surface. */
-  harnessBootstrapPlan: (): Promise<HarnessBootstrapInfo> =>
-    ipcRenderer.invoke(IpcChannels.agentHarnessBootstrapPlan),
+  /**
+   * A harness's setup plan, for the one-time consent surface.
+   *
+   * Pass the harness the surface is describing; omit it only when you genuinely
+   * mean whichever harness is currently selected.
+   */
+  harnessBootstrapPlan: (harnessId?: string): Promise<HarnessBootstrapInfo> =>
+    ipcRenderer.invoke(IpcChannels.agentHarnessBootstrapPlan, harnessId),
   getState: (): Promise<AgentState> => ipcRenderer.invoke(IpcChannels.agentGetState),
   getSnapshot: (sessionId: string): Promise<AgentSessionSnapshot> =>
     ipcRenderer.invoke(IpcChannels.agentGetSnapshot, sessionId),

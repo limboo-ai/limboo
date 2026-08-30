@@ -75,10 +75,20 @@ const config: ForgeConfig = {
       // DEFAULT_IGNORES (lockfiles, .git, node_modules/.bin, native build
       // artifacts) — these are skipped entirely once a custom `ignore` function
       // is supplied.
+      //
+      // The three lockfiles are matched by EXACT ROOT PATH, not by a trailing
+      // `/pnpm-lock.yaml$`-style pattern. DEFAULT_IGNORES means "drop this
+      // project's own lockfiles"; as an unanchored suffix match it also stripped
+      // `node_modules/@ai-sdk/harness-*/dist/bridge/pnpm-lock.yaml`, which is a
+      // REQUIRED RUNTIME ASSET — the harness adapter reads it in `getBootstrap()`
+      // to describe (and then perform) its one-time setup. Shipping without it
+      // made every harness run die with `ENOENT … not found in app.asar`, and
+      // made the consent surface in Settings report "no setup step" because
+      // `readBootstrapPlan` could not read a plan at all.
       if (
-        /\/package-lock\.json$/.test(file) ||
-        /\/yarn\.lock$/.test(file) ||
-        /\/pnpm-lock\.yaml$/.test(file) ||
+        file === '/package-lock.json' ||
+        file === '/yarn.lock' ||
+        file === '/pnpm-lock.yaml' ||
         /\/\.git($|\/)/.test(file) ||
         /\/node_modules\/\.bin($|\/)/.test(file) ||
         /\.o(bj)?$/.test(file) ||

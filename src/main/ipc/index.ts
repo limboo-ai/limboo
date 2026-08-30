@@ -100,7 +100,16 @@ export function registerAllIpc(deps: IpcDeps): void {
   registerWindowHandlers();
   registerSettingsHandlers(deps.settings);
   registerSystemHandlers(deps.notifications);
-  registerWorkspaceHandlers(deps.workspace);
+  // Workspace removal cascades through the same session teardown `session:purge`
+  // uses, so it needs the same managers.
+  registerWorkspaceHandlers(
+    deps.workspace,
+    deps.session,
+    deps.worktree,
+    deps.services,
+    deps.terminal,
+    deps.attachments,
+  );
   registerSessionHandlers(deps.session, deps.worktree, deps.services, deps.terminal, deps.attachments);
   registerAgentHandlers(deps.agent);
   registerFsHandlers(deps.fs);
