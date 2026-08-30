@@ -24,10 +24,28 @@ on:
         # tag-triggered supplement (release-supplement.yml) passes the labels
         # GitLab's SaaS runners cannot provide — Intel macOS and arm64 Linux /
         # Windows — so one reusable build definition serves both paths.
+        #
+        # Windows is PINNED to windows-2022, not windows-latest. `windows-latest`
+        # now resolves to the `win25-vs2026` image, and `@electron/node-gyp@10.2.0`
+        # cannot detect Visual Studio 2026 — it reports `unknown version
+        # "undefined"` and then "could not find a version of Visual Studio 2017 or
+        # newer", so every native build fails outright.
+        #
+        # It became fatal when better-sqlite3 went 12 -> 13: v12 declared
+        # `install: prebuild-install || node-gyp rebuild`, which used the prebuilt
+        # and only compiled as a fallback. v13 declares NO install script but still
+        # ships a `binding.gyp`, so npm applies its documented default of compiling
+        # with node-gyp — unconditionally, even though v13 ships a perfectly good
+        # `prebuilds/win32-x64.node`.
+        #
+        # Unpin once @electron/node-gyp can find VS2026. The better fix is to stop
+        # source-building better-sqlite3 at all (it is a Node-API prebuilt, exactly
+        # like node-pty and sherpa-onnx, which forge.config.ts already excludes from
+        # @electron/rebuild) — that is a separate change and is not this one.
         description: JSON array of runner labels to build on
         type: string
         required: false
-        default: '["ubuntu-latest", "macos-latest", "windows-latest"]'
+        default: '["ubuntu-latest", "macos-latest", "windows-2022"]'
 
 permissions:
   contents: read
@@ -133,7 +151,7 @@ jobs:
         # platform-specific installer. Generate it on the primary matrix only;
         # supplementary architecture jobs still publish installers and checksums,
         # while release.yml/release-supplement.yml keep a single release SBOM.
-        if: ${{ matrix.os == 'ubuntu-latest' || matrix.os == 'macos-latest' || matrix.os == 'windows-latest' }}
+        if: ${{ matrix.os == 'ubuntu-latest' || matrix.os == 'macos-latest' || matrix.os == 'windows-2022' }}
         uses: anchore/sbom-action@v0
         with:
           path: .
@@ -169,7 +187,7 @@ jobs:
             dist/**/*.zip
 
       - name: Attest SBOM
-        if: ${{ inputs.attest && (matrix.os == 'ubuntu-latest' || matrix.os == 'macos-latest' || matrix.os == 'windows-latest') }}
+        if: ${{ inputs.attest && (matrix.os == 'ubuntu-latest' || matrix.os == 'macos-latest' || matrix.os == 'windows-2022') }}
         uses: actions/attest-sbom@v1
         with:
           subject-path: dist/SHA256SUMS
