@@ -130,10 +130,27 @@ export function ClaudeCodeControls() {
             <div className="flex flex-col gap-2">
               <p className="text-[11px] leading-relaxed text-faint">
                 Before its first session the harness installs the Claude Code CLI into its own
-                directory beside your worktree — never into your repository. This reaches the npm
-                registry from this machine, so it needs your approval once. These are the exact
-                commands that will run.
+                private directory — never into your repository, and never beside it. This reaches
+                the npm registry from this machine, so it needs your approval once. These are the
+                exact commands that will run.
               </p>
+              {plan.dir && (
+                // WHERE these run is load-bearing, not context. Limboo executes
+                // them with the working directory set to this folder, and the
+                // adapter writes the lockfile they install from into it first —
+                // so the same commands pasted into a shell fail with
+                // ERR_PNPM_NO_LOCKFILE and read as a Limboo bug. The panel used
+                // to show the commands alone, and that is exactly what happened.
+                <p className="text-[11px] leading-relaxed text-faint">
+                  Limboo runs them in{' '}
+                  <span className="font-mono text-muted">{plan.dir}</span>, after writing{' '}
+                  <span className="font-mono text-muted">
+                    {plan.files.map((f) => f.split('/').pop()).join(', ')}
+                  </span>{' '}
+                  there. Run somewhere else — a terminal, your home directory — they will fail:
+                  the lockfile they install from lives in that folder.
+                </p>
+              )}
               <pre className="overflow-x-auto whitespace-pre-wrap break-all rounded-md border border-line bg-surface-2 px-2 py-1.5 font-mono text-[11px] leading-relaxed text-fg">
                 {plan.commands.join('\n\n')}
               </pre>

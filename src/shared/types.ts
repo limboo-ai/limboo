@@ -57,8 +57,21 @@ export interface HarnessBootstrapInfo {
   /** False when the adapter could not be loaded at all. */
   available: boolean;
   harnessId: string;
-  /** `null` when this harness installs nothing — there is nothing to approve. */
-  plan: { commands: string[]; files: string[]; fingerprint: string } | null;
+  /**
+   * `null` when this harness installs nothing — there is nothing to approve.
+   *
+   * `dir` is where the files are written and the commands are RUN — relative to
+   * the sandbox root, never absolute (an absolute one would carry the home
+   * directory into the renderer). Showing it is not decoration: the commands
+   * only work in that directory, because that is where the adapter just wrote
+   * the lockfile they install from.
+   */
+  plan: {
+    commands: string[];
+    files: string[];
+    dir?: string;
+    fingerprint: string;
+  } | null;
   /** True when the current plan's fingerprint matches the stored approval. */
   acked: boolean;
   /**

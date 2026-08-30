@@ -56,9 +56,24 @@ added without amending this paragraph:
    The harness path (`settings.agent.harness`, off behind `legacyClaudeSdk`)
    drives a third-party adapter whose first session bootstraps its own runtime:
    `@ai-sdk/harness-claude-code` writes a `package.json` + lockfile into
-   `.harness-bootstrap/` — a **sibling of the worktree, never inside the
-   repository** — and runs `pnpm install --frozen-lockfile` plus the CLI's own
-   installer there. The adapter hardcodes this; there is no offline mode.
+   `.harness-bootstrap/claude-code/` and runs `pnpm install --frozen-lockfile`
+   plus `./node_modules/.bin/claude --version` **in that directory**. The
+   adapter hardcodes this; there is no offline mode. The directory resolves
+   under the sandbox's `defaultWorkingDirectory`, which
+   `LocalWorktreeSandbox` reports as a Limboo-owned state root —
+   `{userData}/harness-state/<bucket>/`, holding a link to the execution root
+   — so the runtime lands **inside userData, never in the repository and never
+   beside it**. (It used to be the worktree's plain PARENT. That is Limboo-owned
+   for a worktree-backed session, but `resolveSessionRoot` falls back to the
+   workspace path for a plain one, and the parent is then the user's own
+   projects directory. See `harness/sandbox/stateRoot.ts`.)
+
+   **Where the commands run is part of what the consent surface must say.** They
+   only work in that directory — it is where the adapter just wrote the lockfile
+   they install from — so a user who copies them into a shell gets
+   `ERR_PNPM_NO_LOCKFILE` and reads it as a Limboo bug. `BootstrapPlan.dir`
+   carries it through to the panel; it is deliberately **not** part of the
+   consent fingerprint, which covers what executes.
 
    Four things keep it inside this paragraph's spirit rather than merely
    permitted by it:
@@ -71,11 +86,23 @@ added without amending this paragraph:
    - **It is refused, with a reason, when it cannot succeed.** A sandbox network
      policy of `off` (or an allowlist without the registry), or a missing
      `pnpm`, is detected before the run instead of surfacing as a bootstrap that
-     times out inside the sandbox (`assertBootstrapPossible`).
+     times out inside the sandbox (`assertBootstrapPossible`). What cannot be
+     predicted is reported: a command that runs and exits non-zero becomes
+     `HarnessBootstrapFailedError`, carrying the adapter's own stderr, and is
+     **never retried** — pnpm records an install as complete even when an
+     OPTIONAL dependency failed to download, so the re-run says "Already up to
+     date" and fails identically. Every harness refusal is classified by error
+     CLASS (`classifyHarnessRefusal`), never by message text: the
+     network-allowlist refusal's own wording contains "network", which the
+     transient-transport regex matched, so a standing policy decision was being
+     retried as though it were a dropped socket.
    - **It reaches nothing but the registry**, and it installs into the sandbox
      state dir, which is the ONLY path outside the worktree the local sandbox
-     provider permits (two literal dot-prefixed segments; see
-     `LocalWorktreeSandbox.resolvePath`).
+     provider permits for file I/O (two literal dot-prefixed segments; see
+     `LocalWorktreeSandbox.resolvePath`). The state root ITSELF is additionally
+     allowed as a working directory — and only that — because the framework
+     runs the bootstrap's `mkdir` there; see `resolveCwd`, which is kept
+     separate from `resolvePath` so file I/O goes on refusing it.
    - **It is not the agent's network.** The agent's own provider traffic is item
      1; this is a package install, and no agent tool can trigger it.
 

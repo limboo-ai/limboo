@@ -42,7 +42,8 @@ import { AttachmentManager } from './managers/attachments/AttachmentManager';
 import { SecretStore } from './secrets/SecretStore';
 import { CursorAuthManager } from './managers/cursor/CursorAuthManager';
 import { CursorRuntime } from './managers/cursor/CursorRuntime';
-import { harnessById } from './managers/agent/harnessRegistry';
+import { harnessById, harnessIdForRun } from './managers/agent/harnessRegistry';
+import { worktreeRootDir } from './managers/worktree/paths';
 import { HarnessRuntime } from './managers/harness/HarnessRuntime';
 import { LocalWorktreeSandboxProvider } from './managers/harness/sandbox/LocalWorktreeSandbox';
 import { resolveSandboxConfig } from './managers/sandbox/policy';
@@ -411,9 +412,14 @@ function bootstrap(): void {
           attachmentsDir: sessionAttachmentsDir(sessionId),
         }),
       attachmentsDirFor: (sessionId) => sessionAttachmentsDir(sessionId),
-      // Credential var NAMES the active harness reads. Forwarded only when the
+      // Credential var NAMES the harness that will actually run reads. Resolved
+      // through `harnessIdForRun` — the harness follows the MODEL — so a Codex
+      // or Pi run gets its own keys instead of Claude's. Forwarded only when the
       // user's own environment already has them; Limboo stores none.
-      envKeysFor: () => harnessById(settings.getAll().agent.harness.id)?.envKeys ?? [],
+      envKeysFor: () => harnessById(harnessIdForRun(settings.getAll().agent))?.envKeys ?? [],
+      // Only consulted to decide whether a session may fall back to the
+      // worktree's parent when the private state root cannot be prepared.
+      worktreeRoot: () => worktreeRootDir(settings.getAll()),
       diag: (severity, label, detail) => {
         if (severity === 'error') logger.error(`[harness] ${label}`, detail ?? '');
         else logger.info(`[harness] ${label}`, detail ?? '');

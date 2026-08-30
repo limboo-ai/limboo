@@ -98,7 +98,6 @@ import {
   SEARCH_LIMITS,
   clamp,
   cursorModelSet,
-  PROVIDER_HARNESS,
   providerForModel,
   resolveModelRouting,
 } from '@shared/constants';
@@ -156,9 +155,10 @@ import type { HarnessRuntime, HarnessRunHandle } from './harness/HarnessRuntime'
 import type { LocalWorktreeSandboxProvider } from './harness/sandbox/LocalWorktreeSandbox';
 import { buildToolApprovalMap } from './harness/approval';
 import { readBootstrapPlan } from './harness/bootstrap';
+import { classifyHarnessRefusal } from './harness/errors';
 import { resolveTools } from './harness/toolchain';
 import { loadHarness } from './harness';
-import { harnessById } from './agent/harnessRegistry';
+import { harnessById, harnessIdForRun } from './agent/harnessRegistry';
 import { isSubagentTool } from '@shared/subagents';
 import { IpcEvents } from '@shared/ipc-channels';
 import { getDb } from '../db/database';
@@ -2005,6 +2005,11 @@ export class AgentManager {
     // In-memory runtime state (tool rows, tasks, live changes) belongs to the
     // truncated turns; dropping it lets the next snapshot rebuild cleanly.
     this.runtimes.delete(sessionId);
+    // The truncate above dropped every `agent_provider_sessions` row, including
+    // the harness resume — so a parked bridge now holds a conversation the
+    // repository no longer matches, and nothing will reattach to it. Tear it
+    // down, or the next prompt respawns onto the port it is still bound to.
+    void this.discardHarnessSandbox(sessionId);
 
     const detail =
       `${restore.filesReverted} file${restore.filesReverted === 1 ? '' : 's'} restored` +
@@ -2033,6 +2038,10 @@ export class AgentManager {
   /** Forget a session entirely (transcript, activity, runtime state). */
   clearSession(sessionId: string): void {
     this.stop(sessionId);
+    // A harness session parks its bridge on `detach()` so the next turn can
+    // reattach. There is no next turn now, so the process and its loopback port
+    // would otherwise survive until the app quit.
+    void this.discardHarnessSandbox(sessionId);
     // Governance bus: the session's execution context is ending. Emit before the
     // rows are deleted (the audit trail for this session is cleared with them).
     this.emitHook(sessionId, 'session-end', { summary: 'Session cleared' });
@@ -2684,7 +2693,10 @@ export class AgentManager {
         // / transport shapes that never appear as a terminal_reason. Resolved
         // BEFORE the retry-fresh check so a Cursor verdict — which carries its
         // own `retryFresh` — gets the same remedy as a Claude one.
+        // A harness refusal is checked FIRST and by error class, because its
+        // own prose defeats the text classifiers — see `classifyHarnessRefusal`.
         const cls =
+          classifyHarnessRefusal(err) ??
           structured ??
           (provider === 'cursor' ? classifyCursorError(redact(raw)) : classifyAgentError(redact(raw)));
         // These two are optional across the three classifier shapes — only the
@@ -2839,10 +2851,10 @@ export class AgentManager {
     // The harness follows the MODEL, not the settings field. `agent.harness.id`
     // is the choice for Anthropic models — where a harness and the direct SDK
     // both exist — but a Codex or Pi model can only run on its own harness, and
-    // reading the stored id there would try to run it on Claude Code.
-    const modelProvider = providerForModel(agent.model);
-    const harnessId =
-      modelProvider === 'anthropic' ? agent.harness.id : PROVIDER_HARNESS[modelProvider];
+    // reading the stored id there would try to run it on Claude Code. Shared
+    // with the sandbox provider's credential-env resolver, which read the
+    // stored id directly and so handed those runs the wrong key names.
+    const harnessId = harnessIdForRun(agent);
     const descriptor = harnessById(harnessId);
     if (!descriptor) throw new Error(`Unknown harness "${harnessId}".`);
 
@@ -2945,6 +2957,10 @@ export class AgentManager {
     }
 
     const canUseTool = this.makeCanUseTool(sessionId, cwd, permMode);
+    // Resolved BEFORE the runtime starts, because a rejected or absent resume
+    // also tears down the cached sandbox session, and that has to finish before
+    // `createSession` hands out a port a parked bridge is still bound to.
+    const resumeFrom = await this.resolveHarnessResume(sessionId, harnessId);
     // The approval callback needs the handle in order to interrupt the turn,
     // but the handle only exists once the run has started — hence the cell.
     const handleRef: { current: HarnessRunHandle | null } = { current: null };
@@ -2999,12 +3015,14 @@ export class AgentManager {
         },
         sandbox,
         mcpServers,
-        // No resume yet. `createSession({resumeFrom})` requires a structured
-        // `{type:'resume-session', specificationVersion, harnessId, data}` and
-        // THROWS on anything else, so passing the legacy row's opaque string
-        // failed every second prompt. A fresh conversation per run is a
-        // degradation; an error on every second prompt is a broken feature.
-        resumeFrom: undefined,
+        // Multi-turn continuity. `createSession({resumeFrom})` requires a
+        // structured `{type:'resume-session', specificationVersion, harnessId,
+        // data}` and THROWS on anything else — which is why the legacy row's
+        // opaque string could never be passed here, and why this was pinned to
+        // `undefined` (a fresh conversation per prompt) until there was a real
+        // one to pass. `resolveHarnessResume` produces exactly that shape or
+        // nothing, validating the row before it can reach the framework.
+        resumeFrom,
         workDir,
         debug: agent.harness.debug,
         abort,
@@ -3015,7 +3033,12 @@ export class AgentManager {
     if (run) run.query = { close: handle.close };
     this.setLifecycle('streaming');
     this.setRequest(sessionId, { phase: 'streaming' });
-    await handle.done;
+    const outcome = await handle.done;
+    // Store what the parked session handed back so the NEXT prompt continues
+    // this conversation instead of opening a new one. `undefined` clears the
+    // row — an un-parked session has no resume, and a stale one would be worse
+    // than none.
+    await this.rememberHarnessResume(sessionId, harnessId, outcome.resumeState);
     } finally {
       // The pipe is per-run: closing it is what stops a stale bridge from
       // outliving the run that authorized it.
@@ -6947,6 +6970,116 @@ export class AgentManager {
     getDb()
       .prepare('DELETE FROM agent_provider_sessions WHERE session_id = ? AND provider = ?')
       .run(sessionId, provider);
+  }
+
+  /* ------------------------------------------------------------------ */
+  /* Harness resume state                                                */
+  /* ------------------------------------------------------------------ */
+  /**
+   * A harness's resume state rides the SAME `agent_provider_sessions` table
+   * under its own key, `harness:<harnessId>`.
+   *
+   * The key must not be a bare `AgentProvider`. `claude-code` and Limboo's
+   * direct Claude Agent SDK path are both `anthropic`, and they store entirely
+   * different things — the SDK path stores a session id string, the harness
+   * path a structured lifecycle object. Sharing the `anthropic` row would have
+   * each path overwrite the other's resume with something it cannot parse.
+   * That is the collision the `onInit: () => undefined` note in `runHarnessOnce`
+   * was written to avoid, closed properly here.
+   *
+   * The typed `AgentProvider` helpers above are deliberately left alone rather
+   * than widened to `string`: their signature is what keeps a provider key from
+   * being invented at a call site.
+   */
+  private harnessResumeKey(harnessId: string): string {
+    return `harness:${harnessId}`;
+  }
+
+  /**
+   * Resolve a stored harness resume state for the next run, or `undefined`.
+   *
+   * VALIDATES before returning. `HarnessAgent.createSession` throws when the
+   * resume state was not produced by the same adapter, so a stale row from a
+   * different harness (or a truncated write) must never reach it — that would
+   * turn a recoverable "start fresh" into a failed run on every prompt. A row
+   * that does not parse, or names another harness, is dropped and forgotten:
+   * the same posture `CURSOR_RESUME_ID_RE` takes with an invalid chat id.
+   *
+   * ASYNC because dropping a resume also has to tear down the sandbox session —
+   * see {@link discardHarnessSandbox} — and that must complete BEFORE the next
+   * `createSession`, or the respawned bridge races the parked one for the port.
+   */
+  private async resolveHarnessResume(sessionId: string, harnessId: string): Promise<unknown> {
+    const key = this.harnessResumeKey(harnessId);
+    const raw = this.loadProviderSession(sessionId, key as AgentProvider);
+    if (!raw) {
+      // No resume, but a sandbox session may still be cached from a run whose
+      // bridge is parked and listening. Starting fresh on top of it is the
+      // port collision described below.
+      await this.discardHarnessSandbox(sessionId);
+      return undefined;
+    }
+    try {
+      const parsed = JSON.parse(raw) as { type?: unknown; harnessId?: unknown };
+      if (parsed?.type === 'resume-session' && parsed?.harnessId === harnessId) return parsed;
+    } catch {
+      /* fall through to the drop below */
+    }
+    this.forgetProviderSession(sessionId, key as AgentProvider);
+    this.diag(
+      'lifecycle',
+      'warning',
+      'Dropped an unusable harness resume state',
+      `harness ${harnessId} — the next prompt starts a fresh conversation.`,
+      sessionId,
+    );
+    await this.discardHarnessSandbox(sessionId);
+    return undefined;
+  }
+
+  /** Persist (or clear) a harness resume state after a run parks its session. */
+  private async rememberHarnessResume(
+    sessionId: string,
+    harnessId: string,
+    state: unknown,
+  ): Promise<void> {
+    const key = this.harnessResumeKey(harnessId) as AgentProvider;
+    if (state == null) {
+      this.forgetProviderSession(sessionId, key);
+      // The turn did not park, so there is no bridge to reattach to — but the
+      // process may still be alive on the reserved port. Tear it down now
+      // rather than leaving the next prompt to collide with it.
+      await this.discardHarnessSandbox(sessionId);
+      return;
+    }
+    try {
+      this.rememberProviderSession(sessionId, key, JSON.stringify(state));
+    } catch {
+      // Unserialisable state is a lost resume, never a failed run.
+      this.forgetProviderSession(sessionId, key);
+      await this.discardHarnessSandbox(sessionId);
+    }
+  }
+
+  /**
+   * Drop a session's cached sandbox: kill its parked bridge, release its port.
+   *
+   * Required whenever the conversation will NOT be resumed. `detach()` leaves
+   * the bridge listening on purpose — that is what lets the next turn reattach
+   * instead of reinstalling — but a run that starts FRESH spawns a new bridge
+   * on the port the sandbox session still exposes, and the parked one is still
+   * bound to it. Without this the second prompt after any lost resume dies with
+   * EADDRINUSE, and the cause would look like a port bug rather than a
+   * lifecycle one.
+   *
+   * Best-effort: teardown must never fail a run.
+   */
+  private async discardHarnessSandbox(sessionId: string): Promise<void> {
+    try {
+      await this.harnessSandbox?.release(sessionId);
+    } catch {
+      /* the provider deletes nothing; a failure here costs only the cache */
+    }
   }
 
   /**

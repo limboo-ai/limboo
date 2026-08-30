@@ -94,9 +94,12 @@ function hintFor(tool: string): string {
  * Splits on the shell operators that open a new command position (`&&`, `||`,
  * `;`, `|`, and the `(`/`{` group openers), then walks each segment left to
  * right for the first real executable. Walking rather than just taking word[0]
- * matters: the claude-code plan's second command is
- * `… ; then node node_modules/…/install.cjs ; fi && …`, where `then` holds the
- * first position and `node` — an actual prerequisite — is the second.
+ * matters because a bootstrap command may be a whole pipeline: in a form like
+ * `if … ; then node node_modules/…/install.cjs ; fi && …`, `then` holds the
+ * first position and `node` — an actual prerequisite — is the second. (The
+ * claude-code plan at 1.0.94 is simpler than that — two flat
+ * commands — but the walk is what keeps this version-independent, and the
+ * shape above is one adapters have shipped.)
  *
  * Deliberately conservative. This decides what to PROBE, and a false positive
  * becomes a prerequisite the user is told to install for no reason, so the walk

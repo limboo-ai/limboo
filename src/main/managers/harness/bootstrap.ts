@@ -31,6 +31,22 @@ export interface BootstrapPlan {
   commands: string[];
   /** Files written into the state dir (names only — contents can be large). */
   files: string[];
+  /**
+   * The directory, relative to the sandbox root, that the files are written
+   * into and the commands are RUN IN.
+   *
+   * Not decoration. `applyBootstrapRecipe` passes it as `workingDirectory` for
+   * every command, so `pnpm install --frozen-lockfile` only makes sense there —
+   * that is where the adapter just wrote `pnpm-lock.yaml`. A consent surface
+   * that shows the commands without the directory invites the user to paste
+   * them into their shell, where they fail with `ERR_PNPM_NO_LOCKFILE` and look
+   * like a Limboo bug.
+   *
+   * Deliberately NOT part of the fingerprint. Consent is over what EXECUTES;
+   * folding the directory in would void every existing approval for a string
+   * that changes nothing about the commands.
+   */
+  dir?: string;
   /** Stable id of THIS command set; the unit of consent. */
   fingerprint: string;
 }
@@ -39,6 +55,7 @@ export interface BootstrapPlan {
 interface RawBootstrap {
   commands?: readonly { command?: unknown }[];
   files?: readonly { path?: unknown }[];
+  bootstrapDir?: unknown;
 }
 
 /**
@@ -98,11 +115,18 @@ export async function readBootstrapPlan(adapter: unknown): Promise<BootstrapRead
   const files = (raw?.files ?? [])
     .map((f) => (typeof f?.path === 'string' ? f.path : ''))
     .filter((f) => f.length > 0);
+  // Relative by contract (`applyBootstrapRecipe` resolves it against the
+  // sandbox root), and it must STAY relative on the way to the renderer: an
+  // absolute one would carry the user's home directory into the UI, which is
+  // the same reason `prerequisites` reports tool names and never resolved paths.
+  const rawDir = typeof raw?.bootstrapDir === 'string' ? raw.bootstrapDir.trim() : '';
+  const dir = rawDir && !rawDir.startsWith('/') && !/^[A-Za-z]:/.test(rawDir) ? rawDir : undefined;
   return {
     kind: 'plan',
     plan: {
       commands,
       files,
+      ...(dir ? { dir } : {}),
       // Only the COMMANDS are fingerprinted. File contents change on every
       // adapter patch release; what the user is consenting to is what executes.
       fingerprint: crypto
